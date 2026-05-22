@@ -182,7 +182,7 @@
 
       <div class="sidebar-foot">
         {#if user}
-          <div class="who">
+          <a class="who" href="/settings">
             {#if user.slack_id?.Valid}
               <img
                 class="who-avatar"
@@ -196,7 +196,7 @@
             {#if bal}
               <span class="who-bal mono">${bal.balance_usd}</span>
             {/if}
-          </div>
+          </a>
         {/if}
       </div>
     </aside>
@@ -325,6 +325,17 @@
     align-items: center;
     gap: 0.5rem;
     font-size: 0.85rem;
+    padding: 0.4rem 0.5rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    text-decoration: none;
+    color: var(--text);
+    transition: border-color 80ms ease, background 80ms ease;
+  }
+  .who:hover {
+    border-color: var(--accent);
+    background: var(--bg-page);
+    text-decoration: none;
   }
   .who-avatar,
   .who-initial {
