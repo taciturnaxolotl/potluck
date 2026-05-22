@@ -487,3 +487,6 @@ quirk is discovered.
 - `design/design-system.md` — palette rationale, type scale, component patterns
 - `design/public-api.md` — supported endpoints, error mapping, idempotency,
   rate-limit headers, what differs from OpenAI
+- `design/pool-keys.md` — pioneer key pool: empirical findings on pioneer's
+  billing surface, two-budget (max/shared) model, reconciler design,
+  401-as-rate-limit handling
