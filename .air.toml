@@ -1,16 +1,37 @@
 # Air config for the Go backend.
 #
-# Pattern from charm.land/hyper: only watch Go source. The web side has its
-# own HMR loop via `bun run dev` (Vite); CSS/JS/templates over there are
-# handled by SvelteKit and never need a Go rebuild.
+# This file lives at the repo root so paths line up regardless of where
+# the user invokes air from. The `task watch:server` entry points cd
+# nowhere — air is run from the repo root and watches server/ directly.
+#
+# We only watch Go source. The web side has its own HMR loop via Vite;
+# CSS/JS/templates over there never need a Go rebuild.
 
-root = "server"
-tmp_dir = "tmp"
+root = "."
+tmp_dir = "server/tmp"
+testdata_dir = "testdata"
 
 [build]
-cmd = "go build -o ./tmp/potluck ./cmd/server"
-full_bin = "CI=1 CLICOLOR_FORCE=1 ./tmp/potluck"
+cmd = "go build -C server -o tmp/potluck ./cmd/server"
+bin = "server/tmp/potluck"
+full_bin = "CI=1 CLICOLOR_FORCE=1 server/tmp/potluck"
 args_bin = ["--auto-migrate"]
-include_ext = ["go", "mod", "sum"]
-exclude_dir = ["tmp", "dist", "node_modules"]
+
+# Watch every Go file under server/, plus the migration .sql files (since
+# they're embedded into the binary).
+include_dir = ["server"]
+include_ext = ["go", "mod", "sum", "sql"]
+exclude_dir = ["server/tmp", "server/dist", "node_modules", "web", "data", ".git", "design"]
+exclude_regex = ["_test\\.go$"]
 stop_on_error = true
+send_interrupt = true
+kill_delay = "500ms"
+delay = 200
+
+[log]
+time = true
+
+[color]
+main = "magenta"
+build = "yellow"
+runner = "cyan"

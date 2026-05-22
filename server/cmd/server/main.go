@@ -10,7 +10,6 @@ import (
 	"database/sql"
 	"errors"
 	"flag"
-	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -18,6 +17,7 @@ import (
 	"syscall"
 	"time"
 
+	"charm.land/log/v2"
 	"github.com/go-chi/chi/v5"
 	chimw "github.com/go-chi/chi/v5/middleware"
 	"github.com/google/uuid"
@@ -37,33 +37,53 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+// Information set at build time via -ldflags.
+var (
+	Version    = "dev"
+	CommitSHA  = ""
+	CommitDate = ""
+)
+
 func main() {
 	autoMigrate := flag.Bool("auto-migrate", false, "run pending migrations on boot")
 	flag.Parse()
 
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
-	slog.SetDefault(logger)
-
 	cfg := config.MustGet()
+
+	switch {
+	case cfg.IsProduction():
+		log.SetLevel(log.InfoLevel)
+		log.SetFormatter(log.JSONFormatter)
+	case cfg.IsLocal():
+		log.SetReportCaller(true)
+		log.SetLevel(log.DebugLevel)
+	default:
+		log.SetLevel(log.InfoLevel)
+	}
+
+	log.Info("Potluck",
+		"version", Version,
+		"commit", CommitSHA,
+		"commit_date", CommitDate,
+		"env", cfg.Environment,
+	)
 
 	if dir := filepath.Dir(cfg.DatabaseURL); dir != "" && dir != "." {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
-			logger.Error("mkdir db dir", "err", err)
-			os.Exit(2)
+			log.Fatal("create db directory", "err", err)
 		}
 	}
 
 	db, err := sql.Open("sqlite", cfg.DatabaseURL+"?_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)")
 	if err != nil {
-		logger.Error("open db", "err", err)
-		os.Exit(2)
+		log.Fatal("open database", "err", err)
 	}
 	defer db.Close()
 
 	if *autoMigrate {
+		log.Info("Running migrations")
 		if err := migrations.Run(db); err != nil {
-			logger.Error("migrate", "err", err)
-			os.Exit(2)
+			log.Fatal("migrations failed", "err", err)
 		}
 	}
 
@@ -76,10 +96,14 @@ func main() {
 	hub := stream.NewHub(q)
 	pioneer := provider.New(cfg.Pioneer.BaseURL, cfg.Pioneer.APIKey)
 
+	if !cfg.Pioneer.Valid() {
+		log.Warn("pioneer.ai not configured — /v1/* will refuse upstream calls")
+	}
+
 	r := chi.NewRouter()
 	r.Use(chimw.RequestID)
 	r.Use(chimw.RealIP)
-	r.Use(slogRequest(logger))
+	r.Use(requestLogger)
 	r.Use(chimw.Recoverer)
 
 	r.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) {
@@ -89,40 +113,8 @@ func main() {
 	// Local-only login: trade an email for a session cookie. Real auth
 	// lives behind a real provider — see design/security.md.
 	if cfg.IsLocal() {
-		r.Post("/api/dev/login", func(w http.ResponseWriter, r *http.Request) {
-			email := r.URL.Query().Get("email")
-			if email == "" {
-				http.Error(w, "missing email", 400)
-				return
-			}
-			u, err := q.GetUserByEmail(r.Context(), email)
-			if errors.Is(err, sql.ErrNoRows) {
-				u, err = q.CreateUser(r.Context(), store.CreateUserParams{
-					ID:          uuid.NewString(),
-					Email:       email,
-					DisplayName: email,
-					CreatedAt:   time.Now().Unix(),
-				})
-			}
-			if err != nil {
-				http.Error(w, err.Error(), 500)
-				return
-			}
-			tok, err := authSvc.IssueSession(r.Context(), u.ID)
-			if err != nil {
-				http.Error(w, err.Error(), 500)
-				return
-			}
-			http.SetCookie(w, &http.Cookie{
-				Name:     auth.CookieName,
-				Value:    tok,
-				Path:     "/",
-				HttpOnly: true,
-				SameSite: http.SameSiteLaxMode,
-				Expires:  time.Now().Add(time.Duration(cfg.SessionTTL) * time.Second),
-			})
-			_, _ = w.Write([]byte("ok"))
-		})
+		log.Debug("Mounting dev login endpoint", "path", "/api/dev/login")
+		r.Post("/api/dev/login", devLoginHandler(q, authSvc, time.Duration(cfg.SessionTTL)*time.Second))
 	}
 
 	apiSrv := &web.Server{
@@ -159,38 +151,104 @@ func main() {
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
+	errc := make(chan error, 1)
 	go func() {
-		logger.Info("listening", "addr", cfg.HTTPListen, "env", cfg.Environment)
-		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			logger.Error("server", "err", err)
-			os.Exit(1)
-		}
+		log.Info("Starting HTTP server", "addr", cfg.HTTPListen)
+		errc <- srv.ListenAndServe()
 	}()
 
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
-	<-stop
-	logger.Info("shutting down")
+
+	select {
+	case sig := <-stop:
+		log.Info("Received signal, shutting down", "signal", sig)
+	case err := <-errc:
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Fatal("HTTP server crashed", "err", err)
+		}
+	}
+
+	log.Info("Shutting down HTTP server")
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	_ = srv.Shutdown(ctx)
+	if err := srv.Shutdown(ctx); err != nil {
+		log.Error("graceful shutdown failed", "err", err)
+	}
+	log.Info("Bye")
 }
 
-// slogRequest logs each request with method, path, status, and duration.
-func slogRequest(l *slog.Logger) func(http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			start := time.Now()
-			ww := chimw.NewWrapResponseWriter(w, r.ProtoMajor)
-			next.ServeHTTP(ww, r)
-			l.Info("http",
-				"method", r.Method,
-				"path", r.URL.Path,
-				"status", ww.Status(),
-				"bytes", ww.BytesWritten(),
-				"dur_ms", time.Since(start).Milliseconds(),
-				"req_id", chimw.GetReqID(r.Context()),
-			)
+// requestLogger logs each request with method, path, status, and duration.
+//
+// Lines are intentionally short — the HTTP middleware is the noisiest log
+// source in the system, so noise control matters. Health checks log at
+// Debug, everything else at Info, errors at Warn (4xx) or Error (5xx).
+func requestLogger(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		ww := chimw.NewWrapResponseWriter(w, r.ProtoMajor)
+		next.ServeHTTP(ww, r)
+
+		fields := []any{
+			"method", r.Method,
+			"path", r.URL.Path,
+			"status", ww.Status(),
+			"bytes", ww.BytesWritten(),
+			"dur", time.Since(start).Round(time.Microsecond),
+			"req_id", chimw.GetReqID(r.Context()),
+		}
+		switch {
+		case r.URL.Path == "/healthz":
+			log.Debug("HTTP", fields...)
+		case ww.Status() >= 500:
+			log.Error("HTTP", fields...)
+		case ww.Status() >= 400:
+			log.Warn("HTTP", fields...)
+		default:
+			log.Info("HTTP", fields...)
+		}
+	})
+}
+
+// devLoginHandler is split out only because the inlined version drowned
+// the boot path in noise. Local-only — see security.md.
+func devLoginHandler(q *store.Queries, authSvc *auth.Service, ttl time.Duration) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		email := r.URL.Query().Get("email")
+		if email == "" {
+			http.Error(w, "missing email", http.StatusBadRequest)
+			return
+		}
+		u, err := q.GetUserByEmail(r.Context(), email)
+		if errors.Is(err, sql.ErrNoRows) {
+			log.Debug("Creating dev user", "email", email)
+			u, err = q.CreateUser(r.Context(), store.CreateUserParams{
+				ID:          uuid.NewString(),
+				Email:       email,
+				DisplayName: email,
+				CreatedAt:   time.Now().Unix(),
+			})
+		}
+		if err != nil {
+			log.Error("dev login: lookup/create user", "err", err, "email", email)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		tok, err := authSvc.IssueSession(r.Context(), u.ID)
+		if err != nil {
+			log.Error("dev login: issue session", "err", err, "user_id", u.ID)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		http.SetCookie(w, &http.Cookie{
+			Name:     auth.CookieName,
+			Value:    tok,
+			Path:     "/",
+			HttpOnly: true,
+			SameSite: http.SameSiteLaxMode,
+			Expires:  time.Now().Add(ttl),
 		})
+		log.Debug("Dev login OK", "email", email, "user_id", u.ID)
+		_, _ = w.Write([]byte("ok"))
 	}
 }

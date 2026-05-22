@@ -10,10 +10,38 @@
 package config
 
 import (
-	"github.com/caarlos0/env/v11"
+	"os"
+	"path/filepath"
 
-	_ "github.com/joho/godotenv/autoload" // load .env at package init
+	"github.com/caarlos0/env/v11"
+	"github.com/joho/godotenv"
 )
+
+// init walks up from the current directory looking for a .env file and
+// loads it. Plain godotenv/autoload only checks cwd, which breaks when
+// the binary is run from server/ during dev. Walking up means `task` from
+// the repo root, `air` from server/, and a built binary launched from
+// anywhere all pick up the same file.
+//
+// Existing env vars win over .env values — POSIX behaviour.
+func init() {
+	dir, err := os.Getwd()
+	if err != nil {
+		return
+	}
+	for {
+		path := filepath.Join(dir, ".env")
+		if _, err := os.Stat(path); err == nil {
+			_ = godotenv.Load(path)
+			return
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return // filesystem root; no .env anywhere
+		}
+		dir = parent
+	}
+}
 
 // Config wraps every server-level setting with sensible defaults.
 //

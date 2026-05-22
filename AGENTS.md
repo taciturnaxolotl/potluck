@@ -181,6 +181,13 @@ in parallel with `task watch`. Configuration is documented in
 [`CONFIG.md`](./CONFIG.md), generated from `server/internal/config/config.go`
 via `task generate`.
 
+> **Agents: don't start the server yourself.** The human running this repo
+> keeps `task watch` running in another pane. Spawning a second copy fights
+> for `:8080` and corrupts the dev SQLite WAL. `task test`, `task build`,
+> `task generate`, and codegen tasks are fine; anything that calls
+> `ListenAndServe` is not. Confirm a change works by reading logs from the
+> running instance, not by booting your own.
+
 ```bash
 # Dev — runs backend (air) and web (vite) in parallel
 task watch              # alias: task dev

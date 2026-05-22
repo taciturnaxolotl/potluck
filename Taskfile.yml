@@ -54,9 +54,8 @@ tasks:
 
   watch:server:
     desc: Watch the Go backend with air
-    dir: server
     cmds:
-      - air -c ../.air.toml
+      - air -c .air.toml
 
   watch:web:
     desc: Watch the SvelteKit web app
