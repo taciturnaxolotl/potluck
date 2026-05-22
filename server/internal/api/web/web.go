@@ -1,34 +1,38 @@
-// Package api wires HTTP handlers onto a chi router.
+// Package web implements the internal /api/* HTTP surface.
 //
-// All handlers in this package treat user identity as a precondition (see
-// auth.Require). Public endpoints (login, healthz) are mounted directly in
-// main.
-package api
+// Cookie-authenticated, used by the SvelteKit chat UI. Owns conversations,
+// drives the streaming tee, exposes API key management and contributions.
+//
+// Errors use the {"error":{"code","message"}} shape; the OpenAI envelope
+// lives in the v1 package.
+package web
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
-	"golang.org/x/time/rate"
 
+	apimw "github.com/taciturnaxolotl/potluck/internal/api/middleware"
 	"github.com/taciturnaxolotl/potluck/internal/auth"
 	"github.com/taciturnaxolotl/potluck/internal/ledger"
 	"github.com/taciturnaxolotl/potluck/internal/store"
 	"github.com/taciturnaxolotl/potluck/internal/stream"
 )
 
+// Server bundles the deps the web handlers need.
 type Server struct {
-	Q       *store.Queries
-	Auth    *auth.Service
-	Ledger  *ledger.Service
-	Hub     *stream.Hub
-	Limiter *rate.Limiter // crude global limiter; per-user comes later
+	Q      *store.Queries
+	Auth   *auth.Service
+	Ledger *ledger.Service
+	Hub    *stream.Hub
 }
 
-// Mount registers routes on r. Caller is expected to wrap with auth middleware.
+// Mount registers /api/* routes on r. The caller wraps with cookie-auth
+// + Require beforehand.
 func (s *Server) Mount(r chi.Router) {
 	r.Get("/me", s.handleMe)
 	r.Get("/balance", s.handleBalance)
@@ -39,7 +43,14 @@ func (s *Server) Mount(r chi.Router) {
 	r.Get("/conversations/{id}", s.handleGetConversation)
 	r.Get("/conversations/{id}/messages", s.handleListMessages)
 
-	r.Post("/chat", s.handleChat)
+	r.Get("/keys", s.handleListKeys)
+	r.Post("/keys", s.handleCreateKey)
+	r.Delete("/keys/{id}", s.handleRevokeKey)
+
+	r.Group(func(r chi.Router) {
+		r.Use(apimw.BalanceGate(s.Ledger, writeErr))
+		r.Post("/chat", s.handleChat)
+	})
 	r.Get("/streams/{id}/events", s.handleStreamEvents)
 }
 
@@ -51,19 +62,28 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
+// WriteErr is the exported form of writeErr — used by main to wire it as
+// the ErrorResponder for the /api/* middleware stack.
+func WriteErr(w http.ResponseWriter, code int, errCode, msg string) {
+	writeErr(w, code, errCode, msg)
+}
+
+// writeErr satisfies middleware.ErrorResponder for the web surface.
 func writeErr(w http.ResponseWriter, code int, errCode, msg string) {
 	writeJSON(w, code, map[string]any{"error": map[string]string{"code": errCode, "message": msg}})
 }
 
-// ---- handlers ----------------------------------------------------------
+func currentUser(r *http.Request) (*store.User, bool) { return apimw.UserFromContext(r.Context()) }
+
+// ---- account -----------------------------------------------------------
 
 func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
-	u, _ := auth.UserFromContext(r.Context())
+	u, _ := currentUser(r)
 	writeJSON(w, 200, u)
 }
 
 func (s *Server) handleBalance(w http.ResponseWriter, r *http.Request) {
-	u, _ := auth.UserFromContext(r.Context())
+	u, _ := currentUser(r)
 	bal, err := s.Ledger.Balance(r.Context(), u.ID)
 	if err != nil {
 		writeErr(w, 500, "internal", err.Error())
@@ -81,21 +101,18 @@ type contributeReq struct {
 }
 
 func (s *Server) handleContribute(w http.ResponseWriter, r *http.Request) {
-	u, _ := auth.UserFromContext(r.Context())
 	var req contributeReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeErr(w, 400, "bad_request", err.Error())
+		writeErr(w, 400, "invalid_request", err.Error())
 		return
 	}
-	// money.ParseUSD lives in the money pkg but we lean on it indirectly via ledger.
-	// Importing money here just for the parse is fine in a follow-up; for now
-	// require the client to send micros.
 	writeErr(w, 501, "not_implemented", "send amount_micros instead; client conversion pending")
-	_ = u
 }
 
+// ---- conversations -----------------------------------------------------
+
 func (s *Server) handleListConversations(w http.ResponseWriter, r *http.Request) {
-	u, _ := auth.UserFromContext(r.Context())
+	u, _ := currentUser(r)
 	convs, err := s.Q.ListConversationsForUser(r.Context(), store.ListConversationsForUserParams{UserID: u.ID, Limit: 100})
 	if err != nil {
 		writeErr(w, 500, "internal", err.Error())
@@ -109,7 +126,7 @@ type createConvReq struct {
 }
 
 func (s *Server) handleCreateConversation(w http.ResponseWriter, r *http.Request) {
-	u, _ := auth.UserFromContext(r.Context())
+	u, _ := currentUser(r)
 	var req createConvReq
 	_ = json.NewDecoder(r.Body).Decode(&req)
 	now := time.Now().Unix()
@@ -128,7 +145,7 @@ func (s *Server) handleCreateConversation(w http.ResponseWriter, r *http.Request
 }
 
 func (s *Server) handleGetConversation(w http.ResponseWriter, r *http.Request) {
-	u, _ := auth.UserFromContext(r.Context())
+	u, _ := currentUser(r)
 	id := chi.URLParam(r, "id")
 	conv, err := s.Q.GetConversation(r.Context(), store.GetConversationParams{ID: id, UserID: u.ID})
 	if err != nil {
@@ -139,7 +156,7 @@ func (s *Server) handleGetConversation(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleListMessages(w http.ResponseWriter, r *http.Request) {
-	u, _ := auth.UserFromContext(r.Context())
+	u, _ := currentUser(r)
 	id := chi.URLParam(r, "id")
 	if _, err := s.Q.GetConversation(r.Context(), store.GetConversationParams{ID: id, UserID: u.ID}); err != nil {
 		writeErr(w, 404, "not_found", "conversation not found")
@@ -153,15 +170,96 @@ func (s *Server) handleListMessages(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, msgs)
 }
 
+// ---- API keys ----------------------------------------------------------
+
+type createKeyReq struct {
+	Name             string `json:"name"`
+	MaxBudgetMicros  *int64 `json:"max_budget_micros,omitempty"`
+}
+
+// handleCreateKey mints an api key, returns the plaintext exactly once.
+func (s *Server) handleCreateKey(w http.ResponseWriter, r *http.Request) {
+	u, _ := currentUser(r)
+	var req createKeyReq
+	_ = json.NewDecoder(r.Body).Decode(&req)
+
+	gen, err := auth.NewKey()
+	if err != nil {
+		writeErr(w, 500, "internal", err.Error())
+		return
+	}
+	var maxBudget = sqlNullInt64Ptr(req.MaxBudgetMicros)
+	row, err := s.Q.CreateAPIKey(r.Context(), store.CreateAPIKeyParams{
+		ID:              uuid.NewString(),
+		UserID:          u.ID,
+		KeyHash:         gen.Hash,
+		KeyWord:         gen.Word,
+		KeyLast4:        gen.Last4,
+		Name:            req.Name,
+		MaxBudgetMicros: maxBudget,
+		CreatedAt:       time.Now().Unix(),
+	})
+	if err != nil {
+		writeErr(w, 500, "internal", err.Error())
+		return
+	}
+	writeJSON(w, 201, map[string]any{
+		"id":         row.ID,
+		"plaintext":  gen.Plaintext, // ONCE
+		"masked":     auth.MaskKey(gen.Plaintext),
+		"word":       row.KeyWord,
+		"last4":      row.KeyLast4,
+		"name":       row.Name,
+		"created_at": row.CreatedAt,
+	})
+}
+
+func (s *Server) handleListKeys(w http.ResponseWriter, r *http.Request) {
+	u, _ := currentUser(r)
+	rows, err := s.Q.ListAPIKeysForUser(r.Context(), u.ID)
+	if err != nil {
+		writeErr(w, 500, "internal", err.Error())
+		return
+	}
+	out := make([]map[string]any, 0, len(rows))
+	for _, k := range rows {
+		out = append(out, map[string]any{
+			"id":             k.ID,
+			"name":           k.Name,
+			"word":           k.KeyWord,
+			"last4":          k.KeyLast4,
+			"masked":         "pot_" + k.KeyWord + "_••••••••••••••••••_" + k.KeyLast4,
+			"spent_micros":   k.SpentMicros,
+			"created_at":     k.CreatedAt,
+			"last_used_at":   k.LastUsedAt.Int64,
+			"revoked_at":     k.RevokedAt.Int64,
+			"revoked":        k.RevokedAt.Valid,
+		})
+	}
+	writeJSON(w, 200, out)
+}
+
+func (s *Server) handleRevokeKey(w http.ResponseWriter, r *http.Request) {
+	u, _ := currentUser(r)
+	id := chi.URLParam(r, "id")
+	err := s.Q.RevokeAPIKey(r.Context(), store.RevokeAPIKeyParams{
+		RevokedAt: sqlNullInt64(time.Now().Unix()),
+		ID:        id,
+		UserID:    u.ID,
+	})
+	if err != nil {
+		writeErr(w, 500, "internal", err.Error())
+		return
+	}
+	w.WriteHeader(204)
+}
+
+// ---- chat / streams ----------------------------------------------------
+
 // handleChat is a stub for the streaming endpoint. The full implementation
 // wires provider.Client → stream.Producer → DB and returns the stream id.
 // See design/streaming.md.
-func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
-	u, _ := auth.UserFromContext(r.Context())
-	if err := s.Ledger.CanStart(r.Context(), u.ID); err != nil {
-		writeErr(w, 402, "insufficient_funds", err.Error())
-		return
-	}
+func (s *Server) handleChat(w http.ResponseWriter, _ *http.Request) {
 	writeErr(w, 501, "not_implemented", "chat streaming pending wiring")
 }
 
@@ -175,7 +273,11 @@ func (s *Server) handleStreamEvents(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(200)
 	flusher, _ := w.(http.Flusher)
 
-	events, _ := stream.Replay(r.Context(), s.Q, streamID, 0)
+	events, err := stream.Replay(r.Context(), s.Q, streamID, 0)
+	if err != nil && !errors.Is(err, http.ErrAbortHandler) {
+		// fall through; partial replay is fine
+		_ = err
+	}
 	for _, ev := range events {
 		b, _ := json.Marshal(ev)
 		_, _ = w.Write([]byte("data: "))

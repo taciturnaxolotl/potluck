@@ -19,16 +19,18 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/go-chi/chi/v5/middleware"
+	chimw "github.com/go-chi/chi/v5/middleware"
 	"github.com/google/uuid"
-	"golang.org/x/time/rate"
 
-	"github.com/taciturnaxolotl/potluck/internal/api"
+	"github.com/taciturnaxolotl/potluck/internal/api/middleware"
+	"github.com/taciturnaxolotl/potluck/internal/api/v1"
+	"github.com/taciturnaxolotl/potluck/internal/api/web"
 	"github.com/taciturnaxolotl/potluck/internal/auth"
 	"github.com/taciturnaxolotl/potluck/internal/config"
 	"github.com/taciturnaxolotl/potluck/internal/ledger"
 	"github.com/taciturnaxolotl/potluck/internal/migrations"
 	"github.com/taciturnaxolotl/potluck/internal/money"
+	"github.com/taciturnaxolotl/potluck/internal/provider"
 	"github.com/taciturnaxolotl/potluck/internal/store"
 	"github.com/taciturnaxolotl/potluck/internal/stream"
 
@@ -72,13 +74,13 @@ func main() {
 		cfg.Spend.MaxConcurrentStreams,
 	)
 	hub := stream.NewHub(q)
+	pioneer := provider.New(cfg.Pioneer.BaseURL, cfg.Pioneer.APIKey)
 
 	r := chi.NewRouter()
-	r.Use(middleware.RequestID)
-	r.Use(middleware.RealIP)
+	r.Use(chimw.RequestID)
+	r.Use(chimw.RealIP)
 	r.Use(slogRequest(logger))
-	r.Use(middleware.Recoverer)
-	r.Use(authSvc.Middleware)
+	r.Use(chimw.Recoverer)
 
 	r.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("ok"))
@@ -123,19 +125,32 @@ func main() {
 		})
 	}
 
-	apiSrv := &api.Server{
-		Q:       q,
-		Auth:    authSvc,
-		Ledger:  ledg,
-		Hub:     hub,
-		Limiter: rate.NewLimiter(rate.Limit(50), 100),
+	apiSrv := &web.Server{
+		Q:      q,
+		Auth:   authSvc,
+		Ledger: ledg,
+		Hub:    hub,
+	}
+	v1Srv := &v1.Server{
+		Q:        q,
+		Auth:     authSvc,
+		Ledger:   ledg,
+		Provider: pioneer,
 	}
 
+	// /api/* — cookie-authenticated, internal surface.
 	r.Route("/api", func(r chi.Router) {
-		r.Group(func(r chi.Router) {
-			r.Use(auth.Require)
-			apiSrv.Mount(r)
-		})
+		r.Use(authSvc.Middleware)
+		r.Use(auth.Require)
+		r.Use(middleware.RateLimit(20, 40, web.WriteErr))
+		apiSrv.Mount(r)
+	})
+
+	// /v1/* — bearer-authenticated, OpenAI-compatible public surface.
+	r.Route("/v1", func(r chi.Router) {
+		r.Use(middleware.BearerAuth(q, v1.WriteError))
+		r.Use(middleware.RateLimit(10, 20, v1.WriteError))
+		v1Srv.Mount(r)
 	})
 
 	srv := &http.Server{
@@ -166,7 +181,7 @@ func slogRequest(l *slog.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			start := time.Now()
-			ww := middleware.NewWrapResponseWriter(w, r.ProtoMajor)
+			ww := chimw.NewWrapResponseWriter(w, r.ProtoMajor)
 			next.ServeHTTP(ww, r)
 			l.Info("http",
 				"method", r.Method,
@@ -174,7 +189,7 @@ func slogRequest(l *slog.Logger) func(http.Handler) http.Handler {
 				"status", ww.Status(),
 				"bytes", ww.BytesWritten(),
 				"dur_ms", time.Since(start).Milliseconds(),
-				"req_id", middleware.GetReqID(r.Context()),
+				"req_id", chimw.GetReqID(r.Context()),
 			)
 		})
 	}

@@ -9,18 +9,23 @@ import (
 )
 
 type Querier interface {
+	AddAPIKeySpend(ctx context.Context, arg AddAPIKeySpendParams) error
 	AppendAssistantContent(ctx context.Context, arg AppendAssistantContentParams) error
 	AppendStreamChunk(ctx context.Context, arg AppendStreamChunkParams) error
 	ArchiveConversation(ctx context.Context, arg ArchiveConversationParams) error
 	CountActiveStreamsForUser(ctx context.Context, userID string) (int64, error)
+	CreateAPIKey(ctx context.Context, arg CreateAPIKeyParams) (ApiKey, error)
 	CreateContribution(ctx context.Context, arg CreateContributionParams) (Contribution, error)
 	CreateConversation(ctx context.Context, arg CreateConversationParams) (Conversation, error)
 	CreateSession(ctx context.Context, arg CreateSessionParams) (Session, error)
 	CreateStream(ctx context.Context, arg CreateStreamParams) (Stream, error)
 	CreateUser(ctx context.Context, arg CreateUserParams) (User, error)
+	DeleteExpiredIdempotency(ctx context.Context, expiresAt int64) error
 	DeleteExpiredSessions(ctx context.Context, expiresAt int64) error
 	DeleteSession(ctx context.Context, id string) error
+	GetAPIKeyByHash(ctx context.Context, keyHash string) (ApiKey, error)
 	GetConversation(ctx context.Context, arg GetConversationParams) (Conversation, error)
+	GetIdempotency(ctx context.Context, arg GetIdempotencyParams) (IdempotencyKey, error)
 	GetMessage(ctx context.Context, id string) (Message, error)
 	GetModelPrice(ctx context.Context, model string) (ModelPrice, error)
 	GetSession(ctx context.Context, arg GetSessionParams) (Session, error)
@@ -28,6 +33,7 @@ type Querier interface {
 	GetStreamByIdempotencyKey(ctx context.Context, arg GetStreamByIdempotencyKeyParams) (Stream, error)
 	GetUserByEmail(ctx context.Context, email string) (User, error)
 	GetUserByID(ctx context.Context, id string) (User, error)
+	ListAPIKeysForUser(ctx context.Context, userID string) ([]ApiKey, error)
 	ListContributionsForUser(ctx context.Context, arg ListContributionsForUserParams) ([]Contribution, error)
 	ListConversationsForUser(ctx context.Context, arg ListConversationsForUserParams) ([]Conversation, error)
 	ListEstimatedSpends(ctx context.Context, limit int64) ([]Spend, error)
@@ -35,9 +41,14 @@ type Querier interface {
 	ListModelPrices(ctx context.Context) ([]ModelPrice, error)
 	ListStreamChunksAfter(ctx context.Context, arg ListStreamChunksAfterParams) ([]ListStreamChunksAfterRow, error)
 	MaxStreamChunkSeq(ctx context.Context, streamID string) (interface{}, error)
+	PutIdempotency(ctx context.Context, arg PutIdempotencyParams) error
+	RenameAPIKey(ctx context.Context, arg RenameAPIKeyParams) error
+	RevokeAPIKey(ctx context.Context, arg RevokeAPIKeyParams) error
 	SetStreamStatus(ctx context.Context, arg SetStreamStatusParams) error
 	SumContributions(ctx context.Context, userID string) (interface{}, error)
 	SumSpends(ctx context.Context, userID string) (interface{}, error)
+	// Debounced caller: only call when last_used_at is older than 60s.
+	TouchAPIKey(ctx context.Context, arg TouchAPIKeyParams) error
 	TouchConversation(ctx context.Context, arg TouchConversationParams) error
 	TouchSession(ctx context.Context, arg TouchSessionParams) error
 	TouchUser(ctx context.Context, arg TouchUserParams) error

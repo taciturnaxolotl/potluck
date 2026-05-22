@@ -92,6 +92,13 @@ func UserFromContext(ctx context.Context) (*store.User, bool) {
 	return u, ok
 }
 
+// WithUser returns ctx augmented with u. Used by both the cookie middleware
+// here and the bearer middleware in api/middleware so they share one
+// context key — handlers don't care which path authenticated the request.
+func WithUser(ctx context.Context, u *store.User) context.Context {
+	return context.WithValue(ctx, userKey, u)
+}
+
 // Require is a middleware that 401s anonymous requests.
 func Require(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

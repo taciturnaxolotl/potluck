@@ -84,7 +84,7 @@ func (q *Queries) ListContributionsForUser(ctx context.Context, arg ListContribu
 }
 
 const listEstimatedSpends = `-- name: ListEstimatedSpends :many
-SELECT id, user_id, stream_id, model, input_tokens, output_tokens, amount_micros, is_estimated, created_at FROM spends WHERE is_estimated = 1 ORDER BY created_at ASC LIMIT ?
+SELECT id, user_id, stream_id, model, input_tokens, output_tokens, amount_micros, is_estimated, created_at, api_key_id FROM spends WHERE is_estimated = 1 ORDER BY created_at ASC LIMIT ?
 `
 
 func (q *Queries) ListEstimatedSpends(ctx context.Context, limit int64) ([]Spend, error) {
@@ -106,6 +106,7 @@ func (q *Queries) ListEstimatedSpends(ctx context.Context, limit int64) ([]Spend
 			&i.AmountMicros,
 			&i.IsEstimated,
 			&i.CreatedAt,
+			&i.ApiKeyID,
 		); err != nil {
 			return nil, err
 		}
@@ -152,7 +153,7 @@ ON CONFLICT(stream_id) DO UPDATE SET
     output_tokens = excluded.output_tokens,
     amount_micros = excluded.amount_micros,
     is_estimated  = excluded.is_estimated
-RETURNING id, user_id, stream_id, model, input_tokens, output_tokens, amount_micros, is_estimated, created_at
+RETURNING id, user_id, stream_id, model, input_tokens, output_tokens, amount_micros, is_estimated, created_at, api_key_id
 `
 
 type UpsertSpendParams struct {
@@ -190,6 +191,7 @@ func (q *Queries) UpsertSpend(ctx context.Context, arg UpsertSpendParams) (Spend
 		&i.AmountMicros,
 		&i.IsEstimated,
 		&i.CreatedAt,
+		&i.ApiKeyID,
 	)
 	return i, err
 }

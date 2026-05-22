@@ -8,6 +8,20 @@ import (
 	"database/sql"
 )
 
+type ApiKey struct {
+	ID              string        `json:"id"`
+	UserID          string        `json:"user_id"`
+	KeyHash         string        `json:"key_hash"`
+	KeyWord         string        `json:"key_word"`
+	KeyLast4        string        `json:"key_last4"`
+	Name            string        `json:"name"`
+	MaxBudgetMicros sql.NullInt64 `json:"max_budget_micros"`
+	SpentMicros     int64         `json:"spent_micros"`
+	LastUsedAt      sql.NullInt64 `json:"last_used_at"`
+	CreatedAt       int64         `json:"created_at"`
+	RevokedAt       sql.NullInt64 `json:"revoked_at"`
+}
+
 type Contribution struct {
 	ID           string `json:"id"`
 	UserID       string `json:"user_id"`
@@ -23,6 +37,18 @@ type Conversation struct {
 	CreatedAt  int64         `json:"created_at"`
 	UpdatedAt  int64         `json:"updated_at"`
 	ArchivedAt sql.NullInt64 `json:"archived_at"`
+}
+
+type IdempotencyKey struct {
+	Key          string         `json:"key"`
+	UserID       string         `json:"user_id"`
+	ApiKeyID     sql.NullString `json:"api_key_id"`
+	RequestHash  string         `json:"request_hash"`
+	Status       int64          `json:"status"`
+	ResponseBody []byte         `json:"response_body"`
+	ResponseType string         `json:"response_type"`
+	CreatedAt    int64          `json:"created_at"`
+	ExpiresAt    int64          `json:"expires_at"`
 }
 
 type Message struct {
@@ -51,15 +77,16 @@ type Session struct {
 }
 
 type Spend struct {
-	ID           string `json:"id"`
-	UserID       string `json:"user_id"`
-	StreamID     string `json:"stream_id"`
-	Model        string `json:"model"`
-	InputTokens  int64  `json:"input_tokens"`
-	OutputTokens int64  `json:"output_tokens"`
-	AmountMicros int64  `json:"amount_micros"`
-	IsEstimated  int64  `json:"is_estimated"`
-	CreatedAt    int64  `json:"created_at"`
+	ID           string         `json:"id"`
+	UserID       string         `json:"user_id"`
+	StreamID     string         `json:"stream_id"`
+	Model        string         `json:"model"`
+	InputTokens  int64          `json:"input_tokens"`
+	OutputTokens int64          `json:"output_tokens"`
+	AmountMicros int64          `json:"amount_micros"`
+	IsEstimated  int64          `json:"is_estimated"`
+	CreatedAt    int64          `json:"created_at"`
+	ApiKeyID     sql.NullString `json:"api_key_id"`
 }
 
 type Stream struct {
