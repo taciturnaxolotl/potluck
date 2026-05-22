@@ -17,6 +17,14 @@ inactivity (the last_used_at column is bumped on every request).
  - Pioneer.ai inference credentials.
    - `PIONEER_API_KEY` - API key. Required; the server refuses to start without it in production.
    - `PIONEER_BASE_URL` (default: `https://api.pioneer.ai`) - Base URL — override for testing against the fake provider.
+ - Hack Club Auth (HCA) — OAuth provider for "Sign in with Hack Club".
+   - `HCA_CLIENT_ID` - OAuth client id from the Developer Apps page on identity.hackclub.com.
+   - `HCA_CLIENT_SECRET` - OAuth client secret. Treat like a password.
+   - `HCA_BASE_URL` (default: `https://identity.hackclub.com`) - Base URL of the HCA service. Override only for testing against a
+staging instance.
+   - `HCA_REDIRECT_URL` (default: `http://localhost:8080/auth/callback`) - Redirect URI registered with the HCA app. Must match exactly.
+In dev this is typically http://localhost:8080/auth/callback.
+   - `HCA_SCOPES` (default: `openid email name slack_id verification_status`) - Space-separated scopes requested at authorize time.
  - Spend policy.
    - `POTLUCK_SPEND_MIN_BALANCE_MICROS` (default: `250000`) - Minimum balance (USD micros) below which new streams are rejected.
 Default = $0.25 in micros.
@@ -25,7 +33,4 @@ Default = $0.25 in micros.
    - `LITESTREAM_B2_BUCKET` - B2 bucket name.
    - `LITESTREAM_B2_KEY_ID` - B2 application key id.
    - `LITESTREAM_B2_APPLICATION_KEY` - B2 application key.
- - Notifications via ntfy.sh.
-   - `NTFY_TOPIC` - Topic name to publish to.
-   - `NTFY_TOKEN` - Bearer token for authenticated topics.
 

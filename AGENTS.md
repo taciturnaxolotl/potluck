@@ -476,7 +476,6 @@ quirk is discovered.
 |---|---|---|
 | pioneer.ai | LLM provider | `PIONEER_API_KEY`, `PIONEER_BASE_URL` |
 | Backblaze B2 | Litestream backup target | `LITESTREAM_B2_*` |
-| ntfy.sh | Alerting | `NTFY_TOPIC`, `NTFY_TOKEN` |
 | Cloudflare | Worker hosting | (configured in `wrangler.toml`) |
 
 ## See also

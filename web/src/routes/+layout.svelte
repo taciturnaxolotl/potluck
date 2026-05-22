@@ -41,6 +41,96 @@
   // for unauthenticated visitors) get a minimal centered layout.
   let showSidebar = $derived(user !== null);
 
+  // When an error is rendering (404, 500, etc.) we skip both the sidebar
+  // and the splash shell — the +error.svelte page paints its own
+  // full-bleed shell with its own theme toggle.
+  let isError = $derived(page.error !== null && page.error !== undefined);
+
+  // ---- auth-error toast (splash nav only) -----------------------------
+  // The Go backend bounces failed sign-ins back to /?auth_error=<code>.
+  // We surface a friendly message inline in the splash nav, between the
+  // brand and the sign-in button. Hover pauses the countdown and resets
+  // it; otherwise the toast self-dismisses after AUTH_TOAST_MS.
+  const authMessages: Record<string, string> = {
+    missing_state:
+      'OAuth state cookie missing on callback. The login tab probably expired (10 min limit); hit sign-in again.',
+    bad_state:
+      "OAuth `state` param didn't match the cookie. Possible CSRF or a stale tab; retry sign-in from a fresh page.",
+    no_code:
+      'Hack Club Auth redirected back without a `code` param. Usually means the authorize step was denied or upstream errored; retry.',
+    exchange_failed:
+      "Code-for-token exchange against HCA's `/oauth/token` failed. Could be transient network or bad client credentials; retry, then check server logs.",
+    me_failed:
+      "Identity lookup against HCA's `/api/v1/me` failed. Token was issued but the call errored; retry.",
+    no_identity:
+      "HCA's `/api/v1/me` returned an empty identity (no `id` field). Probably an upstream bug or a scope issue; retry.",
+    user_upsert_failed:
+      "Database upsert on `users` failed after auth. Server-side, not yours; retry, then yell at Kieran.",
+    session_failed:
+      "Session token mint failed after a successful HCA auth. You're authenticated upstream but we couldn't issue a cookie; retry."
+  };
+  const authError = $derived(page.url.searchParams.get('auth_error'));
+  const authMessageRaw = $derived(
+    authError
+      ? (authMessages[authError] ?? `Sign-in failed at an unknown step (\`${authError}\`). Retry, then check server logs.`)
+      : null
+  );
+  let dismissed = $state(false);
+  const authMessage = $derived(dismissed ? null : authMessageRaw);
+
+  const AUTH_TOAST_MS = 25_000;
+  let progress = $state(1);
+  let paused = $state(false);
+  let rafId = 0;
+  let lastTick = 0;
+
+  function dismissAuth() {
+    dismissed = true;
+    cancelAnimationFrame(rafId);
+    rafId = 0;
+    const url = new URL(window.location.href);
+    url.searchParams.delete('auth_error');
+    history.replaceState(history.state, '', url.toString());
+  }
+
+  function tick(now: number) {
+    if (lastTick === 0) lastTick = now;
+    const dt = now - lastTick;
+    lastTick = now;
+    if (!paused) {
+      progress = Math.max(0, progress - dt / AUTH_TOAST_MS);
+      if (progress <= 0) {
+        dismissAuth();
+        return;
+      }
+    }
+    rafId = requestAnimationFrame(tick);
+  }
+
+  $effect(() => {
+    if (!authMessage) {
+      cancelAnimationFrame(rafId);
+      rafId = 0;
+      return;
+    }
+    progress = 1;
+    lastTick = 0;
+    rafId = requestAnimationFrame(tick);
+    return () => {
+      cancelAnimationFrame(rafId);
+      rafId = 0;
+    };
+  });
+
+  function pauseTimer() {
+    paused = true;
+    progress = 1;
+  }
+  function resumeTimer() {
+    paused = false;
+    lastTick = 0;
+  }
+
   // Active nav item is derived from the current route. Each entry's `match`
   // returns true when its href is the active page.
   type NavItem = { label: string; href: string; section: string };
@@ -66,7 +156,9 @@
   }
 </script>
 
-{#if showSidebar}
+{#if isError}
+  {@render children()}
+{:else if showSidebar}
   <div class="shell">
     <aside class="sidebar">
       <div class="brand">potluck</div>
@@ -107,7 +199,28 @@
   <div class="splash-shell">
     <header class="splash-nav">
       <a class="brand-inline" href="/">potluck</a>
-      <a class="splash-signin" href="/api/dev/login?email=you@example.com">Sign in</a>
+      {#if authMessage}
+        <div
+          class="auth-nav-toast"
+          role="alert"
+          aria-live="polite"
+          onmouseenter={pauseTimer}
+          onmouseleave={resumeTimer}
+          onfocusin={pauseTimer}
+          onfocusout={resumeTimer}
+        >
+          <div class="auth-nav-body">
+            <span class="auth-nav-label">Sign-in</span>
+            <span class="auth-nav-msg">{authMessage}</span>
+          </div>
+          <div
+            class="auth-nav-progress"
+            style="transform: scaleX({progress})"
+            aria-hidden="true"
+          ></div>
+        </div>
+      {/if}
+      <a class="splash-signin" href="/auth/login">Sign in with Hack Club</a>
     </header>
     <main class="splash-main">
       {#if authChecked}
@@ -237,11 +350,84 @@
     flex-direction: column;
   }
   .splash-nav {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 1.25rem 2rem;
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    align-items: stretch;
+    gap: 1rem;
+    padding: 0.75rem 2rem;
     border-bottom: 1px solid var(--border);
+  }
+  .splash-nav > .brand-inline {
+    justify-self: start;
+    align-self: center;
+  }
+  .splash-nav > .splash-signin {
+    justify-self: end;
+    align-self: center;
+    grid-column: 3;
+  }
+  .splash-nav > .auth-nav-toast {
+    justify-self: center;
+    align-self: stretch;
+    grid-column: 2;
+    display: flex;
+    flex-direction: column;
+  }
+  .auth-nav-toast {
+    max-width: min(34rem, 100%);
+    border: 1px solid var(--accent);
+    border-radius: var(--radius-sm);
+    background: var(--bg-surface);
+    color: var(--text);
+    overflow: hidden;
+    animation: auth-nav-in 180ms ease-out;
+  }
+  .auth-nav-body {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 0.65rem;
+    padding: 0.65rem 1rem;
+    font-size: 0.9rem;
+    line-height: 1.35;
+  }
+  .auth-nav-label {
+    font-family: var(--font-mono);
+    font-size: 0.65rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--accent-eyebrow, var(--accent));
+    flex-shrink: 0;
+  }
+  .auth-nav-msg {
+    flex: 1;
+    min-width: 0;
+  }
+  .auth-nav-progress {
+    height: 2px;
+    background: var(--accent);
+    transform-origin: left center;
+    transform: scaleX(1);
+    transition: transform 80ms linear;
+    will-change: transform;
+  }
+  @keyframes auth-nav-in {
+    from {
+      opacity: 0;
+      transform: translateY(-3px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .auth-nav-toast {
+      animation: none;
+    }
+    .auth-nav-progress {
+      transition: none;
+    }
   }
   .brand-inline {
     font-family: var(--font-serif);
@@ -292,6 +478,20 @@
     }
     .main {
       padding: 1.25rem;
+    }
+    .splash-nav {
+      grid-template-columns: 1fr auto;
+      grid-template-rows: auto auto;
+      row-gap: 0.6rem;
+    }
+    .splash-nav > .auth-nav-toast {
+      grid-column: 1 / -1;
+      grid-row: 2;
+      justify-self: stretch;
+    }
+    .splash-nav > .splash-signin {
+      grid-column: 2;
+      grid-row: 1;
     }
   }
 </style>

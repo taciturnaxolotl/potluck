@@ -20,13 +20,13 @@ import (
 	"charm.land/log/v2"
 	"github.com/go-chi/chi/v5"
 	chimw "github.com/go-chi/chi/v5/middleware"
-	"github.com/google/uuid"
 
 	"github.com/taciturnaxolotl/potluck/internal/api/middleware"
 	"github.com/taciturnaxolotl/potluck/internal/api/v1"
 	"github.com/taciturnaxolotl/potluck/internal/api/web"
 	"github.com/taciturnaxolotl/potluck/internal/auth"
 	"github.com/taciturnaxolotl/potluck/internal/config"
+	"github.com/taciturnaxolotl/potluck/internal/hca"
 	"github.com/taciturnaxolotl/potluck/internal/ledger"
 	"github.com/taciturnaxolotl/potluck/internal/migrations"
 	"github.com/taciturnaxolotl/potluck/internal/money"
@@ -100,6 +100,16 @@ func main() {
 		log.Warn("pioneer.ai not configured — /v1/* will refuse upstream calls")
 	}
 
+	// Hack Club Auth client. Nil when unconfigured; the handlers degrade
+	// gracefully and return 503 with a friendly note.
+	var hcaClient *hca.Client
+	if cfg.HCA.Valid() {
+		hcaClient = hca.New(cfg.HCA.BaseURL, cfg.HCA.ClientID, cfg.HCA.ClientSecret, cfg.HCA.RedirectURL, cfg.HCA.Scopes)
+		log.Info("Hack Club Auth wired", "redirect", cfg.HCA.RedirectURL)
+	} else {
+		log.Warn("Hack Club Auth not configured — /auth/login will return 503")
+	}
+
 	r := chi.NewRouter()
 	r.Use(chimw.RequestID)
 	r.Use(chimw.RealIP)
@@ -113,12 +123,10 @@ func main() {
 	// /api/stats — public splash data; no auth, no PII.
 	r.Get("/api/stats", publicStatsHandler(q))
 
-	// Local-only login: trade an email for a session cookie. Real auth
-	// lives behind a real provider — see design/security.md.
-	if cfg.IsLocal() {
-		log.Debug("Mounting dev login endpoint", "path", "/api/dev/login")
-		r.Post("/api/dev/login", devLoginHandler(q, authSvc, time.Duration(cfg.SessionTTL)*time.Second))
-	}
+	// Hack Club Auth: standard OAuth authorization-code flow.
+	sessionTTL := time.Duration(cfg.SessionTTL) * time.Second
+	r.Get("/auth/login", hcaLoginHandler(hcaClient, cfg.IsProduction()))
+	r.Get("/auth/callback", hcaCallbackHandler(hcaClient, q, authSvc, sessionTTL, cfg.IsProduction()))
 
 	apiSrv := &web.Server{
 		Q:      q,
@@ -211,47 +219,4 @@ func requestLogger(next http.Handler) http.Handler {
 			log.Info("HTTP", fields...)
 		}
 	})
-}
-
-// devLoginHandler is split out only because the inlined version drowned
-// the boot path in noise. Local-only — see security.md.
-func devLoginHandler(q *store.Queries, authSvc *auth.Service, ttl time.Duration) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		email := r.URL.Query().Get("email")
-		if email == "" {
-			http.Error(w, "missing email", http.StatusBadRequest)
-			return
-		}
-		u, err := q.GetUserByEmail(r.Context(), email)
-		if errors.Is(err, sql.ErrNoRows) {
-			log.Debug("Creating dev user", "email", email)
-			u, err = q.CreateUser(r.Context(), store.CreateUserParams{
-				ID:          uuid.NewString(),
-				Email:       email,
-				DisplayName: email,
-				CreatedAt:   time.Now().Unix(),
-			})
-		}
-		if err != nil {
-			log.Error("dev login: lookup/create user", "err", err, "email", email)
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		tok, err := authSvc.IssueSession(r.Context(), u.ID)
-		if err != nil {
-			log.Error("dev login: issue session", "err", err, "user_id", u.ID)
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		http.SetCookie(w, &http.Cookie{
-			Name:     auth.CookieName,
-			Value:    tok,
-			Path:     "/",
-			HttpOnly: true,
-			SameSite: http.SameSiteLaxMode,
-			Expires:  time.Now().Add(ttl),
-		})
-		log.Debug("Dev login OK", "email", email, "user_id", u.ID)
-		_, _ = w.Write([]byte("ok"))
-	}
 }

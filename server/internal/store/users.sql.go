@@ -13,7 +13,7 @@ import (
 const createUser = `-- name: CreateUser :one
 INSERT INTO users (id, email, display_name, created_at)
 VALUES (?, ?, ?, ?)
-RETURNING id, email, display_name, created_at, last_seen_at
+RETURNING id, email, display_name, created_at, last_seen_at, hca_id, slack_id, verification_status
 `
 
 type CreateUserParams struct {
@@ -37,12 +37,15 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 		&i.DisplayName,
 		&i.CreatedAt,
 		&i.LastSeenAt,
+		&i.HcaID,
+		&i.SlackID,
+		&i.VerificationStatus,
 	)
 	return i, err
 }
 
 const getUserByEmail = `-- name: GetUserByEmail :one
-SELECT id, email, display_name, created_at, last_seen_at FROM users WHERE email = ?
+SELECT id, email, display_name, created_at, last_seen_at, hca_id, slack_id, verification_status FROM users WHERE email = ?
 `
 
 func (q *Queries) GetUserByEmail(ctx context.Context, email string) (User, error) {
@@ -54,12 +57,35 @@ func (q *Queries) GetUserByEmail(ctx context.Context, email string) (User, error
 		&i.DisplayName,
 		&i.CreatedAt,
 		&i.LastSeenAt,
+		&i.HcaID,
+		&i.SlackID,
+		&i.VerificationStatus,
+	)
+	return i, err
+}
+
+const getUserByHCAID = `-- name: GetUserByHCAID :one
+SELECT id, email, display_name, created_at, last_seen_at, hca_id, slack_id, verification_status FROM users WHERE hca_id = ?
+`
+
+func (q *Queries) GetUserByHCAID(ctx context.Context, hcaID sql.NullString) (User, error) {
+	row := q.db.QueryRowContext(ctx, getUserByHCAID, hcaID)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.DisplayName,
+		&i.CreatedAt,
+		&i.LastSeenAt,
+		&i.HcaID,
+		&i.SlackID,
+		&i.VerificationStatus,
 	)
 	return i, err
 }
 
 const getUserByID = `-- name: GetUserByID :one
-SELECT id, email, display_name, created_at, last_seen_at FROM users WHERE id = ?
+SELECT id, email, display_name, created_at, last_seen_at, hca_id, slack_id, verification_status FROM users WHERE id = ?
 `
 
 func (q *Queries) GetUserByID(ctx context.Context, id string) (User, error) {
@@ -71,6 +97,9 @@ func (q *Queries) GetUserByID(ctx context.Context, id string) (User, error) {
 		&i.DisplayName,
 		&i.CreatedAt,
 		&i.LastSeenAt,
+		&i.HcaID,
+		&i.SlackID,
+		&i.VerificationStatus,
 	)
 	return i, err
 }
@@ -87,4 +116,53 @@ type TouchUserParams struct {
 func (q *Queries) TouchUser(ctx context.Context, arg TouchUserParams) error {
 	_, err := q.db.ExecContext(ctx, touchUser, arg.LastSeenAt, arg.ID)
 	return err
+}
+
+const upsertUserByHCAID = `-- name: UpsertUserByHCAID :one
+INSERT INTO users (
+    id, email, display_name, hca_id, slack_id, verification_status, created_at
+) VALUES (?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(hca_id) DO UPDATE SET
+    email = excluded.email,
+    display_name = excluded.display_name,
+    slack_id = excluded.slack_id,
+    verification_status = excluded.verification_status
+RETURNING id, email, display_name, created_at, last_seen_at, hca_id, slack_id, verification_status
+`
+
+type UpsertUserByHCAIDParams struct {
+	ID                 string         `json:"id"`
+	Email              string         `json:"email"`
+	DisplayName        string         `json:"display_name"`
+	HcaID              sql.NullString `json:"hca_id"`
+	SlackID            sql.NullString `json:"slack_id"`
+	VerificationStatus sql.NullString `json:"verification_status"`
+	CreatedAt          int64          `json:"created_at"`
+}
+
+// Find-or-create by HCA id, refreshing the cached identity fields on each
+// successful sign-in. Email is updated too because HCA users can change
+// theirs and the local copy should track upstream.
+func (q *Queries) UpsertUserByHCAID(ctx context.Context, arg UpsertUserByHCAIDParams) (User, error) {
+	row := q.db.QueryRowContext(ctx, upsertUserByHCAID,
+		arg.ID,
+		arg.Email,
+		arg.DisplayName,
+		arg.HcaID,
+		arg.SlackID,
+		arg.VerificationStatus,
+		arg.CreatedAt,
+	)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.DisplayName,
+		&i.CreatedAt,
+		&i.LastSeenAt,
+		&i.HcaID,
+		&i.SlackID,
+		&i.VerificationStatus,
+	)
+	return i, err
 }

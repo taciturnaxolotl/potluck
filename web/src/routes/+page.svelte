@@ -64,6 +64,7 @@
     </p>
   </header>
 
+
   <section class="stats" aria-label="pool stats">
     <div class="stat-grid">
       {#if stats}

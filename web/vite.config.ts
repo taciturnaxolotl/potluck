@@ -32,7 +32,14 @@ export default defineConfig({
     // different name. `.bore.dunkirk.sh` covers any subdomain.
     allowedHosts: ['potluck.bore.dunkirk.sh', '.bore.dunkirk.sh', 'localhost'],
     proxy: {
+      // Both /api/* and /auth/* are owned by the Go backend. Vite forwards
+      // them verbatim; SvelteKit never sees them. The Cloudflare worker
+      // does the same in production via /web/src/routes/api/[...path].
       '/api': {
+        target: 'http://localhost:8080',
+        changeOrigin: false
+      },
+      '/auth': {
         target: 'http://localhost:8080',
         changeOrigin: false
       }

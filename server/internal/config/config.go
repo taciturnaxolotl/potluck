@@ -72,14 +72,14 @@ type Config struct {
 	// Pioneer.ai inference credentials.
 	Pioneer Pioneer `envPrefix:"PIONEER_"`
 
+	// Hack Club Auth (HCA) — OAuth provider for "Sign in with Hack Club".
+	HCA HCAConfig `envPrefix:"HCA_"`
+
 	// Spend policy.
 	Spend SpendConfig `envPrefix:"POTLUCK_SPEND_"`
 
 	// Litestream replication.
 	Litestream LitestreamConfig `envPrefix:"LITESTREAM_"`
-
-	// Notifications via ntfy.sh.
-	Ntfy NtfyConfig `envPrefix:"NTFY_"`
 }
 
 // Pioneer holds the upstream pioneer.ai inference credentials.
@@ -93,6 +93,32 @@ type Pioneer struct {
 
 // Valid returns true if pioneer is configured.
 func (p Pioneer) Valid() bool { return p.APIKey != "" }
+
+// HCAConfig holds the Hack Club Auth OAuth credentials. Empty client_id
+// disables the integration entirely (the splash sign-in button still
+// renders but the callback returns 503 — useful for local dev where you
+// haven't registered a client).
+type HCAConfig struct {
+	// OAuth client id from the Developer Apps page on identity.hackclub.com.
+	ClientID string `env:"CLIENT_ID"`
+
+	// OAuth client secret. Treat like a password.
+	ClientSecret string `env:"CLIENT_SECRET"`
+
+	// Base URL of the HCA service. Override only for testing against a
+	// staging instance.
+	BaseURL string `env:"BASE_URL" envDefault:"https://identity.hackclub.com"`
+
+	// Redirect URI registered with the HCA app. Must match exactly.
+	// In dev this is typically http://localhost:8080/auth/callback.
+	RedirectURL string `env:"REDIRECT_URL" envDefault:"http://localhost:8080/auth/callback"`
+
+	// Space-separated scopes requested at authorize time.
+	Scopes string `env:"SCOPES" envDefault:"openid email name slack_id verification_status"`
+}
+
+// Valid returns true if HCA is wired up.
+func (h HCAConfig) Valid() bool { return h.ClientID != "" && h.ClientSecret != "" }
 
 // SpendConfig holds the dollar-floor and concurrency policy that gates
 // new streams. See design/accounting.md for rationale.
@@ -124,18 +150,6 @@ type LitestreamConfig struct {
 func (l LitestreamConfig) Valid() bool {
 	return l.B2Bucket != "" && l.B2KeyID != "" && l.B2ApplicationKey != ""
 }
-
-// NtfyConfig holds ntfy.sh notification settings.
-type NtfyConfig struct {
-	// Topic name to publish to.
-	Topic string `env:"TOPIC"`
-
-	// Bearer token for authenticated topics.
-	Token string `env:"TOKEN"`
-}
-
-// Valid returns true if ntfy is configured.
-func (n NtfyConfig) Valid() bool { return n.Topic != "" }
 
 // IsProduction reports whether this is a production build.
 func (c Config) IsProduction() bool { return c.Environment == "production" }

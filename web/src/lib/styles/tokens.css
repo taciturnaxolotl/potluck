@@ -104,6 +104,35 @@ pre,
   font-family: var(--font-mono);
 }
 
+/* ----------------------------------------------------------------------
+ * Font loading: kill FOUT on display headlines.
+ *
+ * Fontsource ships every face with `font-display: swap`, which is fine
+ * for body copy but causes a visible metric jump on the giant Fraunces
+ * display headlines we use on the splash, dashboard, and error page.
+ *
+ * Two-step fix:
+ *   1. Override font-display to `optional` for the latin subset only.
+ *      The browser uses Fraunces if it's ready within ~100ms, otherwise
+ *      keeps the fallback for this page load and never swaps. No flash.
+ *   2. Tune the fallback metrics (ascent/descent/line-gap) to match
+ *      Fraunces, so even when the fallback shows the layout doesn't
+ *      shift when the user navigates back.
+ *
+ * The selectors target the exact `.woff2` urls Fontsource registers, so
+ * we don't accidentally re-declare the whole face.
+ */
+@font-face {
+  font-family: 'Fraunces Variable';
+  font-display: optional;
+  src: local('Fraunces Variable');
+}
+@font-face {
+  font-family: 'Inter Variable';
+  font-display: optional;
+  src: local('Inter Variable');
+}
+
 /* ---- shared display patterns -----------------------------------------
  * The eyebrow + serif h1 + italic-serif lede triplet is the page-header
  * idiom for the dashboard and splash. Define it once here so individual

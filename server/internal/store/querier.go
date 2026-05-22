@@ -6,6 +6,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 )
 
 type Querier interface {
@@ -32,6 +33,7 @@ type Querier interface {
 	GetStream(ctx context.Context, id string) (Stream, error)
 	GetStreamByIdempotencyKey(ctx context.Context, arg GetStreamByIdempotencyKeyParams) (Stream, error)
 	GetUserByEmail(ctx context.Context, email string) (User, error)
+	GetUserByHCAID(ctx context.Context, hcaID sql.NullString) (User, error)
 	GetUserByID(ctx context.Context, id string) (User, error)
 	ListAPIKeysForUser(ctx context.Context, userID string) ([]ApiKey, error)
 	ListContributionsForUser(ctx context.Context, arg ListContributionsForUserParams) ([]Contribution, error)
@@ -63,6 +65,10 @@ type Querier interface {
 	UpsertMessage(ctx context.Context, arg UpsertMessageParams) (Message, error)
 	UpsertModelPrice(ctx context.Context, arg UpsertModelPriceParams) error
 	UpsertSpend(ctx context.Context, arg UpsertSpendParams) (Spend, error)
+	// Find-or-create by HCA id, refreshing the cached identity fields on each
+	// successful sign-in. Email is updated too because HCA users can change
+	// theirs and the local copy should track upstream.
+	UpsertUserByHCAID(ctx context.Context, arg UpsertUserByHCAIDParams) (User, error)
 }
 
 var _ Querier = (*Queries)(nil)

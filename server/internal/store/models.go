@@ -112,9 +112,12 @@ type StreamChunk struct {
 }
 
 type User struct {
-	ID          string        `json:"id"`
-	Email       string        `json:"email"`
-	DisplayName string        `json:"display_name"`
-	CreatedAt   int64         `json:"created_at"`
-	LastSeenAt  sql.NullInt64 `json:"last_seen_at"`
+	ID                 string         `json:"id"`
+	Email              string         `json:"email"`
+	DisplayName        string         `json:"display_name"`
+	CreatedAt          int64          `json:"created_at"`
+	LastSeenAt         sql.NullInt64  `json:"last_seen_at"`
+	HcaID              sql.NullString `json:"hca_id"`
+	SlackID            sql.NullString `json:"slack_id"`
+	VerificationStatus sql.NullString `json:"verification_status"`
 }
