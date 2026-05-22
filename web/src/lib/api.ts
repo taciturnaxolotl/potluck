@@ -1,0 +1,88 @@
+/**
+ * Tiny `/api` client. Stays mechanical: all data flow is client-first via
+ * Dexie + this client. Don't add caching here.
+ */
+
+export type APIError = {
+  code: string;
+  message: string;
+};
+
+export class HTTPError extends Error {
+  status: number;
+  code: string;
+  constructor(status: number, code: string, message: string) {
+    super(message);
+    this.status = status;
+    this.code = code;
+  }
+}
+
+async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+  const res = await fetch(path, {
+    method,
+    headers: body ? { 'content-type': 'application/json' } : undefined,
+    body: body ? JSON.stringify(body) : undefined,
+    credentials: 'include'
+  });
+  if (!res.ok) {
+    let code = 'http_error',
+      message = res.statusText;
+    try {
+      const j = (await res.json()) as { error?: APIError };
+      if (j.error) {
+        code = j.error.code;
+        message = j.error.message;
+      }
+    } catch {
+      /* ignore */
+    }
+    throw new HTTPError(res.status, code, message);
+  }
+  // Empty body? Caller should pick a void return.
+  if (res.status === 204) return undefined as T;
+  return (await res.json()) as T;
+}
+
+export const api = {
+  get: <T>(path: string) => request<T>('GET', path),
+  post: <T>(path: string, body?: unknown) => request<T>('POST', path, body),
+  del: <T>(path: string) => request<T>('DELETE', path)
+};
+
+// Typed helpers ------------------------------------------------------------
+
+export type User = {
+  id: string;
+  email: string;
+  display_name: string;
+  created_at: number;
+  last_seen_at: number | null;
+};
+
+export type Conversation = {
+  id: string;
+  user_id: string;
+  title: string;
+  created_at: number;
+  updated_at: number;
+  archived_at: number | null;
+};
+
+export type Message = {
+  id: string;
+  conversation_id: string;
+  client_id: string | null;
+  role: 'user' | 'assistant' | 'system' | 'tool';
+  content: string;
+  model: string | null;
+  created_at: number;
+};
+
+export const me = () => api.get<User>('/api/me');
+export const balance = () =>
+  api.get<{ balance_micros: number; balance_usd: string }>('/api/balance');
+export const listConversations = () => api.get<Conversation[]>('/api/conversations');
+export const createConversation = (title: string) =>
+  api.post<Conversation>('/api/conversations', { title });
+export const listMessages = (id: string) => api.get<Message[]>(`/api/conversations/${id}/messages`);

@@ -1,0 +1,16 @@
+# Air config for the Go backend.
+#
+# Pattern from charm.land/hyper: only watch Go source. The web side has its
+# own HMR loop via `bun run dev` (Vite); CSS/JS/templates over there are
+# handled by SvelteKit and never need a Go rebuild.
+
+root = "server"
+tmp_dir = "tmp"
+
+[build]
+cmd = "go build -o ./tmp/potluck ./cmd/server"
+full_bin = "CI=1 CLICOLOR_FORCE=1 ./tmp/potluck"
+args_bin = ["--auto-migrate"]
+include_ext = ["go", "mod", "sum"]
+exclude_dir = ["tmp", "dist", "node_modules"]
+stop_on_error = true

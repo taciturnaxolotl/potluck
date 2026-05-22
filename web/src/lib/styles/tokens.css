@@ -1,0 +1,80 @@
+/*
+ * potluck design tokens.
+ *
+ * Two layers:
+ *   1. Raw palette. Six brand colors. Don't reference these in components.
+ *   2. Semantic tokens. Theme-aware via `light-dark()`. Use these everywhere.
+ *
+ * Theming is driven by <meta name="color-scheme">; theme.ts mutates that
+ * tag's `content` attribute. No `data-theme`, no `prefers-color-scheme`
+ * media queries — the cascade flips automatically.
+ *
+ * See design/design-system.md for rationale.
+ */
+
+:root {
+  color-scheme: light dark;
+
+  /* ---- raw palette ----------------------------------------------------- */
+  --soft-blush: #ffd9da;
+  --blush-rose: #ea638c;
+  --dark-raspberry: #89023e;
+  --jet-black: #30343f;
+  --carbon-black: #1b2021;
+  --paper: #fffaf9;
+
+  /* ---- semantic tokens ------------------------------------------------- */
+  --bg-page: light-dark(var(--paper), var(--carbon-black));
+  --bg-surface: light-dark(#ffffff, var(--jet-black));
+  --bg-code: light-dark(var(--carbon-black), #110608);
+  --bg-highlight: light-dark(var(--soft-blush), var(--dark-raspberry));
+
+  --text: light-dark(var(--jet-black), var(--soft-blush));
+  --text-muted: light-dark(rgba(48, 52, 63, 0.6), rgba(255, 217, 218, 0.5));
+  --text-on-accent: light-dark(var(--soft-blush), var(--soft-blush));
+  --text-on-code: var(--soft-blush);
+
+  --border: light-dark(rgba(48, 52, 63, 0.1), rgba(255, 217, 218, 0.08));
+  --accent: light-dark(var(--dark-raspberry), var(--blush-rose));
+
+  /* ---- type ----------------------------------------------------------- */
+  --font-serif: 'Fraunces Variable', Georgia, serif;
+  --font-sans: 'Inter Variable', system-ui, -apple-system, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, monospace;
+
+  /* Fraunces opsz/SOFT presets — apply via font-variation-settings. */
+  --fraunces-display: 'opsz' 144, 'SOFT' 50;
+  --fraunces-text: 'opsz' 9, 'SOFT' 0;
+
+  /* Numeric tabular figures everywhere by default; override with
+     `font-feature-settings: "tnum" 0` when you specifically need
+     proportional digits in prose. */
+  font-feature-settings:
+    'tnum' 1,
+    'cv11' 1;
+}
+
+html,
+body {
+  margin: 0;
+  background: var(--bg-page);
+  color: var(--text);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+}
+a:hover {
+  text-decoration: underline;
+}
+
+code,
+kbd,
+pre,
+.mono,
+.num {
+  font-family: var(--font-mono);
+}

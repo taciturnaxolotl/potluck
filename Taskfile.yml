@@ -1,0 +1,169 @@
+# https://taskfile.dev
+#
+# potluck task runner.
+#   - colon-namespaced tasks (watch:server, watch:web, npm:install)
+#   - watch:all aliased to `watch` runs all watchers in parallel via deps
+#   - default alias points at `server` so bare `task` boots the backend
+#   - sources/generates make codegen tasks idempotent
+#   - status: skips work that's already done
+
+version: "3"
+
+tasks:
+  server:
+    desc: Run server (auto-migrate)
+    aliases: [default]
+    dir: server
+    cmds:
+      - go run ./cmd/server --auto-migrate {{.CLI_ARGS}}
+
+  test:
+    desc: Run all tests
+    deps: [test:server, test:web]
+
+  test:server:
+    desc: Go tests
+    dir: server
+    cmds:
+      - go test ./... {{.CLI_ARGS}}
+
+  test:web:
+    desc: Web unit tests
+    dir: web
+    cmds:
+      - bun run test {{.CLI_ARGS}}
+
+  fmt:
+    desc: Format Go and web sources
+    cmds:
+      - cd server && gofmt -w .
+      - cd web && bun run fmt
+
+  lint:
+    desc: Lint
+    cmds:
+      - cd server && go vet ./...
+      - cd web && bun run lint
+
+  # ---- dev: parallel watchers ---------------------------------------------
+
+  watch:all:
+    desc: Watch backend and web in parallel
+    aliases: [watch, dev]
+    deps: [watch:server, watch:web]
+
+  watch:server:
+    desc: Watch the Go backend with air
+    dir: server
+    cmds:
+      - air -c ../.air.toml
+
+  watch:web:
+    desc: Watch the SvelteKit web app
+    deps: [bun:install]
+    dir: web
+    cmds:
+      - bun run dev
+
+  # ---- build --------------------------------------------------------------
+
+  build:
+    desc: Build server binary and web bundle
+    deps: [build:server, build:web]
+
+  build:server:
+    desc: Static Go binary at server/dist/server
+    dir: server
+    env:
+      CGO_ENABLED: "0"
+    cmds:
+      - go build -trimpath -ldflags='-s -w' -o dist/server ./cmd/server
+
+  build:web:
+    desc: SvelteKit production bundle
+    deps: [bun:install]
+    dir: web
+    cmds:
+      - bun run build
+
+  # ---- dependencies -------------------------------------------------------
+
+  bun:install:
+    desc: Install web dependencies
+    dir: web
+    sources:
+      - package.json
+      - bun.lock
+      - bun.lockb
+    cmds:
+      - bun install
+
+  # ---- codegen ------------------------------------------------------------
+
+  sqlc:
+    desc: Regenerate sqlc query code
+    dir: server
+    sources:
+      - sqlc.yaml
+      - db/queries/*.sql
+      - db/migrations/*.sql
+    generates:
+      - internal/store/*.sql.go
+      - internal/store/models.go
+      - internal/store/db.go
+      - internal/store/querier.go
+    cmds:
+      - sqlc generate
+
+  generate:
+    desc: Run all `go generate` directives (regenerates CONFIG.md)
+    aliases: [gen]
+    dir: server
+    sources:
+      - internal/config/*.go
+    generates:
+      - ../CONFIG.md
+    cmds:
+      - go generate ./...
+
+  # ---- migrations ---------------------------------------------------------
+
+  migrate:new:
+    desc: "Create a new migration: task migrate:new -- add_widgets"
+    dir: server
+    cmds:
+      - goose -dir db/migrations create {{.CLI_ARGS}} sql
+      # keep the embed copy in sync
+      - cp db/migrations/*.sql internal/migrations/files/
+
+  migrate:up:
+    desc: Apply pending migrations
+    dir: server
+    cmds:
+      - goose -dir db/migrations sqlite3 ../data/potluck.db up
+
+  migrate:down:
+    desc: Roll back the last migration
+    dir: server
+    cmds:
+      - goose -dir db/migrations sqlite3 ../data/potluck.db down
+
+  # ---- deploy -------------------------------------------------------------
+
+  deploy:server:
+    desc: Deploy backend to terebithia (TODO)
+    cmds:
+      - 'echo "TODO scp dist/server to terebithia and systemctl restart"'
+
+  deploy:web:
+    desc: Deploy SPA to Cloudflare
+    dir: web
+    cmds:
+      - bunx wrangler deploy
+
+  # ---- housekeeping -------------------------------------------------------
+
+  clean:
+    desc: Remove build artefacts
+    cmds:
+      - rm -rf server/dist server/tmp web/.svelte-kit web/build web/dist web/.wrangler

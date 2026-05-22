@@ -1,1 +1,32 @@
 .env
+.env.*
+!.env.example
+
+# Go
+server/dist/
+server/tmp/
+*.test
+*.out
+
+# Node / Bun
+node_modules/
+web/.svelte-kit/
+web/build/
+web/dist/
+web/.wrangler/
+.bun/
+
+# SQLite + Litestream local
+*.db
+*.db-shm
+*.db-wal
+data/
+
+# Editors & OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Task runner cache
+.task/

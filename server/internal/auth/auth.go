@@ -1,0 +1,120 @@
+// Package auth handles session-cookie authentication.
+//
+// Sessions are opaque random tokens. Only their SHA-256 hash is persisted;
+// the plaintext lives in the user's cookie. On lookup we hash, compare, and
+// rotate the last_used timestamp.
+package auth
+
+import (
+	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
+	"net/http"
+	"time"
+
+	"github.com/taciturnaxolotl/potluck/internal/store"
+)
+
+const CookieName = "potluck_session"
+
+type ctxKey int
+
+const userKey ctxKey = 1
+
+// Service exposes the auth surface that handlers depend on.
+type Service struct {
+	q   *store.Queries
+	ttl time.Duration
+}
+
+func New(q *store.Queries, ttl time.Duration) *Service {
+	return &Service{q: q, ttl: ttl}
+}
+
+// IssueSession mints a new session for userID and returns the plaintext
+// token to set on the client cookie.
+func (s *Service) IssueSession(ctx context.Context, userID string) (string, error) {
+	tok, err := randomToken(32)
+	if err != nil {
+		return "", err
+	}
+	now := time.Now().Unix()
+	_, err = s.q.CreateSession(ctx, store.CreateSessionParams{
+		ID:         hashToken(tok),
+		UserID:     userID,
+		CreatedAt:  now,
+		ExpiresAt:  now + int64(s.ttl.Seconds()),
+		LastUsedAt: now,
+	})
+	if err != nil {
+		return "", err
+	}
+	return tok, nil
+}
+
+// Middleware loads the user from the session cookie and stashes it on the
+// request context. Requests without a valid session pass through unauthenticated;
+// it's up to the handler to require auth.
+func (s *Service) Middleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c, err := r.Cookie(CookieName)
+		if err != nil || c.Value == "" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		sess, err := s.q.GetSession(r.Context(), store.GetSessionParams{
+			ID:        hashToken(c.Value),
+			ExpiresAt: time.Now().Unix(),
+		})
+		if err != nil {
+			next.ServeHTTP(w, r)
+			return
+		}
+		_ = s.q.TouchSession(r.Context(), store.TouchSessionParams{
+			LastUsedAt: time.Now().Unix(),
+			ID:         sess.ID,
+		})
+		u, err := s.q.GetUserByID(r.Context(), sess.UserID)
+		if err != nil {
+			next.ServeHTTP(w, r)
+			return
+		}
+		ctx := context.WithValue(r.Context(), userKey, &u)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+// UserFromContext returns the authenticated user, if any.
+func UserFromContext(ctx context.Context) (*store.User, bool) {
+	u, ok := ctx.Value(userKey).(*store.User)
+	return u, ok
+}
+
+// Require is a middleware that 401s anonymous requests.
+func Require(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, ok := UserFromContext(r.Context()); !ok {
+			http.Error(w, `{"error":{"code":"unauthenticated","message":"login required"}}`, http.StatusUnauthorized)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func randomToken(n int) (string, error) {
+	b := make([]byte, n)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
+}
+
+func hashToken(tok string) string {
+	sum := sha256.Sum256([]byte(tok))
+	return hex.EncodeToString(sum[:])
+}
+
+// ErrNotFound is returned when a session lookup misses.
+var ErrNotFound = errors.New("auth: session not found")
