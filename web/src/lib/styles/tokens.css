@@ -5,16 +5,19 @@
  *   1. Raw palette. Six brand colors. Don't reference these in components.
  *   2. Semantic tokens. Theme-aware via `light-dark()`. Use these everywhere.
  *
- * Theming is driven by <meta name="color-scheme">; theme.ts mutates that
+ * Theming is driven by `<meta name="color-scheme">`; theme.ts mutates that
  * tag's `content` attribute. No `data-theme`, no `prefers-color-scheme`
- * media queries — the cascade flips automatically.
+ * media queries.
+ *
+ * Important: do NOT add a `color-scheme` declaration on `:root` here.
+ * The CSS rule wins over the meta tag and ties the cascade open, so
+ * toggling the meta would do nothing. The meta tag is the single source
+ * of truth for which side of `light-dark()` resolves.
  *
  * See design/design-system.md for rationale.
  */
 
 :root {
-  color-scheme: light dark;
-
   /* ---- raw palette ----------------------------------------------------- */
   --soft-blush: #ffd9da;
   --blush-rose: #ea638c;
@@ -26,16 +29,38 @@
   /* ---- semantic tokens ------------------------------------------------- */
   --bg-page: light-dark(var(--paper), var(--carbon-black));
   --bg-surface: light-dark(#ffffff, var(--jet-black));
-  --bg-code: light-dark(var(--carbon-black), #110608);
+  --bg-sidebar: light-dark(rgba(48, 52, 63, 0.04), rgba(48, 52, 63, 0.4));
+  /* Code blocks follow the theme. Light mode gets a warm cream-ish slate
+     that sits below the page background; dark mode is a near-black
+     terminal. The contrast targets stay similar in both. */
+  --bg-code: light-dark(#f4ecea, #110608);
   --bg-highlight: light-dark(var(--soft-blush), var(--dark-raspberry));
 
   --text: light-dark(var(--jet-black), var(--soft-blush));
   --text-muted: light-dark(rgba(48, 52, 63, 0.6), rgba(255, 217, 218, 0.5));
-  --text-on-accent: light-dark(var(--soft-blush), var(--soft-blush));
-  --text-on-code: var(--soft-blush);
+  --text-faint: light-dark(rgba(48, 52, 63, 0.4), rgba(255, 217, 218, 0.4));
+  --text-on-accent: var(--soft-blush);
+  --text-on-code: light-dark(var(--jet-black), var(--soft-blush));
 
   --border: light-dark(rgba(48, 52, 63, 0.1), rgba(255, 217, 218, 0.08));
+  --border-on-code: light-dark(rgba(48, 52, 63, 0.08), rgba(255, 217, 218, 0.08));
   --accent: light-dark(var(--dark-raspberry), var(--blush-rose));
+  /* Eyebrow / accent label colour — slightly different on each side: dark
+     prefers blush-rose for legibility on carbon, light wants the deep
+     raspberry for contrast on cream. */
+  --accent-eyebrow: light-dark(var(--dark-raspberry), var(--blush-rose));
+
+  /* Syntax roles. Each one has a hand-picked light/dark pairing that hits
+     ~similar contrast against --bg-code. Strings = body text; keywords =
+     accent; comments = muted. */
+  --code-string: light-dark(var(--jet-black), #fff5f5);
+  --code-comment: light-dark(rgba(48, 52, 63, 0.5), rgba(255, 217, 218, 0.4));
+  --code-keyword: light-dark(var(--dark-raspberry), var(--blush-rose));
+
+  /* ---- radii / spacing scale ------------------------------------------ */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
 
   /* ---- type ----------------------------------------------------------- */
   --font-serif: 'Fraunces Variable', Georgia, serif;
@@ -77,4 +102,122 @@ pre,
 .mono,
 .num {
   font-family: var(--font-mono);
+}
+
+/* ---- shared display patterns -----------------------------------------
+ * The eyebrow + serif h1 + italic-serif lede triplet is the page-header
+ * idiom for the dashboard and splash. Define it once here so individual
+ * routes don't reinvent type ramps.
+ */
+.eyebrow {
+  font-family: var(--font-sans);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--accent-eyebrow);
+}
+
+.display {
+  font-family: var(--font-serif);
+  font-variation-settings: var(--fraunces-display);
+  font-size: clamp(2rem, 4.5vw, 3rem);
+  font-weight: 500;
+  letter-spacing: -0.025em;
+  line-height: 1;
+  color: var(--text);
+  margin: 0.4rem 0;
+}
+
+.lede {
+  font-family: var(--font-serif);
+  font-style: italic;
+  font-size: 1rem;
+  color: var(--text-muted);
+  margin: 0 0 1.75rem;
+}
+
+/* Stat cards. Used on dashboard and splash. */
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 0.75rem;
+  margin-bottom: 1.5rem;
+}
+
+.stat {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 1rem 1.1rem;
+}
+
+.stat-label {
+  font-family: var(--font-sans);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 0.5rem;
+}
+
+.stat-num {
+  font-family: var(--font-mono);
+  font-size: 1.4rem;
+  font-weight: 500;
+  color: var(--text);
+  letter-spacing: -0.02em;
+}
+
+.stat-num .faded {
+  opacity: 0.55;
+}
+
+.stat-unit {
+  font-family: var(--font-sans);
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  font-weight: 400;
+  margin-left: 4px;
+}
+
+/* Code snippet card. */
+.snippet {
+  background: var(--bg-code);
+  border: 1px solid var(--border-on-code);
+  border-radius: var(--radius-md);
+  padding: 1rem 1.15rem;
+}
+
+.snippet-label {
+  font-family: var(--font-sans);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--accent-eyebrow);
+  margin-bottom: 0.6rem;
+}
+
+.snippet pre {
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  line-height: 1.65;
+  color: var(--text-on-code);
+  margin: 0;
+  white-space: pre;
+  overflow-x: auto;
+}
+
+.snippet pre .cm {
+  color: var(--code-comment);
+  font-style: italic;
+  font-family: var(--font-mono);
+}
+.snippet pre .kw {
+  color: var(--code-keyword);
+}
+.snippet pre .st {
+  color: var(--code-string);
 }

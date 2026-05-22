@@ -86,3 +86,37 @@ export const listConversations = () => api.get<Conversation[]>('/api/conversatio
 export const createConversation = (title: string) =>
   api.post<Conversation>('/api/conversations', { title });
 export const listMessages = (id: string) => api.get<Message[]>(`/api/conversations/${id}/messages`);
+
+export type PoolStats = {
+  balance_micros: number;
+  balance_usd: string;
+  spent_today_micros: number;
+  spent_today_usd: string;
+  contributors: number;
+  users: number;
+  active_keys: number;
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  as_of: number;
+};
+
+export const poolStats = () => api.get<PoolStats>('/api/stats');
+
+export type APIKey = {
+  id: string;
+  name: string;
+  word: string;
+  last4: string;
+  masked: string;
+  spent_micros: number;
+  created_at: number;
+  last_used_at: number;
+  revoked_at: number;
+  revoked: boolean;
+};
+
+export const listKeys = () => api.get<APIKey[]>('/api/keys');
+export const createKey = (name: string) =>
+  api.post<APIKey & { plaintext: string }>('/api/keys', { name });
+export const revokeKey = (id: string) => api.del<void>(`/api/keys/${id}`);

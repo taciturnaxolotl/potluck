@@ -14,9 +14,7 @@ import type { RequestHandler } from './$types';
 const proxy: RequestHandler = async ({ request, url, platform }) => {
   // SvelteKit's $env is overkill for one variable; read straight from
   // platform.env in production, fall back for local dev.
-  const backend =
-    (platform?.env as { BACKEND_URL?: string } | undefined)?.BACKEND_URL ??
-    'http://localhost:8080';
+  const backend = platform?.env?.BACKEND_URL ?? 'http://localhost:8080';
 
   const target = new URL(url.pathname + url.search, backend);
 

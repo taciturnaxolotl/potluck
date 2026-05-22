@@ -110,6 +110,9 @@ func main() {
 		_, _ = w.Write([]byte("ok"))
 	})
 
+	// /api/stats — public splash data; no auth, no PII.
+	r.Get("/api/stats", publicStatsHandler(q))
+
 	// Local-only login: trade an email for a session cookie. Real auth
 	// lives behind a real provider — see design/security.md.
 	if cfg.IsLocal() {

@@ -41,6 +41,13 @@ type Querier interface {
 	ListModelPrices(ctx context.Context) ([]ModelPrice, error)
 	ListStreamChunksAfter(ctx context.Context, arg ListStreamChunksAfterParams) ([]ListStreamChunksAfterRow, error)
 	MaxStreamChunkSeq(ctx context.Context, streamID string) (interface{}, error)
+	PoolActiveKeyCount(ctx context.Context) (int64, error)
+	PoolContributorCount(ctx context.Context) (int64, error)
+	PoolSpentSince(ctx context.Context, createdAt int64) (interface{}, error)
+	PoolTokensGuzzled(ctx context.Context) (PoolTokensGuzzledRow, error)
+	// Pool-wide aggregates. Used by the public splash page; no auth required.
+	PoolTotalBalance(ctx context.Context) (int64, error)
+	PoolUserCount(ctx context.Context) (int64, error)
 	PutIdempotency(ctx context.Context, arg PutIdempotencyParams) error
 	RenameAPIKey(ctx context.Context, arg RenameAPIKeyParams) error
 	RevokeAPIKey(ctx context.Context, arg RevokeAPIKeyParams) error

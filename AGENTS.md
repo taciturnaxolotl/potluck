@@ -117,8 +117,11 @@ swapped jobs. The `--accent` token handles this automatically.
   on tabular figures at UI sizes. Use `font-feature-settings: "tnum" 1` for
   numeric content (already on in defaults).
 
-The three most critical woff2 files are `<link rel="preload">`-ed from
-`+layout.svelte` to avoid FOIT.
+Fonts are imported from `@fontsource[-variable]` packages in `+layout.svelte`,
+which lets Vite inject hashed `<link>` tags with the right CORS attributes
+during build. Don't hand-roll a `<link rel="preload">` to a guessed path —
+the woff2s live under hashed filenames in `_app/immutable/assets/` and are
+not served at the literal `/fonts/...` URL.
 
 **Theming** — three modes (`auto`, `light`, `dark`) toggled by cycling
 `<meta name="color-scheme">` content. No `data-theme` attribute, no
@@ -160,7 +163,7 @@ Cycle order: **auto → dark → light → auto**. Don't change this.
 │   │   │   ├── theme.ts            theme switcher API
 │   │   │   └── api.ts              /api client
 │   │   ├── routes/
-│   │   │   ├── +layout.svelte                     font imports + preloads
+│   │   │   ├── +layout.svelte                     font imports
 │   │   │   ├── +page.svelte                       home
 │   │   │   ├── chat/+page.svelte                  chat UI
 │   │   │   └── api/[...path]/+server.ts           proxy → backend
