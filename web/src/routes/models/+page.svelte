@@ -153,13 +153,15 @@
         </div>
       {/each}
       {#if sorted.length === 0}
-        <p class="muted small">no models match this filter.</p>
+        <p class="muted small empty">no models match this filter.</p>
       {/if}
     </div>
   {/if}
 </article>
 
 <style>
+  .empty { padding: 0.75rem 1rem; }
+
   article {
     max-width: 72rem;
   }
