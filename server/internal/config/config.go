@@ -72,6 +72,11 @@ type Config struct {
 	// Pioneer.ai inference credentials.
 	Pioneer Pioneer `envPrefix:"PIONEER_"`
 
+	// Pool key encryption secret. 64-char hex (32 bytes) or base64 (44 chars).
+	// Generate with: openssl rand -hex 32
+	// Required to store keys securely; dev allows empty (plaintext fallback).
+	PoolKeySecret string `env:"POTLUCK_POOL_KEY_SECRET" envDefault:""`
+
 	// Hack Club Auth (HCA) — OAuth provider for "Sign in with Hack Club".
 	HCA HCAConfig `envPrefix:"HCA_"`
 

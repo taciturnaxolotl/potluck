@@ -47,6 +47,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 export const api = {
   get: <T>(path: string) => request<T>('GET', path),
   post: <T>(path: string, body?: unknown) => request<T>('POST', path, body),
+  patch: <T>(path: string, body?: unknown) => request<T>('PATCH', path, body),
   del: <T>(path: string) => request<T>('DELETE', path)
 };
 
@@ -180,6 +181,39 @@ export const listModels = () => api.get<Model[]>('/api/models');
 
 export const listSessions = () => api.get<Session[]>('/api/sessions');
 export const revokeSession = (id: string) => api.del<void>(`/api/sessions/${id}`);
+
+export type PoolKey = {
+  id: string;
+  user_id: string;
+  label: string;
+  active: boolean;
+  daily_limit_micros: number;
+  today_micros: number;
+  total_micros: number;
+  request_count: number;
+  created_at: number;
+  last_used_at: number;
+  owner_name: string;
+  owner_email: string;
+  mine: boolean;
+};
+
+export const listPoolKeys = () => api.get<PoolKey[]>('/api/pool-keys');
+export const addPoolKey = (label: string, apiKey: string, dailyLimitMicros?: number) =>
+  api.post<PoolKey>('/api/pool-keys', {
+    label,
+    api_key: apiKey,
+    ...(dailyLimitMicros != null ? { daily_limit_micros: dailyLimitMicros } : {})
+  });
+export const setPoolKeyActive = (id: string, active: boolean) =>
+  api.patch<void>(`/api/pool-keys/${id}/active`, { active });
+export const updatePoolKeyLabel = (id: string, label: string) =>
+  api.patch<void>(`/api/pool-keys/${id}/label`, { label });
+export const updatePoolKeyLimit = (id: string, dailyLimitMicros: number) =>
+  api.patch<void>(`/api/pool-keys/${id}/limit`, { daily_limit_micros: dailyLimitMicros });
+export const syncPoolKey = (id: string) =>
+  api.post<{ today_micros: number }>(`/api/pool-keys/${id}/sync`);
+export const deletePoolKey = (id: string) => api.del<void>(`/api/pool-keys/${id}`);
 
 export async function logout(): Promise<void> {
   await fetch('/auth/logout', { method: 'POST', credentials: 'include' });

@@ -140,6 +140,7 @@
     { label: 'dashboard', href: '/dashboard', section: 'the pot' },
     { label: 'models', href: '/models', section: 'the pot' },
     { label: 'usage', href: '/usage', section: 'the pot' },
+    { label: 'pool', href: '/pool', section: 'the pot' },
     { label: 'conversations', href: '/chat', section: 'yours' },
     { label: 'settings', href: '/settings', section: 'yours' }
   ];

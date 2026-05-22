@@ -20,6 +20,7 @@ import (
 	apimw "github.com/taciturnaxolotl/potluck/internal/api/middleware"
 	"github.com/taciturnaxolotl/potluck/internal/auth"
 	"github.com/taciturnaxolotl/potluck/internal/ledger"
+	"github.com/taciturnaxolotl/potluck/internal/pool"
 	"github.com/taciturnaxolotl/potluck/internal/store"
 	"github.com/taciturnaxolotl/potluck/internal/stream"
 )
@@ -30,6 +31,7 @@ type Server struct {
 	Auth          *auth.Service
 	Ledger        *ledger.Service
 	Hub           *stream.Hub
+	Pool          *pool.Manager
 	PioneerAPIKey string
 }
 
@@ -53,6 +55,14 @@ func (s *Server) Mount(r chi.Router) {
 	r.Get("/keys", s.handleListKeys)
 	r.Post("/keys", s.handleCreateKey)
 	r.Delete("/keys/{id}", s.handleRevokeKey)
+
+	r.Get("/pool-keys", s.handleListPoolKeys)
+	r.Post("/pool-keys", s.handleAddPoolKey)
+	r.Patch("/pool-keys/{id}/active", s.handleSetPoolKeyActive)
+	r.Patch("/pool-keys/{id}/label", s.handleUpdatePoolKeyLabel)
+	r.Patch("/pool-keys/{id}/limit", s.handleUpdatePoolKeyLimit)
+	r.Post("/pool-keys/{id}/sync", s.handleSyncPoolKeySpend)
+	r.Delete("/pool-keys/{id}", s.handleDeletePoolKey)
 
 	r.Group(func(r chi.Router) {
 		r.Use(apimw.BalanceGate(s.Ledger, writeErr))

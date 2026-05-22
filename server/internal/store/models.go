@@ -68,6 +68,22 @@ type ModelPrice struct {
 	UpdatedAt         int64  `json:"updated_at"`
 }
 
+type PoolKey struct {
+	ID               string        `json:"id"`
+	UserID           string        `json:"user_id"`
+	Label            string        `json:"label"`
+	KeyCiphertext    string        `json:"key_ciphertext"`
+	KeyFingerprint   string        `json:"key_fingerprint"`
+	Active           int64         `json:"active"`
+	DailyLimitMicros int64         `json:"daily_limit_micros"`
+	TodayDate        int64         `json:"today_date"`
+	TodayMicros      int64         `json:"today_micros"`
+	TotalMicros      int64         `json:"total_micros"`
+	RequestCount     int64         `json:"request_count"`
+	CreatedAt        int64         `json:"created_at"`
+	LastUsedAt       sql.NullInt64 `json:"last_used_at"`
+}
+
 type Session struct {
 	ID         string         `json:"id"`
 	UserID     string         `json:"user_id"`

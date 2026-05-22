@@ -30,6 +30,7 @@ import (
 	"github.com/taciturnaxolotl/potluck/internal/ledger"
 	"github.com/taciturnaxolotl/potluck/internal/migrations"
 	"github.com/taciturnaxolotl/potluck/internal/money"
+	"github.com/taciturnaxolotl/potluck/internal/pool"
 	"github.com/taciturnaxolotl/potluck/internal/provider"
 	"github.com/taciturnaxolotl/potluck/internal/store"
 	"github.com/taciturnaxolotl/potluck/internal/stream"
@@ -100,6 +101,11 @@ func main() {
 		log.Warn("pioneer.ai not configured — /v1/* will refuse upstream calls")
 	}
 
+	keyPool, err := pool.New(q, cfg.PoolKeySecret, cfg.Pioneer.APIKey)
+	if err != nil {
+		log.Fatal("pool: init failed", "err", err)
+	}
+
 	// Hack Club Auth client. Nil when unconfigured; the handlers degrade
 	// gracefully and return 503 with a friendly note.
 	var hcaClient *hca.Client
@@ -134,6 +140,7 @@ func main() {
 		Auth:          authSvc,
 		Ledger:        ledg,
 		Hub:           hub,
+		Pool:          keyPool,
 		PioneerAPIKey: cfg.Pioneer.APIKey,
 	}
 	v1Srv := &v1.Server{
@@ -141,6 +148,7 @@ func main() {
 		Auth:     authSvc,
 		Ledger:   ledg,
 		Provider: pioneer,
+		Pool:     keyPool,
 	}
 
 	// /api/* — cookie-authenticated, internal surface.

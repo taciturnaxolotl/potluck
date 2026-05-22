@@ -18,11 +18,19 @@ type Querier interface {
 	CreateAPIKey(ctx context.Context, arg CreateAPIKeyParams) (ApiKey, error)
 	CreateContribution(ctx context.Context, arg CreateContributionParams) (Contribution, error)
 	CreateConversation(ctx context.Context, arg CreateConversationParams) (Conversation, error)
+	// Pool key queries.
+	//
+	// Pool keys are pioneer.ai API keys contributed by users to the shared pool.
+	// The picker selects the active key with the least spend today that is still
+	// under its daily cap. Spend counters are maintained here; exact accounting
+	// lives in the spends table.
+	CreatePoolKey(ctx context.Context, arg CreatePoolKeyParams) (PoolKey, error)
 	CreateSession(ctx context.Context, arg CreateSessionParams) (Session, error)
 	CreateStream(ctx context.Context, arg CreateStreamParams) (Stream, error)
 	CreateUser(ctx context.Context, arg CreateUserParams) (User, error)
 	DeleteExpiredIdempotency(ctx context.Context, expiresAt int64) error
 	DeleteExpiredSessions(ctx context.Context, expiresAt int64) error
+	DeletePoolKey(ctx context.Context, arg DeletePoolKeyParams) error
 	DeleteSession(ctx context.Context, id string) error
 	DeleteSessionForUser(ctx context.Context, arg DeleteSessionForUserParams) error
 	GetAPIKeyByHash(ctx context.Context, keyHash string) (ApiKey, error)
@@ -30,6 +38,7 @@ type Querier interface {
 	GetIdempotency(ctx context.Context, arg GetIdempotencyParams) (IdempotencyKey, error)
 	GetMessage(ctx context.Context, id string) (Message, error)
 	GetModelPrice(ctx context.Context, model string) (ModelPrice, error)
+	GetPoolKey(ctx context.Context, id string) (PoolKey, error)
 	GetSession(ctx context.Context, arg GetSessionParams) (Session, error)
 	GetStream(ctx context.Context, id string) (Stream, error)
 	GetStreamByIdempotencyKey(ctx context.Context, arg GetStreamByIdempotencyKeyParams) (Stream, error)
@@ -46,9 +55,17 @@ type Querier interface {
 	// The since parameter scopes only the TPS calculation; token counts are
 	// all-time so spend reflects the full history.
 	ListModelStats(ctx context.Context, startedAt int64) ([]ListModelStatsRow, error)
+	// All keys (for the pool management page). Includes inactive and other users' keys.
+	ListPoolKeys(ctx context.Context) ([]ListPoolKeysRow, error)
+	ListPoolKeysForUser(ctx context.Context, userID string) ([]PoolKey, error)
 	ListSessionsForUser(ctx context.Context, arg ListSessionsForUserParams) ([]Session, error)
 	ListStreamChunksAfter(ctx context.Context, arg ListStreamChunksAfterParams) ([]ListStreamChunksAfterRow, error)
 	MaxStreamChunkSeq(ctx context.Context, streamID string) (interface{}, error)
+	// Select the best key to use for a request: active, under daily cap,
+	// least spend today. Resets stale today_* counters are handled in Go
+	// (compare today_date to current UTC day and update if stale).
+	// ?1 = current UTC day (unix / 86400)
+	PickPoolKey(ctx context.Context, todayDate int64) (PoolKey, error)
 	PoolActiveKeyCount(ctx context.Context) (int64, error)
 	PoolContributorCount(ctx context.Context) (int64, error)
 	PoolSpentSince(ctx context.Context, createdAt int64) (interface{}, error)
@@ -57,8 +74,12 @@ type Querier interface {
 	PoolTotalBalance(ctx context.Context) (int64, error)
 	PoolUserCount(ctx context.Context) (int64, error)
 	PutIdempotency(ctx context.Context, arg PutIdempotencyParams) error
+	// Called after a request settles. Resets daily counter if the day rolled over.
+	// today_day is the current UTC day (unix / 86400).
+	RecordPoolKeySpend(ctx context.Context, arg RecordPoolKeySpendParams) error
 	RenameAPIKey(ctx context.Context, arg RenameAPIKeyParams) error
 	RevokeAPIKey(ctx context.Context, arg RevokeAPIKeyParams) error
+	SetPoolKeyActive(ctx context.Context, arg SetPoolKeyActiveParams) error
 	SetStreamStatus(ctx context.Context, arg SetStreamStatusParams) error
 	// Daily spend for a user over the last N days.
 	// Returns one row per day (epoch of start of day in UTC) + amount in micros.
@@ -67,12 +88,18 @@ type Querier interface {
 	SpendByDayAndModel(ctx context.Context, arg SpendByDayAndModelParams) ([]SpendByDayAndModelRow, error)
 	SumContributions(ctx context.Context, userID string) (interface{}, error)
 	SumSpends(ctx context.Context, userID string) (interface{}, error)
+	// Called after fetching real spend from pioneer's billing API.
+	// Overwrites today_micros with the authoritative value.
+	// If the key is over its daily limit, also marks it inactive.
+	SyncTodaySpend(ctx context.Context, arg SyncTodaySpendParams) error
 	// Debounced caller: only call when last_used_at is older than 60s.
 	TouchAPIKey(ctx context.Context, arg TouchAPIKeyParams) error
 	TouchConversation(ctx context.Context, arg TouchConversationParams) error
 	TouchSession(ctx context.Context, arg TouchSessionParams) error
 	TouchUser(ctx context.Context, arg TouchUserParams) error
 	UpdateConversationTitle(ctx context.Context, arg UpdateConversationTitleParams) error
+	UpdatePoolKeyLabel(ctx context.Context, arg UpdatePoolKeyLabelParams) error
+	UpdatePoolKeyLimit(ctx context.Context, arg UpdatePoolKeyLimitParams) error
 	UpsertMessage(ctx context.Context, arg UpsertMessageParams) (Message, error)
 	UpsertModelPrice(ctx context.Context, arg UpsertModelPriceParams) error
 	UpsertSpend(ctx context.Context, arg UpsertSpendParams) (Spend, error)

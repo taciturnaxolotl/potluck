@@ -1,0 +1,78 @@
+-- Pool key queries.
+--
+-- Pool keys are pioneer.ai API keys contributed by users to the shared pool.
+-- The picker selects the active key with the least spend today that is still
+-- under its daily cap. Spend counters are maintained here; exact accounting
+-- lives in the spends table.
+
+-- name: CreatePoolKey :one
+INSERT INTO pool_keys (
+    id, user_id, label, key_ciphertext, key_fingerprint,
+    active, daily_limit_micros, today_date, today_micros,
+    total_micros, request_count, created_at
+) VALUES (?, ?, ?, ?, ?, 1, ?, 0, 0, 0, 0, ?)
+RETURNING *;
+
+-- name: GetPoolKey :one
+SELECT * FROM pool_keys WHERE id = ?;
+
+-- name: ListPoolKeys :many
+-- All keys (for the pool management page). Includes inactive and other users' keys.
+SELECT pk.*, u.display_name AS owner_name, u.email AS owner_email
+FROM pool_keys pk
+JOIN users u ON u.id = pk.user_id
+ORDER BY pk.active DESC, pk.today_micros ASC;
+
+-- name: ListPoolKeysForUser :many
+SELECT * FROM pool_keys WHERE user_id = ? ORDER BY created_at DESC;
+
+-- name: PickPoolKey :one
+-- Select the best key to use for a request: active, under daily cap,
+-- least spend today. Resets stale today_* counters are handled in Go
+-- (compare today_date to current UTC day and update if stale).
+-- ?1 = current UTC day (unix / 86400)
+SELECT * FROM pool_keys
+WHERE active = 1
+  AND (today_date < ?1 OR today_micros < daily_limit_micros)
+ORDER BY
+    CASE WHEN today_date < ?1 THEN 0 ELSE today_micros END ASC,
+    RANDOM()  -- tiebreak
+LIMIT 1;
+
+-- name: SetPoolKeyActive :exec
+UPDATE pool_keys SET active = ? WHERE id = ? AND user_id = ?;
+
+-- name: DeletePoolKey :exec
+DELETE FROM pool_keys WHERE id = ? AND user_id = ?;
+
+-- name: UpdatePoolKeyLabel :exec
+UPDATE pool_keys SET label = ? WHERE id = ? AND user_id = ?;
+
+-- name: UpdatePoolKeyLimit :exec
+UPDATE pool_keys SET daily_limit_micros = ? WHERE id = ? AND user_id = ?;
+
+-- name: SyncTodaySpend :exec
+-- Called after fetching real spend from pioneer's billing API.
+-- Overwrites today_micros with the authoritative value.
+-- If the key is over its daily limit, also marks it inactive.
+UPDATE pool_keys
+SET
+    today_date   = ?1,
+    today_micros = ?2,
+    active = CASE
+        WHEN ?2 >= daily_limit_micros THEN 0
+        ELSE active
+    END
+WHERE id = ?3;
+
+-- name: RecordPoolKeySpend :exec
+-- Called after a request settles. Resets daily counter if the day rolled over.
+-- today_day is the current UTC day (unix / 86400).
+UPDATE pool_keys
+SET
+    today_date   = CASE WHEN today_date < ?1 THEN ?1 ELSE today_date END,
+    today_micros = CASE WHEN today_date < ?1 THEN ?2 ELSE today_micros + ?2 END,
+    total_micros = total_micros + ?2,
+    request_count = request_count + 1,
+    last_used_at = ?3
+WHERE id = ?4;

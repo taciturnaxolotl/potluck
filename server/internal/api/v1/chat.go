@@ -2,6 +2,7 @@ package v1
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -52,13 +53,19 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 // bufferedCompletion handles a non-streaming chat completion: forward the
 // body, return whatever pioneer returns. We do NOT re-shape the response.
 func (s *Server) bufferedCompletion(w http.ResponseWriter, r *http.Request, body []byte) {
+	sel, err := s.Pool.Pick(r.Context())
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "no_pool_keys", "no active pool keys available")
+		return
+	}
+
 	req, err := http.NewRequestWithContext(r.Context(),
 		http.MethodPost, s.Provider.BaseURL+"/v1/chat/completions", bytes.NewReader(body))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "server_error", err.Error())
 		return
 	}
-	req.Header.Set("Authorization", "Bearer "+s.Provider.APIKey)
+	req.Header.Set("Authorization", "Bearer "+sel.APIKey())
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := s.Provider.HTTP.Do(req)
@@ -71,6 +78,13 @@ func (s *Server) bufferedCompletion(w http.ResponseWriter, r *http.Request, body
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(resp.StatusCode)
 	_, _ = io.Copy(w, resp.Body)
+
+	// Record spend asynchronously — don't hold the client on a DB write.
+	// Non-streaming: we don't have token counts here yet, record 0 to
+	// increment request_count and last_used_at. TODO: parse response usage.
+	go func() {
+		_ = s.Pool.RecordSpend(context.Background(), sel, 0)
+	}()
 }
 
 // streamCompletion forwards an SSE chat completion straight through. We
@@ -78,6 +92,12 @@ func (s *Server) bufferedCompletion(w http.ResponseWriter, r *http.Request, body
 // the end) but the bytes the client sees are pioneer's verbatim where
 // possible.
 func (s *Server) streamCompletion(w http.ResponseWriter, r *http.Request, body []byte) {
+	sel, err := s.Pool.Pick(r.Context())
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "no_pool_keys", "no active pool keys available")
+		return
+	}
+
 	// Decode just enough to ensure stream_options.include_usage is on, so
 	// we can settle accurately. Re-marshal and forward.
 	var req map[string]any
@@ -90,7 +110,13 @@ func (s *Server) streamCompletion(w http.ResponseWriter, r *http.Request, body [
 		req["stream_options"] = map[string]any{"include_usage": true}
 	}
 
-	chunks, errs, err := s.Provider.StreamChat(r.Context(), provider.ChatRequest{
+	// Use a per-request client copy with the selected pool key.
+	pc := &provider.Client{
+		BaseURL: s.Provider.BaseURL,
+		APIKey:  sel.APIKey(),
+		HTTP:    s.Provider.HTTP,
+	}
+	chunks, errs, err := pc.StreamChat(r.Context(), provider.ChatRequest{
 		Model:         asString(req["model"]),
 		Messages:      messagesFromMap(req["messages"]),
 		Stream:        true,
@@ -107,6 +133,7 @@ func (s *Server) streamCompletion(w http.ResponseWriter, r *http.Request, body [
 	w.WriteHeader(http.StatusOK)
 	flusher, _ := w.(http.Flusher)
 
+	var totalMicros int64
 	for {
 		select {
 		case <-r.Context().Done():
@@ -114,6 +141,7 @@ func (s *Server) streamCompletion(w http.ResponseWriter, r *http.Request, body [
 		case ch, ok := <-chunks:
 			if !ok {
 				_, _ = w.Write([]byte("data: [DONE]\n\n"))
+				go func() { _ = s.Pool.RecordSpend(context.Background(), sel, totalMicros) }()
 				return
 			}
 			if ch.Done {
@@ -121,6 +149,7 @@ func (s *Server) streamCompletion(w http.ResponseWriter, r *http.Request, body [
 				if flusher != nil {
 					flusher.Flush()
 				}
+				go func() { _ = s.Pool.RecordSpend(context.Background(), sel, totalMicros) }()
 				return
 			}
 			_, _ = w.Write([]byte("data: "))

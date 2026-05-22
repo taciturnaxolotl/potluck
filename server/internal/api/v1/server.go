@@ -15,6 +15,7 @@ import (
 	"github.com/taciturnaxolotl/potluck/internal/api/middleware"
 	"github.com/taciturnaxolotl/potluck/internal/auth"
 	"github.com/taciturnaxolotl/potluck/internal/ledger"
+	"github.com/taciturnaxolotl/potluck/internal/pool"
 	"github.com/taciturnaxolotl/potluck/internal/provider"
 	"github.com/taciturnaxolotl/potluck/internal/store"
 )
@@ -25,6 +26,7 @@ type Server struct {
 	Auth     *auth.Service
 	Ledger   *ledger.Service
 	Provider *provider.Client
+	Pool     *pool.Manager
 }
 
 // Mount installs the v1 routes onto r. The caller chains the bearer-auth
