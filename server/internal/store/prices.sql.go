@@ -7,6 +7,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 )
 
 const getModelPrice = `-- name: GetModelPrice :one
@@ -43,6 +44,69 @@ func (q *Queries) ListModelPrices(ctx context.Context) ([]ModelPrice, error) {
 			&i.InputMicrosPer1k,
 			&i.OutputMicrosPer1k,
 			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listModelStats = `-- name: ListModelStats :many
+SELECT
+    sp.model,
+    COUNT(*)                                          AS request_count,
+    SUM(sp.input_tokens)                              AS total_input_tokens,
+    SUM(sp.output_tokens)                             AS total_output_tokens,
+    AVG(
+        CASE
+            WHEN st.finished_at IS NOT NULL
+             AND st.finished_at > st.started_at
+             AND st.started_at >= ?
+            THEN CAST(sp.output_tokens AS REAL)
+                 / ((st.finished_at - st.started_at))
+            ELSE NULL
+        END
+    )                                                 AS avg_tps
+FROM spends sp
+JOIN streams st ON st.id = sp.stream_id
+WHERE st.status = 'done'
+GROUP BY sp.model
+ORDER BY request_count DESC
+`
+
+type ListModelStatsRow struct {
+	Model             string          `json:"model"`
+	RequestCount      int64           `json:"request_count"`
+	TotalInputTokens  sql.NullFloat64 `json:"total_input_tokens"`
+	TotalOutputTokens sql.NullFloat64 `json:"total_output_tokens"`
+	AvgTps            sql.NullFloat64 `json:"avg_tps"`
+}
+
+// Per-model aggregate: all-time token/spend totals + 48h TPS average.
+// The since parameter scopes only the TPS calculation; token counts are
+// all-time so spend reflects the full history.
+func (q *Queries) ListModelStats(ctx context.Context, startedAt int64) ([]ListModelStatsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listModelStats, startedAt)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListModelStatsRow{}
+	for rows.Next() {
+		var i ListModelStatsRow
+		if err := rows.Scan(
+			&i.Model,
+			&i.RequestCount,
+			&i.TotalInputTokens,
+			&i.TotalOutputTokens,
+			&i.AvgTps,
 		); err != nil {
 			return nil, err
 		}

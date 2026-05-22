@@ -133,6 +133,29 @@ export type Session = {
   location: string;
 };
 
+export type Model = {
+  id: string;
+  label: string;
+  description: string;
+  context_window: number;
+  max_output_tokens: number;
+  input_per_mil: number;
+  output_per_mil: number | null;
+  license: string;
+  tier: string;
+  thinking: boolean;
+  image_input: boolean;
+  structured_outputs: boolean;
+  stats: {
+    request_count: number;
+    total_input_tokens: number;
+    total_output_tokens: number;
+    avg_tps: number | null;
+  } | null;
+};
+
+export const listModels = () => api.get<Model[]>('/api/models');
+
 export const listSessions = () => api.get<Session[]>('/api/sessions');
 export const revokeSession = (id: string) => api.del<void>(`/api/sessions/${id}`);
 

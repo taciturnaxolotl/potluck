@@ -26,10 +26,11 @@ import (
 
 // Server bundles the deps the web handlers need.
 type Server struct {
-	Q      *store.Queries
-	Auth   *auth.Service
-	Ledger *ledger.Service
-	Hub    *stream.Hub
+	Q             *store.Queries
+	Auth          *auth.Service
+	Ledger        *ledger.Service
+	Hub           *stream.Hub
+	PioneerAPIKey string
 }
 
 // Mount registers /api/* routes on r. The caller wraps with cookie-auth
@@ -39,6 +40,7 @@ func (s *Server) Mount(r chi.Router) {
 	r.Get("/balance", s.handleBalance)
 	r.Post("/contributions", s.handleContribute)
 
+	r.Get("/models", s.handleListModels)
 	r.Get("/sessions", s.handleListSessions)
 	r.Delete("/sessions/{id}", s.handleRevokeSession)
 

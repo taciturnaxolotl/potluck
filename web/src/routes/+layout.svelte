@@ -138,6 +138,7 @@
   type NavItem = { label: string; href: string; section: string };
   const navItems: NavItem[] = [
     { label: 'dashboard', href: '/dashboard', section: 'the pot' },
+    { label: 'models', href: '/models', section: 'the pot' },
     { label: 'usage', href: '/usage', section: 'the pot' },
     { label: 'conversations', href: '/chat', section: 'yours' },
     { label: 'settings', href: '/settings', section: 'yours' }
@@ -370,26 +371,27 @@
     flex-direction: column;
   }
   .splash-nav {
-    display: grid;
-    grid-template-columns: 1fr auto 1fr;
+    display: flex;
     align-items: stretch;
-    gap: 1rem;
+    gap: 1.5rem;
     padding: 0.75rem 2rem;
     border-bottom: 1px solid var(--border);
+    overflow: hidden;
   }
   .splash-nav > .brand-inline {
-    justify-self: start;
+    flex-shrink: 0;
     align-self: center;
   }
   .splash-nav > .splash-signin {
-    justify-self: end;
+    flex-shrink: 0;
     align-self: center;
-    grid-column: 3;
+    margin-left: auto;
   }
   .splash-nav > .auth-nav-toast {
-    justify-self: center;
-    align-self: stretch;
-    grid-column: 2;
+    flex: 1;
+    min-width: 0;
+    max-width: 40rem;
+    margin: 0 auto;
     display: flex;
     flex-direction: column;
   }

@@ -42,6 +42,10 @@ type Querier interface {
 	ListEstimatedSpends(ctx context.Context, limit int64) ([]Spend, error)
 	ListMessagesForConversation(ctx context.Context, conversationID string) ([]Message, error)
 	ListModelPrices(ctx context.Context) ([]ModelPrice, error)
+	// Per-model aggregate: all-time token/spend totals + 48h TPS average.
+	// The since parameter scopes only the TPS calculation; token counts are
+	// all-time so spend reflects the full history.
+	ListModelStats(ctx context.Context, startedAt int64) ([]ListModelStatsRow, error)
 	ListSessionsForUser(ctx context.Context, arg ListSessionsForUserParams) ([]Session, error)
 	ListStreamChunksAfter(ctx context.Context, arg ListStreamChunksAfterParams) ([]ListStreamChunksAfterRow, error)
 	MaxStreamChunkSeq(ctx context.Context, streamID string) (interface{}, error)

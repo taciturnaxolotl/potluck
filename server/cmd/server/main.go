@@ -130,10 +130,11 @@ func main() {
 	r.Post("/auth/logout", hcaLogoutHandler(authSvc, cfg.IsProduction()))
 
 	apiSrv := &web.Server{
-		Q:      q,
-		Auth:   authSvc,
-		Ledger: ledg,
-		Hub:    hub,
+		Q:             q,
+		Auth:          authSvc,
+		Ledger:        ledg,
+		Hub:           hub,
+		PioneerAPIKey: cfg.Pioneer.APIKey,
 	}
 	v1Srv := &v1.Server{
 		Q:        q,
