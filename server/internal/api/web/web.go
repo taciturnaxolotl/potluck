@@ -8,6 +8,7 @@
 package web
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -37,6 +38,9 @@ func (s *Server) Mount(r chi.Router) {
 	r.Get("/me", s.handleMe)
 	r.Get("/balance", s.handleBalance)
 	r.Post("/contributions", s.handleContribute)
+
+	r.Get("/sessions", s.handleListSessions)
+	r.Delete("/sessions/{id}", s.handleRevokeSession)
 
 	r.Get("/conversations", s.handleListConversations)
 	r.Post("/conversations", s.handleCreateConversation)
@@ -107,6 +111,82 @@ func (s *Server) handleContribute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeErr(w, 501, "not_implemented", "send amount_micros instead; client conversion pending")
+}
+
+// ---- sessions ----------------------------------------------------------
+
+func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
+	u, _ := currentUser(r)
+	currentID := ""
+	if c, err := r.Cookie(auth.CookieName); err == nil {
+		currentID = auth.HashToken(c.Value)
+	}
+	rows, err := s.Q.ListSessionsForUser(r.Context(), store.ListSessionsForUserParams{
+		UserID:    u.ID,
+		ExpiresAt: time.Now().Unix(),
+	})
+	if err != nil {
+		writeErr(w, 500, "internal", err.Error())
+		return
+	}
+	out := make([]map[string]any, 0, len(rows))
+	for _, sess := range rows {
+		entry := map[string]any{
+			"id":           sess.ID,
+			"created_at":   sess.CreatedAt,
+			"last_used_at": sess.LastUsedAt,
+			"expires_at":   sess.ExpiresAt,
+			"current":      sess.ID == currentID,
+			"ip":           sess.Ip.String,
+			"user_agent":   sess.UserAgent.String,
+			"location":     resolveIP(r.Context(), sess.Ip.String),
+		}
+		out = append(out, entry)
+	}
+	writeJSON(w, 200, out)
+}
+
+func (s *Server) handleRevokeSession(w http.ResponseWriter, r *http.Request) {
+	u, _ := currentUser(r)
+	id := chi.URLParam(r, "id")
+	if err := s.Q.DeleteSessionForUser(r.Context(), store.DeleteSessionForUserParams{
+		ID:     id,
+		UserID: u.ID,
+	}); err != nil {
+		writeErr(w, 500, "internal", err.Error())
+		return
+	}
+	w.WriteHeader(204)
+}
+
+// resolveIP calls ip.hackclub.com to get a human-readable location string
+// like "Cambridge, US". Returns empty string on any failure.
+func resolveIP(ctx context.Context, ip string) string {
+	if ip == "" || ip == "127.0.0.1" || ip == "::1" {
+		return "localhost"
+	}
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://ip.hackclub.com/ip/"+ip, nil)
+	if err != nil {
+		return ""
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil || resp.StatusCode != 200 {
+		return ""
+	}
+	defer resp.Body.Close()
+	var geo struct {
+		CityName    string `json:"city_name"`
+		CountryCode string `json:"country_iso_code"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&geo); err != nil {
+		return ""
+	}
+	if geo.CityName != "" && geo.CountryCode != "" {
+		return geo.CityName + ", " + geo.CountryCode
+	}
+	return geo.CountryCode
 }
 
 // ---- conversations -----------------------------------------------------

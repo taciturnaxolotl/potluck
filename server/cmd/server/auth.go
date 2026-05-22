@@ -2,6 +2,7 @@ package main
 
 import (
 	"database/sql"
+	"net"
 	"net/http"
 	"time"
 
@@ -136,7 +137,7 @@ func hcaCallbackHandler(client *hca.Client, q *store.Queries, authSvc *auth.Serv
 			return
 		}
 
-		tok, err := authSvc.IssueSession(r.Context(), user.ID)
+		tok, err := authSvc.IssueSession(r.Context(), user.ID, clientIP(r), r.Header.Get("User-Agent"))
 		if err != nil {
 			log.Error("hca: mint session", "err", err, "user_id", user.ID)
 			loginRedirect(w, r, "session_failed")
@@ -186,7 +187,7 @@ func hcaLogoutHandler(authSvc *auth.Service, secure bool) http.HandlerFunc {
 	}
 }
 
-// nullStr lifts an empty-or-not string into a sql.NullString. We use this
+// nullStr lifts an empty-or-not string into a sql.NullString.
 // so optional HCA fields end up as NULL in SQLite rather than empty
 // strings, which makes "did the user have a slack id?" queries less
 // surprising.
@@ -195,4 +196,15 @@ func nullStr(s string) sql.NullString {
 		return sql.NullString{}
 	}
 	return sql.NullString{String: s, Valid: true}
+}
+
+// clientIP extracts the real client IP from the request. chi's RealIP
+// middleware normalises X-Forwarded-For / X-Real-IP into r.RemoteAddr,
+// so we just strip the port.
+func clientIP(r *http.Request) string {
+	ip := r.RemoteAddr
+	if h, _, err := net.SplitHostPort(ip); err == nil {
+		return h
+	}
+	return ip
 }

@@ -122,6 +122,20 @@ export const createKey = (name: string) =>
   api.post<APIKey & { plaintext: string }>('/api/keys', { name });
 export const revokeKey = (id: string) => api.del<void>(`/api/keys/${id}`);
 
+export type Session = {
+  id: string;
+  created_at: number;
+  last_used_at: number;
+  expires_at: number;
+  current: boolean;
+  ip: string;
+  user_agent: string;
+  location: string;
+};
+
+export const listSessions = () => api.get<Session[]>('/api/sessions');
+export const revokeSession = (id: string) => api.del<void>(`/api/sessions/${id}`);
+
 export async function logout(): Promise<void> {
   await fetch('/auth/logout', { method: 'POST', credentials: 'include' });
 }

@@ -6,9 +6,12 @@
     listKeys,
     createKey,
     revokeKey,
+    listSessions,
+    revokeSession,
     logout,
     type User,
-    type APIKey
+    type APIKey,
+    type Session
   } from '$lib/api';
   import { cycleTheme, currentTheme, type Theme } from '$lib/theme';
   import { onMount } from 'svelte';
@@ -20,6 +23,7 @@
   let user = $state<User | null>(null);
   let bal = $state<{ balance_micros: number; balance_usd: string } | null>(null);
   let keys = $state<APIKey[]>([]);
+  let sessions = $state<Session[]>([]);
   let loading = $state(true);
   let err = $state<string | null>(null);
 
@@ -34,7 +38,7 @@
 
   onMount(async () => {
     try {
-      [user, bal, keys] = await Promise.all([me(), balance(), listKeys()]);
+      [user, bal, keys, sessions] = await Promise.all([me(), balance(), listKeys(), listSessions()]);
     } catch (e: unknown) {
       err = e instanceof Error ? e.message : 'failed to load';
     } finally {
@@ -48,16 +52,58 @@
     return `https://cachet.dunkirk.sh/users/${slackId}/r`;
   }
 
+  async function handleRevokeSession(id: string) {
+    try {
+      await revokeSession(id);
+      sessions = await listSessions();
+    } catch {
+      // silently ignore
+    }
+  }
+
   function formatDate(unix: number): string {
+    if (!unix) return 'never';
+    const d = new Date(unix * 1000);
+    const now = new Date();
+    const diffMs = now.getTime() - d.getTime();
+    const diffMins = Math.floor(diffMs / 60_000);
+    const diffHours = Math.floor(diffMs / 3_600_000);
+    const diffDays = Math.floor(diffMs / 86_400_000);
+    if (diffMins < 1) return 'just now';
+    if (diffMins < 60) return `${diffMins}m ago`;
+    if (diffHours < 24) return `${diffHours}h ago`;
+    if (diffDays < 7) return `${diffDays}d ago`;
     return new Intl.DateTimeFormat('en-GB', {
       day: 'numeric',
-      month: 'long',
-      year: 'numeric'
-    }).format(new Date(unix * 1000));
+      month: 'short',
+      year: diffDays > 365 ? 'numeric' : undefined
+    }).format(d);
   }
 
   function trim(usd: string) {
     return usd.endsWith('.00') ? usd.slice(0, -3) : usd;
+  }
+
+  function parseUA(ua: string): string {
+    if (!ua) return 'unknown browser';
+    const browsers: [RegExp, string][] = [
+      [/Edg\//, 'Edge'],
+      [/OPR\//, 'Opera'],
+      [/Chrome\//, 'Chrome'],
+      [/Firefox\//, 'Firefox'],
+      [/Safari\//, 'Safari'],
+      [/curl\//, 'curl'],
+    ];
+    const oses: [RegExp, string][] = [
+      [/Windows NT/, 'Windows'],
+      [/Mac OS X/, 'macOS'],
+      [/Android/, 'Android'],
+      [/iPhone|iPad/, 'iOS'],
+      [/Linux/, 'Linux'],
+    ];
+    const browser = browsers.find(([re]) => re.test(ua))?.[1] ?? 'browser';
+    const os = oses.find(([re]) => re.test(ua))?.[1] ?? '';
+    return os ? `${browser} on ${os}` : browser;
   }
 
   async function handleCreateKey(e: SubmitEvent) {
@@ -198,6 +244,42 @@
       {/if}
     </section>
 
+    <!-- ── sessions ─────────────────────────────────────────────── -->
+    <section class="card">
+      <div class="card-head">
+        <div class="card-title">sessions</div>
+        <div class="card-sub muted">{sessions.length} active</div>
+      </div>
+      {#if sessions.length > 0}
+        <ul class="key-list">
+          {#each sessions as sess (sess.id)}
+            <li class="key-row">
+              <div class="key-info">
+                <span class="key-name">
+                  {parseUA(sess.user_agent)}
+                  {#if sess.current}<span class="sess-current">current</span>{/if}
+                </span>
+                <span class="key-masked mono muted">
+                  {#if sess.location}{sess.location} · {/if}last used {formatDate(sess.last_used_at)}
+                </span>
+              </div>
+              {#if sess.current}
+                <button class="key-revoke signout-inline" onclick={handleLogout} disabled={signingOut}>
+                  {signingOut ? 'signing out…' : 'sign out'}
+                </button>
+              {:else}
+                <button class="key-revoke" onclick={() => handleRevokeSession(sess.id)}>
+                  revoke
+                </button>
+              {/if}
+            </li>
+          {/each}
+        </ul>
+      {:else}
+        <p class="muted small">no active sessions.</p>
+      {/if}
+    </section>
+
     <!-- ── appearance ─────────────────────────────────────────────── -->
     <section class="card">
       <div class="card-head">
@@ -209,17 +291,6 @@
           {theme}
         </button>
       </div>
-    </section>
-
-    <!-- ── sign out ──────────────────────────────────────────────── -->
-    <section class="card danger-zone">
-      <div class="card-head">
-        <div class="card-title">sign out</div>
-      </div>
-      <p class="muted small">ends your current session. your keys and balance stay put.</p>
-      <button class="signout-btn" onclick={handleLogout} disabled={signingOut}>
-        {signingOut ? 'signing out…' : 'sign out'}
-      </button>
     </section>
 
   {/if}
@@ -446,10 +517,12 @@
     cursor: pointer;
     font: inherit;
     font-size: 0.8rem;
+    transition: background 80ms ease, border-color 80ms ease, color 80ms ease;
   }
   .key-revoke:hover {
+    background: var(--accent);
     border-color: var(--accent);
-    color: var(--accent);
+    color: var(--text-on-accent);
   }
   .key-tag {
     font-size: 0.78rem;
@@ -490,27 +563,24 @@
     color: var(--accent);
   }
 
-  /* ── sign out ─────────────────────────────────────────────────── */
-  .danger-zone {
-    border-color: var(--border);
+  .sess-current {
+    display: inline-block;
+    margin-left: 0.4rem;
+    font-family: var(--font-mono);
+    font-size: 0.65rem;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    color: var(--accent-eyebrow, var(--accent));
+    vertical-align: middle;
   }
-  .signout-btn {
-    align-self: flex-start;
-    background: transparent;
-    border: 1px solid var(--border);
-    color: var(--text);
-    padding: 0.45rem 1rem;
-    border-radius: var(--radius-sm);
-    cursor: pointer;
-    font: inherit;
-    font-size: 0.9rem;
-    transition: border-color 80ms ease, color 80ms ease;
-  }
-  .signout-btn:hover:not(:disabled) {
+
+  /* ── sign out (inline in sessions row) ───────────────────────── */
+  .signout-inline:hover:not(:disabled) {
+    background: var(--accent);
     border-color: var(--accent);
-    color: var(--accent);
+    color: var(--text-on-accent);
   }
-  .signout-btn:disabled {
+  .signout-inline:disabled {
     opacity: 0.5;
     cursor: not-allowed;
   }

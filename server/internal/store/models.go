@@ -69,11 +69,13 @@ type ModelPrice struct {
 }
 
 type Session struct {
-	ID         string `json:"id"`
-	UserID     string `json:"user_id"`
-	CreatedAt  int64  `json:"created_at"`
-	ExpiresAt  int64  `json:"expires_at"`
-	LastUsedAt int64  `json:"last_used_at"`
+	ID         string         `json:"id"`
+	UserID     string         `json:"user_id"`
+	CreatedAt  int64          `json:"created_at"`
+	ExpiresAt  int64          `json:"expires_at"`
+	LastUsedAt int64          `json:"last_used_at"`
+	Ip         sql.NullString `json:"ip"`
+	UserAgent  sql.NullString `json:"user_agent"`
 }
 
 type Spend struct {

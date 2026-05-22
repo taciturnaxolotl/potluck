@@ -9,6 +9,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"net/http"
 	"time"
@@ -34,7 +35,7 @@ func New(q *store.Queries, ttl time.Duration) *Service {
 
 // IssueSession mints a new session for userID and returns the plaintext
 // token to set on the client cookie.
-func (s *Service) IssueSession(ctx context.Context, userID string) (string, error) {
+func (s *Service) IssueSession(ctx context.Context, userID, ip, userAgent string) (string, error) {
 	tok, err := randomToken(32)
 	if err != nil {
 		return "", err
@@ -46,11 +47,20 @@ func (s *Service) IssueSession(ctx context.Context, userID string) (string, erro
 		CreatedAt:  now,
 		ExpiresAt:  now + int64(s.ttl.Seconds()),
 		LastUsedAt: now,
+		Ip:         nullStr(ip),
+		UserAgent:  nullStr(userAgent),
 	})
 	if err != nil {
 		return "", err
 	}
 	return tok, nil
+}
+
+func nullStr(s string) sql.NullString {
+	if s == "" {
+		return sql.NullString{}
+	}
+	return sql.NullString{String: s, Valid: true}
 }
 
 // Middleware loads the user from the session cookie and stashes it on the
@@ -121,6 +131,10 @@ func hashToken(tok string) string {
 	sum := sha256.Sum256([]byte(tok))
 	return hex.EncodeToString(sum[:])
 }
+
+// HashToken is the exported form for callers outside the auth package that
+// need to resolve a plaintext cookie to its DB id (e.g. session listing).
+func HashToken(tok string) string { return hashToken(tok) }
 
 // RevokeSession deletes the session identified by the plaintext token.
 // Used by the logout handler; silently succeeds if the session is already

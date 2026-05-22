@@ -24,6 +24,7 @@ type Querier interface {
 	DeleteExpiredIdempotency(ctx context.Context, expiresAt int64) error
 	DeleteExpiredSessions(ctx context.Context, expiresAt int64) error
 	DeleteSession(ctx context.Context, id string) error
+	DeleteSessionForUser(ctx context.Context, arg DeleteSessionForUserParams) error
 	GetAPIKeyByHash(ctx context.Context, keyHash string) (ApiKey, error)
 	GetConversation(ctx context.Context, arg GetConversationParams) (Conversation, error)
 	GetIdempotency(ctx context.Context, arg GetIdempotencyParams) (IdempotencyKey, error)
@@ -41,6 +42,7 @@ type Querier interface {
 	ListEstimatedSpends(ctx context.Context, limit int64) ([]Spend, error)
 	ListMessagesForConversation(ctx context.Context, conversationID string) ([]Message, error)
 	ListModelPrices(ctx context.Context) ([]ModelPrice, error)
+	ListSessionsForUser(ctx context.Context, arg ListSessionsForUserParams) ([]Session, error)
 	ListStreamChunksAfter(ctx context.Context, arg ListStreamChunksAfterParams) ([]ListStreamChunksAfterRow, error)
 	MaxStreamChunkSeq(ctx context.Context, streamID string) (interface{}, error)
 	PoolActiveKeyCount(ctx context.Context) (int64, error)

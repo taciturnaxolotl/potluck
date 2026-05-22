@@ -7,20 +7,23 @@ package store
 
 import (
 	"context"
+	"database/sql"
 )
 
 const createSession = `-- name: CreateSession :one
-INSERT INTO sessions (id, user_id, created_at, expires_at, last_used_at)
-VALUES (?, ?, ?, ?, ?)
-RETURNING id, user_id, created_at, expires_at, last_used_at
+INSERT INTO sessions (id, user_id, created_at, expires_at, last_used_at, ip, user_agent)
+VALUES (?, ?, ?, ?, ?, ?, ?)
+RETURNING id, user_id, created_at, expires_at, last_used_at, ip, user_agent
 `
 
 type CreateSessionParams struct {
-	ID         string `json:"id"`
-	UserID     string `json:"user_id"`
-	CreatedAt  int64  `json:"created_at"`
-	ExpiresAt  int64  `json:"expires_at"`
-	LastUsedAt int64  `json:"last_used_at"`
+	ID         string         `json:"id"`
+	UserID     string         `json:"user_id"`
+	CreatedAt  int64          `json:"created_at"`
+	ExpiresAt  int64          `json:"expires_at"`
+	LastUsedAt int64          `json:"last_used_at"`
+	Ip         sql.NullString `json:"ip"`
+	UserAgent  sql.NullString `json:"user_agent"`
 }
 
 func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) (Session, error) {
@@ -30,6 +33,8 @@ func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) (S
 		arg.CreatedAt,
 		arg.ExpiresAt,
 		arg.LastUsedAt,
+		arg.Ip,
+		arg.UserAgent,
 	)
 	var i Session
 	err := row.Scan(
@@ -38,6 +43,8 @@ func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) (S
 		&i.CreatedAt,
 		&i.ExpiresAt,
 		&i.LastUsedAt,
+		&i.Ip,
+		&i.UserAgent,
 	)
 	return i, err
 }
@@ -60,8 +67,22 @@ func (q *Queries) DeleteSession(ctx context.Context, id string) error {
 	return err
 }
 
+const deleteSessionForUser = `-- name: DeleteSessionForUser :exec
+DELETE FROM sessions WHERE id = ? AND user_id = ?
+`
+
+type DeleteSessionForUserParams struct {
+	ID     string `json:"id"`
+	UserID string `json:"user_id"`
+}
+
+func (q *Queries) DeleteSessionForUser(ctx context.Context, arg DeleteSessionForUserParams) error {
+	_, err := q.db.ExecContext(ctx, deleteSessionForUser, arg.ID, arg.UserID)
+	return err
+}
+
 const getSession = `-- name: GetSession :one
-SELECT id, user_id, created_at, expires_at, last_used_at FROM sessions WHERE id = ? AND expires_at > ?
+SELECT id, user_id, created_at, expires_at, last_used_at, ip, user_agent FROM sessions WHERE id = ? AND expires_at > ?
 `
 
 type GetSessionParams struct {
@@ -78,8 +99,50 @@ func (q *Queries) GetSession(ctx context.Context, arg GetSessionParams) (Session
 		&i.CreatedAt,
 		&i.ExpiresAt,
 		&i.LastUsedAt,
+		&i.Ip,
+		&i.UserAgent,
 	)
 	return i, err
+}
+
+const listSessionsForUser = `-- name: ListSessionsForUser :many
+SELECT id, user_id, created_at, expires_at, last_used_at, ip, user_agent FROM sessions WHERE user_id = ? AND expires_at > ? ORDER BY last_used_at DESC
+`
+
+type ListSessionsForUserParams struct {
+	UserID    string `json:"user_id"`
+	ExpiresAt int64  `json:"expires_at"`
+}
+
+func (q *Queries) ListSessionsForUser(ctx context.Context, arg ListSessionsForUserParams) ([]Session, error) {
+	rows, err := q.db.QueryContext(ctx, listSessionsForUser, arg.UserID, arg.ExpiresAt)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Session{}
+	for rows.Next() {
+		var i Session
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.CreatedAt,
+			&i.ExpiresAt,
+			&i.LastUsedAt,
+			&i.Ip,
+			&i.UserAgent,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const touchSession = `-- name: TouchSession :exec
