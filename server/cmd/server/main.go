@@ -127,6 +127,7 @@ func main() {
 	sessionTTL := time.Duration(cfg.SessionTTL) * time.Second
 	r.Get("/auth/login", hcaLoginHandler(hcaClient, cfg.IsProduction()))
 	r.Get("/auth/callback", hcaCallbackHandler(hcaClient, q, authSvc, sessionTTL, cfg.IsProduction()))
+	r.Post("/auth/logout", hcaLogoutHandler(authSvc, cfg.IsProduction()))
 
 	apiSrv := &web.Server{
 		Q:      q,

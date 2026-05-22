@@ -60,7 +60,7 @@
     <h1 class="display">a token melting pot</h1>
     <p class="lede">
       <span class="quote">&ldquo;People who love to eat are always the best people.&rdquo;</span>
-      <span class="attribution">— Julia Child, on something else entirely</span>
+      <span class="attribution">Julia Child, on something else entirely</span>
     </p>
   </header>
 

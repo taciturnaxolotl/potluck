@@ -8,13 +8,14 @@
 
   import { page } from '$app/state';
   import { cycleTheme, currentTheme, type Theme } from '$lib/theme';
-  import { me, type User } from '$lib/api';
+  import { me, balance, type User } from '$lib/api';
   import type { Snippet } from 'svelte';
 
   let { children }: { children: Snippet } = $props();
 
   let theme = $state<Theme>('auto');
   let user = $state<User | null>(null);
+  let bal = $state<{ balance_usd: string } | null>(null);
   let authChecked = $state(false);
 
   $effect(() => {
@@ -25,6 +26,7 @@
     (async () => {
       try {
         user = await me();
+        bal = await balance();
       } catch {
         user = null;
       } finally {
@@ -135,11 +137,10 @@
   // returns true when its href is the active page.
   type NavItem = { label: string; href: string; section: string };
   const navItems: NavItem[] = [
-    { label: 'Dashboard', href: '/dashboard', section: 'Pool' },
-    { label: 'Usage', href: '/usage', section: 'Pool' },
-    { label: 'Keys', href: '/keys', section: 'Pool' },
-    { label: 'Conversations', href: '/chat', section: 'Account' },
-    { label: 'Settings', href: '/settings', section: 'Account' }
+    { label: 'dashboard', href: '/dashboard', section: 'the pot' },
+    { label: 'usage', href: '/usage', section: 'the pot' },
+    { label: 'conversations', href: '/chat', section: 'yours' },
+    { label: 'settings', href: '/settings', section: 'yours' }
   ];
 
   let sections = $derived.by(() => {
@@ -162,7 +163,7 @@
   <div class="shell">
     <aside class="sidebar">
       <div class="brand">potluck</div>
-      <div class="brand-sub">v0.1.0 · communal pool</div>
+      <div class="brand-sub">What will you make today?</div>
 
       {#each sections as [section, items] (section)}
         <div class="nav-section">{section}</div>
@@ -179,13 +180,21 @@
       {/each}
 
       <div class="sidebar-foot">
-        <button class="lightswitch" onclick={toggle} aria-label="cycle theme">
-          theme · <span class="mono">{theme}</span>
-        </button>
         {#if user}
           <div class="who">
-            <span class="who-mark">●</span>
-            <span class="who-email mono">{user.email}</span>
+            {#if user.slack_id?.Valid}
+              <img
+                class="who-avatar"
+                src="https://cachet.dunkirk.sh/users/{user.slack_id.String}/r"
+                alt={user.display_name}
+              />
+            {:else}
+              <span class="who-initial">{user.display_name?.[0]?.toUpperCase() ?? '?'}</span>
+            {/if}
+            <span class="who-name">{user.display_name?.split(' ')[0] ?? user.email}</span>
+            {#if bal}
+              <span class="who-bal mono">${bal.balance_usd}</span>
+            {/if}
           </div>
         {/if}
       </div>
@@ -235,7 +244,8 @@
   .shell {
     display: grid;
     grid-template-columns: 240px 1fr;
-    min-height: 100vh;
+    height: 100dvh;
+    overflow: hidden;
   }
 
   .sidebar {
@@ -244,6 +254,7 @@
     padding: 1.5rem 1rem;
     display: flex;
     flex-direction: column;
+    overflow-y: auto;
   }
 
   .brand {
@@ -308,39 +319,48 @@
     gap: 0.6rem;
   }
 
-  .lightswitch {
-    background: transparent;
-    border: 1px solid var(--border);
-    color: var(--text);
-    padding: 0.4rem 0.6rem;
-    border-radius: var(--radius-sm);
-    cursor: pointer;
-    font: inherit;
-    font-size: 0.8rem;
-    text-align: left;
-  }
-  .lightswitch:hover {
-    background: rgba(255, 217, 218, 0.04);
-  }
-
   .who {
     display: flex;
     align-items: center;
-    gap: 0.4rem;
-    font-size: 0.75rem;
+    gap: 0.5rem;
+    font-size: 0.85rem;
   }
-  .who-mark {
+  .who-avatar,
+  .who-initial {
+    width: 1.85rem;
+    height: 1.85rem;
+    border-radius: 70% 30% 50% 50% / 50% 50% 30% 70%;
+    flex-shrink: 0;
+  }
+  .who-avatar {
+    object-fit: cover;
+    border: 1px solid var(--border);
+  }
+  .who-initial {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--bg-page);
+    border: 1px solid var(--border);
+    font-family: var(--font-serif);
+    font-size: 0.7rem;
     color: var(--accent);
   }
-  .who-email {
+  .who-name {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+  .who-bal {
+    font-size: 0.72rem;
+    color: var(--text-faint);
+    font-feature-settings: 'tnum' 1;
+    flex-shrink: 0;
+  }
 
   .main {
     padding: 2rem 2.25rem;
-    overflow-x: hidden;
+    overflow-y: auto;
   }
 
   /* ---- splash shell --------------------------------------------------- */

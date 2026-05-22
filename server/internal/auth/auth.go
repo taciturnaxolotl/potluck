@@ -10,7 +10,6 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
-	"errors"
 	"net/http"
 	"time"
 
@@ -123,5 +122,9 @@ func hashToken(tok string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// ErrNotFound is returned when a session lookup misses.
-var ErrNotFound = errors.New("auth: session not found")
+// RevokeSession deletes the session identified by the plaintext token.
+// Used by the logout handler; silently succeeds if the session is already
+// gone.
+func (s *Service) RevokeSession(ctx context.Context, plaintextToken string) error {
+	return s.q.DeleteSession(ctx, hashToken(plaintextToken))
+}

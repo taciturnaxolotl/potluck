@@ -1,15 +1,12 @@
 <article>
-  <div class="eyebrow">yours</div>
-  <h1 class="display">conversations</h1>
-  <p class="lede">chat history and context threads. coming soon.</p>
+  <div class="eyebrow">the pot</div>
+  <h1 class="display">usage</h1>
+  <p class="lede">per-key spend, token breakdown, request history. coming soon.</p>
 
   <div class="card">
     <p class="muted">
-      the chat UI isn't wired yet. once it is, your conversations will live here:
-      resumable across devices, stored locally in IndexedDB with server-side backup.
-    </p>
-    <p class="muted">
-      in the meantime, hit the api directly from your terminal or editor.
+      detailed usage stats aren't wired yet. for now, your balance and today's pool spend
+      are on the <a href="/dashboard">dashboard</a>.
     </p>
   </div>
 </article>
@@ -23,6 +20,9 @@
     font-size: 0.95rem;
     line-height: 1.6;
     margin: 0;
+  }
+  .muted a {
+    color: var(--accent);
   }
   .card {
     border: 1px solid var(--border);

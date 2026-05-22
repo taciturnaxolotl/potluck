@@ -56,6 +56,7 @@ export type User = {
   id: string;
   email: string;
   display_name: string;
+  slack_id: { String: string; Valid: boolean } | null;
   created_at: number;
   last_seen_at: number | null;
 };
@@ -120,3 +121,7 @@ export const listKeys = () => api.get<APIKey[]>('/api/keys');
 export const createKey = (name: string) =>
   api.post<APIKey & { plaintext: string }>('/api/keys', { name });
 export const revokeKey = (id: string) => api.del<void>(`/api/keys/${id}`);
+
+export async function logout(): Promise<void> {
+  await fetch('/auth/logout', { method: 'POST', credentials: 'include' });
+}

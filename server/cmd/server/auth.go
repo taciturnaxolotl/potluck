@@ -166,6 +166,26 @@ func loginRedirect(w http.ResponseWriter, r *http.Request, code string) {
 	http.Redirect(w, r, "/?auth_error="+code, http.StatusFound)
 }
 
+// hcaLogoutHandler clears the session cookie and deletes the session from
+// the DB, then sends the user back to the splash.
+func hcaLogoutHandler(authSvc *auth.Service, secure bool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if c, err := r.Cookie(auth.CookieName); err == nil && c.Value != "" {
+			_ = authSvc.RevokeSession(r.Context(), c.Value)
+		}
+		http.SetCookie(w, &http.Cookie{
+			Name:     auth.CookieName,
+			Value:    "",
+			Path:     "/",
+			HttpOnly: true,
+			Secure:   secure,
+			SameSite: http.SameSiteLaxMode,
+			MaxAge:   -1,
+		})
+		http.Redirect(w, r, "/", http.StatusFound)
+	}
+}
+
 // nullStr lifts an empty-or-not string into a sql.NullString. We use this
 // so optional HCA fields end up as NULL in SQLite rather than empty
 // strings, which makes "did the user have a slack id?" queries less

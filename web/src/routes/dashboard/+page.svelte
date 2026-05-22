@@ -49,13 +49,13 @@
 </script>
 
 <article>
-  <div class="eyebrow">Today · {today}</div>
+  <div class="eyebrow">halo {user?.display_name?.split(' ')[0] ?? 'there'} · {today}</div>
   <h1 class="display">Réserve communale</h1>
   <p class="lede">
-    {#if pool}
-      {pool.contributors} contributors, one pool, equal share
+    {#if pool && pool.contributors > 0}
+      {pool.contributors} chefs stirring, one pot, equal ladle
     {:else}
-      A token melting pot
+      the token melting pot
     {/if}
   </p>
 
@@ -66,26 +66,26 @@
   {:else}
     <div class="stat-grid">
       <div class="stat">
-        <div class="stat-label">Daily quota</div>
+        <div class="stat-label">Daily ladle</div>
         <div class="stat-num">
           {dailyShareUSD
             ? `$${trim(dailyShareUSD)}`
-            : '—'}<span class="stat-unit">/day</span>
+            : '?'}<span class="stat-unit">/day, your share</span>
         </div>
       </div>
       <div class="stat">
-        <div class="stat-label">Your balance</div>
-        <div class="stat-num">${trim(bal?.balance_usd ?? '0.00')}<span class="stat-unit">remaining</span></div>
+        <div class="stat-label">Your bowl</div>
+        <div class="stat-num">${trim(bal?.balance_usd ?? '0.00')}<span class="stat-unit">left to spend</span></div>
       </div>
       <div class="stat">
-        <div class="stat-label">Active keys</div>
-        <div class="stat-num">{activeKeyCount}<span class="stat-unit">in rotation</span></div>
+        <div class="stat-label">Keys in the drawer</div>
+        <div class="stat-num">{activeKeyCount}<span class="stat-unit">{activeKeyCount === 1 ? 'minted' : 'in rotation'}</span></div>
       </div>
     </div>
 
     <div class="snippet" aria-label="curl example">
-      <div class="snippet-label">Curl example</div>
-      <pre><span class="cm"># proxied through potluck — pool key auth</span>
+      <div class="snippet-label">From the command line</div>
+      <pre><span class="cm"># your key, the pool's budget</span>
 curl https://potluck.dunkirk.sh/v1/chat/completions \
   -H <span class="st">"Authorization: Bearer {keys[0]?.masked ?? 'pot_cedar_••••••••••••••••••_9xK2m'}"</span> \
   -H <span class="st">"Content-Type: application/json"</span> \
@@ -93,7 +93,7 @@ curl https://potluck.dunkirk.sh/v1/chat/completions \
     </div>
 
     {#if activeKeyCount === 0}
-      <p class="hint">No keys yet. <a href="/keys">Mint one</a> to start using the API.</p>
+      <p class="hint">no keys yet. <a href="/keys">make one</a> to start using the api.</p>
     {/if}
   {/if}
 </article>

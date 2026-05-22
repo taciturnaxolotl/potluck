@@ -88,6 +88,10 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+#app {
+  display: contents;
+}
+
 a {
   color: var(--accent);
   text-decoration: none;
