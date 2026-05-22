@@ -42,6 +42,10 @@ export default defineConfig({
       '/auth': {
         target: 'http://localhost:8080',
         changeOrigin: false
+      },
+      '/v1': {
+        target: 'http://localhost:8080',
+        changeOrigin: false
       }
     }
   }
