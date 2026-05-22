@@ -106,6 +106,14 @@
     return os ? `${browser} on ${os}` : browser;
   }
 
+  let copied = $state(false);
+  async function copyPlaintext() {
+    if (!newKeyPlaintext) return;
+    await navigator.clipboard.writeText(newKeyPlaintext);
+    copied = true;
+    setTimeout(() => (copied = false), 2000);
+  }
+
   async function handleCreateKey(e: SubmitEvent) {
     e.preventDefault();
     if (!newKeyName.trim()) return;
@@ -187,17 +195,42 @@
 
       {#if newKeyPlaintext}
         <div class="plaintext-banner">
-          <div class="plaintext-label">copy this now. it won't be shown again</div>
-          <pre class="plaintext">{newKeyPlaintext}</pre>
-          <button class="plaintext-dismiss" onclick={() => (newKeyPlaintext = null)}>got it</button>
+          <div class="plaintext-top">
+            <span class="plaintext-label">copy this now. it won't be shown again.</span>
+            <button class="plaintext-copy" onclick={copyPlaintext}>
+              {copied ? 'copied!' : 'copy'}
+            </button>
+          </div>
+          <button class="plaintext-pre-btn" onclick={copyPlaintext} title="click to copy">
+            <pre class="plaintext">{newKeyPlaintext}</pre>
+          </button>
         </div>
+      {/if}
+
+      {#if activeKeys.length > 0}
+        <ul class="key-list">
+          {#each activeKeys as key (key.id)}
+            <li class="key-row">
+              <div class="key-info">
+                <span class="key-name">{key.name}</span>
+                <span class="key-masked mono muted">{key.masked}</span>
+                <span class="key-meta muted">
+                  created {formatDate(key.created_at)}{key.last_used_at ? ` · last used ${formatDate(key.last_used_at)}` : ''}
+                </span>
+              </div>
+              <button class="key-revoke" onclick={() => handleRevoke(key.id)}>revoke</button>
+            </li>
+          {/each}
+        </ul>
+      {:else if !newKeyPlaintext}
+        <p class="muted small">no active keys yet.</p>
       {/if}
 
       <form class="key-form" onsubmit={handleCreateKey}>
         <input
           class="key-input"
           type="text"
-          placeholder="key name, e.g. cursor"
+          placeholder="name this key, e.g. cursor"
           bind:value={newKeyName}
           maxlength={64}
           disabled={creating}
@@ -210,25 +243,9 @@
         <p class="error small">{createErr}</p>
       {/if}
 
-      {#if activeKeys.length > 0}
-        <ul class="key-list">
-          {#each activeKeys as key (key.id)}
-            <li class="key-row">
-              <div class="key-info">
-                <span class="key-name">{key.name}</span>
-                <span class="key-masked mono muted">{key.masked}</span>
-              </div>
-              <button class="key-revoke" onclick={() => handleRevoke(key.id)}>revoke</button>
-            </li>
-          {/each}
-        </ul>
-      {:else}
-        <p class="muted small">no active keys. make one above.</p>
-      {/if}
-
       {#if revokedKeys.length > 0}
         <details class="revoked-details">
-          <summary class="muted small">show {revokedKeys.length} revoked</summary>
+          <summary class="muted small">{revokedKeys.length} revoked</summary>
           <ul class="key-list faded">
             {#each revokedKeys as key (key.id)}
               <li class="key-row">
@@ -402,10 +419,43 @@
     border-radius: var(--radius-sm);
     background: var(--bg-page);
   }
+  .plaintext-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+  }
   .plaintext-label {
     font-size: 0.8rem;
     color: var(--accent-eyebrow, var(--accent));
     font-family: var(--font-mono);
+  }
+  .plaintext-copy {
+    background: var(--accent);
+    color: var(--text-on-accent);
+    border: none;
+    border-radius: var(--radius-sm);
+    padding: 0.2rem 0.6rem;
+    font: inherit;
+    font-size: 0.75rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: filter 80ms ease;
+    flex-shrink: 0;
+  }
+  .plaintext-copy:hover {
+    filter: brightness(1.08);
+  }
+  .plaintext-pre-btn {
+    background: none;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+    text-align: left;
+    width: 100%;
+  }
+  .plaintext-pre-btn:hover .plaintext {
+    opacity: 0.8;
   }
   .plaintext {
     font-family: var(--font-mono);
@@ -414,21 +464,11 @@
     white-space: pre-wrap;
     margin: 0;
     color: var(--text);
-  }
-  .plaintext-dismiss {
-    align-self: flex-start;
-    background: transparent;
-    border: 1px solid var(--border);
-    color: var(--text-muted);
-    padding: 0.3rem 0.7rem;
-    border-radius: var(--radius-sm);
     cursor: pointer;
-    font: inherit;
-    font-size: 0.8rem;
   }
-  .plaintext-dismiss:hover {
-    color: var(--text);
-    background: var(--bg-surface);
+
+  .key-meta {
+    font-size: 0.75rem;
   }
 
   /* ── key form ─────────────────────────────────────────────────── */
