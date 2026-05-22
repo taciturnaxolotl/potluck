@@ -29,3 +29,17 @@ SELECT COALESCE(SUM(amount_micros), 0) FROM spends WHERE user_id = ?;
 
 -- name: ListEstimatedSpends :many
 SELECT * FROM spends WHERE is_estimated = 1 ORDER BY created_at ASC LIMIT ?;
+
+-- name: ListUserAllocations :many
+-- Per-user contribution totals, spend totals, and derived balance.
+-- Used by the allocation calculator on the dashboard.
+SELECT
+    u.id          AS user_id,
+    u.display_name,
+    u.email,
+    COALESCE(SUM(c.amount_micros), 0) AS contributed_micros,
+    COALESCE((SELECT SUM(s.amount_micros) FROM spends s WHERE s.user_id = u.id), 0) AS spent_micros
+FROM users u
+LEFT JOIN contributions c ON c.user_id = u.id
+GROUP BY u.id, u.display_name, u.email
+ORDER BY contributed_micros DESC;

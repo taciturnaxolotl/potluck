@@ -104,6 +104,67 @@ func (q *Queries) GetPoolKey(ctx context.Context, id string) (PoolKey, error) {
 	return i, err
 }
 
+const listPoolAllocations = `-- name: ListPoolAllocations :many
+SELECT
+    u.id            AS user_id,
+    u.display_name,
+    u.email,
+    COUNT(pk.id)                                              AS key_count,
+    COALESCE(SUM(CASE WHEN pk.active = 1 THEN pk.daily_limit_micros ELSE 0 END), 0) AS daily_limit_micros,
+    COALESCE(SUM(CASE WHEN pk.active = 1 THEN pk.today_micros ELSE 0 END), 0)       AS today_micros,
+    COALESCE(SUM(pk.total_micros), 0)                         AS total_micros,
+    COALESCE(SUM(pk.request_count), 0)                        AS request_count
+FROM pool_keys pk
+JOIN users u ON u.id = pk.user_id
+GROUP BY u.id, u.display_name, u.email
+ORDER BY daily_limit_micros DESC
+`
+
+type ListPoolAllocationsRow struct {
+	UserID           string      `json:"user_id"`
+	DisplayName      string      `json:"display_name"`
+	Email            string      `json:"email"`
+	KeyCount         int64       `json:"key_count"`
+	DailyLimitMicros interface{} `json:"daily_limit_micros"`
+	TodayMicros      interface{} `json:"today_micros"`
+	TotalMicros      interface{} `json:"total_micros"`
+	RequestCount     interface{} `json:"request_count"`
+}
+
+// Per-user pool key stats: daily commitment, today's spend, all-time spend.
+// Only users who have contributed at least one pool key appear.
+func (q *Queries) ListPoolAllocations(ctx context.Context) ([]ListPoolAllocationsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listPoolAllocations)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListPoolAllocationsRow{}
+	for rows.Next() {
+		var i ListPoolAllocationsRow
+		if err := rows.Scan(
+			&i.UserID,
+			&i.DisplayName,
+			&i.Email,
+			&i.KeyCount,
+			&i.DailyLimitMicros,
+			&i.TodayMicros,
+			&i.TotalMicros,
+			&i.RequestCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listPoolKeys = `-- name: ListPoolKeys :many
 SELECT pk.id, pk.user_id, pk.label, pk.key_ciphertext, pk.key_fingerprint, pk.active, pk.daily_limit_micros, pk.today_date, pk.today_micros, pk.total_micros, pk.request_count, pk.created_at, pk.last_used_at, u.display_name AS owner_name, u.email AS owner_email
 FROM pool_keys pk

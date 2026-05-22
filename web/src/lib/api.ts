@@ -105,6 +105,26 @@ export type PoolStats = {
 
 export const poolStats = () => api.get<PoolStats>('/api/stats');
 
+export type AllocationUser = {
+  user_id: string;
+  display_name: string;
+  email: string;
+  key_count: number;
+  daily_limit_micros: number;
+  today_micros: number;
+  total_micros: number;
+  request_count: number;
+  share_fraction: number;
+  remaining_today: number;
+};
+
+export type Allocations = {
+  total_daily_limit_micros: number;
+  users: AllocationUser[];
+};
+
+export const getAllocations = () => api.get<Allocations>('/api/allocations');
+
 export type APIKey = {
   id: string;
   name: string;

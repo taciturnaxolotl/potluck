@@ -76,3 +76,20 @@ SET
     request_count = request_count + 1,
     last_used_at = ?3
 WHERE id = ?4;
+
+-- name: ListPoolAllocations :many
+-- Per-user pool key stats: daily commitment, today's spend, all-time spend.
+-- Only users who have contributed at least one pool key appear.
+SELECT
+    u.id            AS user_id,
+    u.display_name,
+    u.email,
+    COUNT(pk.id)                                              AS key_count,
+    COALESCE(SUM(CASE WHEN pk.active = 1 THEN pk.daily_limit_micros ELSE 0 END), 0) AS daily_limit_micros,
+    COALESCE(SUM(CASE WHEN pk.active = 1 THEN pk.today_micros ELSE 0 END), 0)       AS today_micros,
+    COALESCE(SUM(pk.total_micros), 0)                         AS total_micros,
+    COALESCE(SUM(pk.request_count), 0)                        AS request_count
+FROM pool_keys pk
+JOIN users u ON u.id = pk.user_id
+GROUP BY u.id, u.display_name, u.email
+ORDER BY daily_limit_micros DESC;

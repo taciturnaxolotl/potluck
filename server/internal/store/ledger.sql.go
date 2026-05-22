@@ -121,6 +121,58 @@ func (q *Queries) ListEstimatedSpends(ctx context.Context, limit int64) ([]Spend
 	return items, nil
 }
 
+const listUserAllocations = `-- name: ListUserAllocations :many
+SELECT
+    u.id          AS user_id,
+    u.display_name,
+    u.email,
+    COALESCE(SUM(c.amount_micros), 0) AS contributed_micros,
+    COALESCE((SELECT SUM(s.amount_micros) FROM spends s WHERE s.user_id = u.id), 0) AS spent_micros
+FROM users u
+LEFT JOIN contributions c ON c.user_id = u.id
+GROUP BY u.id, u.display_name, u.email
+ORDER BY contributed_micros DESC
+`
+
+type ListUserAllocationsRow struct {
+	UserID            string      `json:"user_id"`
+	DisplayName       string      `json:"display_name"`
+	Email             string      `json:"email"`
+	ContributedMicros interface{} `json:"contributed_micros"`
+	SpentMicros       interface{} `json:"spent_micros"`
+}
+
+// Per-user contribution totals, spend totals, and derived balance.
+// Used by the allocation calculator on the dashboard.
+func (q *Queries) ListUserAllocations(ctx context.Context) ([]ListUserAllocationsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listUserAllocations)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListUserAllocationsRow{}
+	for rows.Next() {
+		var i ListUserAllocationsRow
+		if err := rows.Scan(
+			&i.UserID,
+			&i.DisplayName,
+			&i.Email,
+			&i.ContributedMicros,
+			&i.SpentMicros,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const sumContributions = `-- name: SumContributions :one
 SELECT COALESCE(SUM(amount_micros), 0) FROM contributions WHERE user_id = ?
 `

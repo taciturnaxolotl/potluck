@@ -55,11 +55,17 @@ type Querier interface {
 	// The since parameter scopes only the TPS calculation; token counts are
 	// all-time so spend reflects the full history.
 	ListModelStats(ctx context.Context, startedAt int64) ([]ListModelStatsRow, error)
+	// Per-user pool key stats: daily commitment, today's spend, all-time spend.
+	// Only users who have contributed at least one pool key appear.
+	ListPoolAllocations(ctx context.Context) ([]ListPoolAllocationsRow, error)
 	// All keys (for the pool management page). Includes inactive and other users' keys.
 	ListPoolKeys(ctx context.Context) ([]ListPoolKeysRow, error)
 	ListPoolKeysForUser(ctx context.Context, userID string) ([]PoolKey, error)
 	ListSessionsForUser(ctx context.Context, arg ListSessionsForUserParams) ([]Session, error)
 	ListStreamChunksAfter(ctx context.Context, arg ListStreamChunksAfterParams) ([]ListStreamChunksAfterRow, error)
+	// Per-user contribution totals, spend totals, and derived balance.
+	// Used by the allocation calculator on the dashboard.
+	ListUserAllocations(ctx context.Context) ([]ListUserAllocationsRow, error)
 	MaxStreamChunkSeq(ctx context.Context, streamID string) (interface{}, error)
 	// Select the best key to use for a request: active, under daily cap,
 	// least spend today. Resets stale today_* counters are handled in Go
