@@ -107,6 +107,39 @@
   }
 
   let copied = $state(false);
+
+  // Confirm-on-second-click: first click arms a key, second fires the action.
+  // Auto-resets after 3s if not confirmed.
+  let confirming = $state<Set<string>>(new Set());
+  let confirmTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+  function needsConfirm(id: string): boolean {
+    return confirming.has(id);
+  }
+
+  function arm(id: string) {
+    confirming = new Set([...confirming, id]);
+    clearTimeout(confirmTimers.get(id));
+    confirmTimers.set(id, setTimeout(() => {
+      confirming = new Set([...confirming].filter(x => x !== id));
+    }, 3000));
+  }
+
+  function disarm(id: string) {
+    confirming = new Set([...confirming].filter(x => x !== id));
+    clearTimeout(confirmTimers.get(id));
+    confirmTimers.delete(id);
+  }
+
+  function guardedAction(id: string, action: () => void) {
+    if (needsConfirm(id)) {
+      disarm(id);
+      action();
+    } else {
+      arm(id);
+    }
+  }
+
   async function copyPlaintext() {
     if (!newKeyPlaintext) return;
     await navigator.clipboard.writeText(newKeyPlaintext);
@@ -218,7 +251,9 @@
                   created {formatDate(key.created_at)}{key.last_used_at ? ` · last used ${formatDate(key.last_used_at)}` : ''}
                 </span>
               </div>
-              <button class="key-revoke" onclick={() => handleRevoke(key.id)}>revoke</button>
+              <button class="key-revoke" onclick={() => guardedAction(key.id, () => handleRevoke(key.id))}>
+                {needsConfirm(key.id) ? 'sure?' : 'revoke'}
+              </button>
             </li>
           {/each}
         </ul>
@@ -281,12 +316,12 @@
                 </span>
               </div>
               {#if sess.current}
-                <button class="key-revoke signout-inline" onclick={handleLogout} disabled={signingOut}>
-                  {signingOut ? 'signing out…' : 'sign out'}
+                <button class="key-revoke signout-inline" onclick={() => guardedAction('logout', handleLogout)} disabled={signingOut}>
+                  {signingOut ? 'signing out…' : needsConfirm('logout') ? 'sure?' : 'sign out'}
                 </button>
               {:else}
-                <button class="key-revoke" onclick={() => handleRevokeSession(sess.id)}>
-                  revoke
+                <button class="key-revoke" onclick={() => guardedAction(sess.id, () => handleRevokeSession(sess.id))}>
+                  {needsConfirm(sess.id) ? 'sure?' : 'revoke'}
                 </button>
               {/if}
             </li>
