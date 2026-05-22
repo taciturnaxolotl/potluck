@@ -97,6 +97,12 @@ tasks:
     cmds:
       - bun install
 
+  seed:
+    desc: Seed fake usage data into the dev database (sign in first)
+    dir: server
+    cmds:
+      - go run ./cmd/seed
+
   # ---- codegen ------------------------------------------------------------
 
   sqlc:

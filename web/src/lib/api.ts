@@ -154,6 +154,28 @@ export type Model = {
   } | null;
 };
 
+export type UsageDay = {
+  day: number;
+  amount_micros: number;
+  input_tokens: number;
+  output_tokens: number;
+};
+
+export type UsageByModel = {
+  day: number;
+  model: string;
+  amount_micros: number;
+  input_tokens: number;
+  output_tokens: number;
+};
+
+export type UsageData = {
+  daily: UsageDay[];
+  by_model: UsageByModel[];
+};
+
+export const getUsage = () => api.get<UsageData>('/api/usage');
+
 export const listModels = () => api.get<Model[]>('/api/models');
 
 export const listSessions = () => api.get<Session[]>('/api/sessions');

@@ -60,6 +60,11 @@ type Querier interface {
 	RenameAPIKey(ctx context.Context, arg RenameAPIKeyParams) error
 	RevokeAPIKey(ctx context.Context, arg RevokeAPIKeyParams) error
 	SetStreamStatus(ctx context.Context, arg SetStreamStatusParams) error
+	// Daily spend for a user over the last N days.
+	// Returns one row per day (epoch of start of day in UTC) + amount in micros.
+	SpendByDay(ctx context.Context, arg SpendByDayParams) ([]SpendByDayRow, error)
+	// Daily spend broken down by model for a user, for stacked chart.
+	SpendByDayAndModel(ctx context.Context, arg SpendByDayAndModelParams) ([]SpendByDayAndModelRow, error)
 	SumContributions(ctx context.Context, userID string) (interface{}, error)
 	SumSpends(ctx context.Context, userID string) (interface{}, error)
 	// Debounced caller: only call when last_used_at is older than 60s.

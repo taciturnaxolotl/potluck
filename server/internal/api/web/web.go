@@ -41,6 +41,7 @@ func (s *Server) Mount(r chi.Router) {
 	r.Post("/contributions", s.handleContribute)
 
 	r.Get("/models", s.handleListModels)
+	r.Get("/usage", s.handleUsage)
 	r.Get("/sessions", s.handleListSessions)
 	r.Delete("/sessions/{id}", s.handleRevokeSession)
 
