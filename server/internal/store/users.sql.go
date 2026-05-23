@@ -13,7 +13,7 @@ import (
 const createUser = `-- name: CreateUser :one
 INSERT INTO users (id, email, display_name, created_at)
 VALUES (?, ?, ?, ?)
-RETURNING id, email, display_name, created_at, last_seen_at, hca_id, slack_id, verification_status
+RETURNING id, email, display_name, created_at, last_seen_at, hca_id, slack_id, verification_status, custom_display_name
 `
 
 type CreateUserParams struct {
@@ -40,12 +40,13 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 		&i.HcaID,
 		&i.SlackID,
 		&i.VerificationStatus,
+		&i.CustomDisplayName,
 	)
 	return i, err
 }
 
 const getUserByEmail = `-- name: GetUserByEmail :one
-SELECT id, email, display_name, created_at, last_seen_at, hca_id, slack_id, verification_status FROM users WHERE email = ?
+SELECT id, email, display_name, created_at, last_seen_at, hca_id, slack_id, verification_status, custom_display_name FROM users WHERE email = ?
 `
 
 func (q *Queries) GetUserByEmail(ctx context.Context, email string) (User, error) {
@@ -60,12 +61,13 @@ func (q *Queries) GetUserByEmail(ctx context.Context, email string) (User, error
 		&i.HcaID,
 		&i.SlackID,
 		&i.VerificationStatus,
+		&i.CustomDisplayName,
 	)
 	return i, err
 }
 
 const getUserByHCAID = `-- name: GetUserByHCAID :one
-SELECT id, email, display_name, created_at, last_seen_at, hca_id, slack_id, verification_status FROM users WHERE hca_id = ?
+SELECT id, email, display_name, created_at, last_seen_at, hca_id, slack_id, verification_status, custom_display_name FROM users WHERE hca_id = ?
 `
 
 func (q *Queries) GetUserByHCAID(ctx context.Context, hcaID sql.NullString) (User, error) {
@@ -80,12 +82,13 @@ func (q *Queries) GetUserByHCAID(ctx context.Context, hcaID sql.NullString) (Use
 		&i.HcaID,
 		&i.SlackID,
 		&i.VerificationStatus,
+		&i.CustomDisplayName,
 	)
 	return i, err
 }
 
 const getUserByID = `-- name: GetUserByID :one
-SELECT id, email, display_name, created_at, last_seen_at, hca_id, slack_id, verification_status FROM users WHERE id = ?
+SELECT id, email, display_name, created_at, last_seen_at, hca_id, slack_id, verification_status, custom_display_name FROM users WHERE id = ?
 `
 
 func (q *Queries) GetUserByID(ctx context.Context, id string) (User, error) {
@@ -100,8 +103,24 @@ func (q *Queries) GetUserByID(ctx context.Context, id string) (User, error) {
 		&i.HcaID,
 		&i.SlackID,
 		&i.VerificationStatus,
+		&i.CustomDisplayName,
 	)
 	return i, err
+}
+
+const syncDisplayName = `-- name: SyncDisplayName :exec
+UPDATE users SET display_name = ? WHERE id = ? AND custom_display_name = 0
+`
+
+type SyncDisplayNameParams struct {
+	DisplayName string `json:"display_name"`
+	ID          string `json:"id"`
+}
+
+// Updates display name from cachet only if the user hasn't set a custom name.
+func (q *Queries) SyncDisplayName(ctx context.Context, arg SyncDisplayNameParams) error {
+	_, err := q.db.ExecContext(ctx, syncDisplayName, arg.DisplayName, arg.ID)
+	return err
 }
 
 const touchUser = `-- name: TouchUser :exec
@@ -119,7 +138,7 @@ func (q *Queries) TouchUser(ctx context.Context, arg TouchUserParams) error {
 }
 
 const updateDisplayName = `-- name: UpdateDisplayName :exec
-UPDATE users SET display_name = ? WHERE id = ?
+UPDATE users SET display_name = ?, custom_display_name = 1 WHERE id = ?
 `
 
 type UpdateDisplayNameParams struct {
@@ -127,6 +146,7 @@ type UpdateDisplayNameParams struct {
 	ID          string `json:"id"`
 }
 
+// Sets display name and marks it as custom so cachet sync backs off.
 func (q *Queries) UpdateDisplayName(ctx context.Context, arg UpdateDisplayNameParams) error {
 	_, err := q.db.ExecContext(ctx, updateDisplayName, arg.DisplayName, arg.ID)
 	return err
@@ -138,13 +158,9 @@ INSERT INTO users (
 ) VALUES (?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(hca_id) DO UPDATE SET
     email = excluded.email,
-    display_name = CASE WHEN display_name = '' OR display_name IS NULL
-                        THEN excluded.display_name
-                        ELSE display_name
-                   END,
     slack_id = excluded.slack_id,
     verification_status = excluded.verification_status
-RETURNING id, email, display_name, created_at, last_seen_at, hca_id, slack_id, verification_status
+RETURNING id, email, display_name, created_at, last_seen_at, hca_id, slack_id, verification_status, custom_display_name
 `
 
 type UpsertUserByHCAIDParams struct {
@@ -157,10 +173,9 @@ type UpsertUserByHCAIDParams struct {
 	CreatedAt          int64          `json:"created_at"`
 }
 
-// Find-or-create by HCA id, refreshing the cached identity fields on each
-// successful sign-in. Email is updated because HCA emails can change.
-// display_name is only set from HCA on first login; manual renames are
-// preserved by keeping the existing value when it's already non-empty.
+// Find-or-create by HCA id. Email and slack_id are refreshed on every login.
+// display_name is never set from HCA - cachet is the sole source of truth
+// and syncCachetName updates it immediately after upsert.
 func (q *Queries) UpsertUserByHCAID(ctx context.Context, arg UpsertUserByHCAIDParams) (User, error) {
 	row := q.db.QueryRowContext(ctx, upsertUserByHCAID,
 		arg.ID,
@@ -181,6 +196,7 @@ func (q *Queries) UpsertUserByHCAID(ctx context.Context, arg UpsertUserByHCAIDPa
 		&i.HcaID,
 		&i.SlackID,
 		&i.VerificationStatus,
+		&i.CustomDisplayName,
 	)
 	return i, err
 }

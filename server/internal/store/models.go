@@ -195,6 +195,7 @@ type User struct {
 	HcaID              sql.NullString `json:"hca_id"`
 	SlackID            sql.NullString `json:"slack_id"`
 	VerificationStatus sql.NullString `json:"verification_status"`
+	CustomDisplayName  int64          `json:"custom_display_name"`
 }
 
 type UserDailyAllowance struct {

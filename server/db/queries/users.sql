@@ -13,19 +13,14 @@ SELECT * FROM users WHERE email = ?;
 SELECT * FROM users WHERE hca_id = ?;
 
 -- name: UpsertUserByHCAID :one
--- Find-or-create by HCA id, refreshing the cached identity fields on each
--- successful sign-in. Email is updated because HCA emails can change.
--- display_name is only set from HCA on first login; manual renames are
--- preserved by keeping the existing value when it's already non-empty.
+-- Find-or-create by HCA id. Email and slack_id are refreshed on every login.
+-- display_name is never set from HCA - cachet is the sole source of truth
+-- and syncCachetName updates it immediately after upsert.
 INSERT INTO users (
     id, email, display_name, hca_id, slack_id, verification_status, created_at
 ) VALUES (?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(hca_id) DO UPDATE SET
     email = excluded.email,
-    display_name = CASE WHEN display_name = '' OR display_name IS NULL
-                        THEN excluded.display_name
-                        ELSE display_name
-                   END,
     slack_id = excluded.slack_id,
     verification_status = excluded.verification_status
 RETURNING *;
@@ -34,4 +29,9 @@ RETURNING *;
 UPDATE users SET last_seen_at = ? WHERE id = ?;
 
 -- name: UpdateDisplayName :exec
-UPDATE users SET display_name = ? WHERE id = ?;
+-- Sets display name and marks it as custom so cachet sync backs off.
+UPDATE users SET display_name = ?, custom_display_name = 1 WHERE id = ?;
+
+-- name: SyncDisplayName :exec
+-- Updates display name from cachet only if the user hasn't set a custom name.
+UPDATE users SET display_name = ? WHERE id = ? AND custom_display_name = 0;

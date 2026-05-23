@@ -49,11 +49,13 @@ func (s *Server) handleRecomputeAllocations(w http.ResponseWriter, r *http.Reque
 		remaining = 0
 	}
 
+	// Equal split: every user gets an equal share of the remaining pool
+	// regardless of whether they contributed a key.
+	nUsers := int64(len(rows))
 	for _, row := range rows {
-		shared := toInt64(row.DailyLimitMicros)
 		var fairShare int64
-		if totalShared > 0 {
-			fairShare = int64(float64(remaining) * float64(shared) / float64(totalShared))
+		if nUsers > 0 {
+			fairShare = remaining / nUsers
 		}
 		spent := spentByUser[row.UserID]
 		allowance := spent + fairShare
@@ -113,16 +115,19 @@ func (s *Server) buildAllocations(r *http.Request) map[string]any {
 		ShareFraction              float64 `json:"share_fraction"`
 	}
 
+	nUsers := int64(len(rows))
 	out := make([]userEntry, 0, len(rows))
 	for _, row := range rows {
 		shared := toInt64(row.DailyLimitMicros)
+		// share_fraction reflects contribution to the pool, not the divy split.
 		var frac float64
 		if totalShared > 0 {
 			frac = float64(shared) / float64(totalShared)
 		}
 		allowance := allowByUser[row.UserID]
-		if allowance == 0 && totalShared > 0 {
-			allowance = int64(float64(remaining) * frac)
+		if allowance == 0 && nUsers > 0 {
+			// No stored allowance yet — estimate an equal split for display.
+			allowance = remaining / nUsers
 			if allowance < 0 {
 				allowance = 0
 			}

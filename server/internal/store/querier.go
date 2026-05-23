@@ -136,6 +136,8 @@ type Querier interface {
 	SumBillingRowsForKey(ctx context.Context, poolKeyID string) (interface{}, error)
 	SumContributions(ctx context.Context, userID string) (interface{}, error)
 	SumSpends(ctx context.Context, userID string) (interface{}, error)
+	// Updates display name from cachet only if the user hasn't set a custom name.
+	SyncDisplayName(ctx context.Context, arg SyncDisplayNameParams) error
 	// Called after fetching real spend from pioneer's billing API.
 	// Overwrites today_micros with the authoritative value.
 	// If the key is over its daily limit, also marks it inactive.
@@ -146,6 +148,7 @@ type Querier interface {
 	TouchSession(ctx context.Context, arg TouchSessionParams) error
 	TouchUser(ctx context.Context, arg TouchUserParams) error
 	UpdateConversationTitle(ctx context.Context, arg UpdateConversationTitleParams) error
+	// Sets display name and marks it as custom so cachet sync backs off.
 	UpdateDisplayName(ctx context.Context, arg UpdateDisplayNameParams) error
 	// Pool key v2 queries: health tracking, billing sync, two-budget updates.
 	//
@@ -174,10 +177,9 @@ type Querier interface {
 	UpsertModelCatalog(ctx context.Context, arg UpsertModelCatalogParams) error
 	UpsertModelPrice(ctx context.Context, arg UpsertModelPriceParams) error
 	UpsertSpend(ctx context.Context, arg UpsertSpendParams) (Spend, error)
-	// Find-or-create by HCA id, refreshing the cached identity fields on each
-	// successful sign-in. Email is updated because HCA emails can change.
-	// display_name is only set from HCA on first login; manual renames are
-	// preserved by keeping the existing value when it's already non-empty.
+	// Find-or-create by HCA id. Email and slack_id are refreshed on every login.
+	// display_name is never set from HCA - cachet is the sole source of truth
+	// and syncCachetName updates it immediately after upsert.
 	UpsertUserByHCAID(ctx context.Context, arg UpsertUserByHCAIDParams) (User, error)
 	UpsertUserDailyAllowance(ctx context.Context, arg UpsertUserDailyAllowanceParams) error
 	// user_daily_spend and user_daily_allowances.

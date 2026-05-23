@@ -1,7 +1,9 @@
 package main
 
 import (
+	"context"
 	"database/sql"
+	"encoding/json"
 	"net"
 	"net/http"
 	"time"
@@ -118,14 +120,10 @@ func hcaCallbackHandler(client *hca.Client, q *store.Queries, authSvc *auth.Serv
 
 		// 4. Upsert + session.
 		now := time.Now().Unix()
-		display := ident.Name
-		if display == "" {
-			display = ident.Email
-		}
 		user, err := q.UpsertUserByHCAID(r.Context(), store.UpsertUserByHCAIDParams{
 			ID:                 uuid.NewString(),
 			Email:              ident.Email,
-			DisplayName:        display,
+			DisplayName:        "", // set by syncCachetName; never use HCA name
 			HcaID:              nullStr(ident.ID),
 			SlackID:            nullStr(ident.SlackID),
 			VerificationStatus: nullStr(ident.VerificationStatus),
@@ -154,6 +152,12 @@ func hcaCallbackHandler(client *hca.Client, q *store.Queries, authSvc *auth.Serv
 		})
 
 		log.Info("hca: signed in", "user_id", user.ID, "hca_id", ident.ID, "email", ident.Email)
+
+		// Best-effort: refresh display name from cachet using slack_id.
+		if ident.SlackID != "" {
+			go syncCachetName(user.ID, ident.SlackID, q)
+		}
+
 		// 5. Off you go.
 		http.Redirect(w, r, "/dashboard", http.StatusFound)
 	}
@@ -184,6 +188,35 @@ func hcaLogoutHandler(authSvc *auth.Service, secure bool) http.HandlerFunc {
 			MaxAge:   -1,
 		})
 		http.Redirect(w, r, "/", http.StatusFound)
+	}
+}
+
+// syncCachetName fetches the user's display name from cachet and updates
+// the DB. Called in a goroutine on login; failures are logged and ignored.
+func syncCachetName(userID, slackID string, q *store.Queries) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://cachet.dunkirk.sh/users/"+slackID, nil)
+	if err != nil {
+		return
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil || resp.StatusCode != 200 {
+		log.Warn("cachet: fetch failed", "slack_id", slackID, "status", resp.StatusCode)
+		return
+	}
+	defer resp.Body.Close()
+	var body struct {
+		DisplayName string `json:"displayName"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil || body.DisplayName == "" {
+		return
+	}
+	if err := q.SyncDisplayName(ctx, store.SyncDisplayNameParams{
+		DisplayName: body.DisplayName,
+		ID:          userID,
+	}); err != nil {
+		log.Warn("cachet: sync display name failed", "user_id", userID, "err", err)
 	}
 }
 
