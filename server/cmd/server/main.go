@@ -112,6 +112,9 @@ func main() {
 	reconciler := pool.NewReconciler(q, keyPool.Decrypt, log.Default())
 	go reconciler.Run(reconcilerCtx)
 
+	// Start the models refresher: updates models_catalog hourly.
+	go pool.NewModelsRefresher(q, keyPool, log.Default()).Run(reconcilerCtx)
+
 	// Hack Club Auth client. Nil when unconfigured; the handlers degrade
 	// gracefully and return 503 with a friendly note.
 	var hcaClient *hca.Client

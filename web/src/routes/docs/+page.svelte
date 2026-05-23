@@ -9,7 +9,9 @@
   onMount(async () => {
     baseURL = window.location.origin;
     try {
-      [keys, models] = await Promise.all([listKeys(), listModels()]);
+      const [k, m] = await Promise.all([listKeys(), listModels()]);
+      keys = k;
+      models = m.models;
     } catch {
       // best-effort — page still works without them
     }

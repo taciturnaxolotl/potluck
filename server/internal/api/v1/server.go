@@ -36,7 +36,7 @@ func (s *Server) Mount(r chi.Router) {
 	r.Get("/models", s.handleListModels)
 
 	r.Group(func(r chi.Router) {
-		r.Use(middleware.BalanceGate(s.Ledger, writeError))
+		r.Use(middleware.PoolGate(s.Q, s.Pool.HasHealthyKey, writeError))
 		r.Post("/chat/completions", s.handleChatCompletions)
 	})
 }

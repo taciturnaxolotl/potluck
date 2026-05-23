@@ -66,7 +66,7 @@ func (s *Server) Mount(r chi.Router) {
 	r.Delete("/pool-keys/{id}", s.handleDeletePoolKey)
 
 	r.Group(func(r chi.Router) {
-		r.Use(apimw.BalanceGate(s.Ledger, writeErr))
+		r.Use(apimw.PoolGate(s.Q, s.Pool.HasHealthyKey, writeErr))
 		r.Post("/chat", s.handleChat)
 	})
 	r.Get("/streams/{id}/events", s.handleStreamEvents)

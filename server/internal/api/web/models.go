@@ -209,5 +209,16 @@ func (s *Server) handleListModels(w http.ResponseWriter, r *http.Request) {
 			"stats":            statsMap[m.ID],
 		})
 	}
-	writeJSON(w, 200, out)
+	// refreshed_at: use the in-memory cache timestamp, or the DB catalog stamp.
+	refreshedAt := modelsCache.fetchedAt.Unix()
+	if refreshedAt <= 0 {
+		if ts, err := s.Q.GetModelCatalogRefreshedAt(r.Context()); err == nil {
+			refreshedAt = toInt64(ts)
+		}
+	}
+
+	writeJSON(w, 200, map[string]any{
+		"models":       out,
+		"refreshed_at": refreshedAt,
+	})
 }

@@ -65,6 +65,13 @@ func New(q *store.Queries, secretHex string, _ string) (*Manager, error) {
 	return m, nil
 }
 
+// HasHealthyKey returns true if the pool has at least one key that can serve
+// a request right now. Used by PoolGate to short-circuit without decrypting.
+func (m *Manager) HasHealthyKey(ctx context.Context) bool {
+	_, err := m.q.PickPoolKeyV2(ctx)
+	return err == nil
+}
+
 // Pick selects the best key for a request using the v2 picker (health-aware,
 // $10 buffer, max_micros cap). Returns ErrNoKeys when the pool has no
 // eligible keys — the caller should surface this as a 503 to the user.

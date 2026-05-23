@@ -10,7 +10,6 @@ package middleware
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"net/http"
 	"sync"
 	"time"
@@ -18,7 +17,6 @@ import (
 	"golang.org/x/time/rate"
 
 	"github.com/taciturnaxolotl/potluck/internal/auth"
-	"github.com/taciturnaxolotl/potluck/internal/ledger"
 	"github.com/taciturnaxolotl/potluck/internal/store"
 )
 
@@ -146,12 +144,11 @@ func Require(errResp ErrorResponder) func(http.Handler) http.Handler {
 	}
 }
 
-// ---- balance gate ------------------------------------------------------
+// ---- pool gate ---------------------------------------------------------
 
-// BalanceGate rejects requests where the user can't currently start a
-// new generation (low balance, too many concurrent streams). Used by both
-// surfaces' chat endpoints.
-func BalanceGate(l *ledger.Service, errResp ErrorResponder) func(http.Handler) http.Handler {
+// PoolGate replaces BalanceGate. Checks pool health and per-user budget.
+// poolAvailable should return true if at least one healthy key can serve requests.
+func PoolGate(q *store.Queries, poolAvailable func(ctx context.Context) bool, errResp ErrorResponder) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			u, ok := UserFromContext(r.Context())
@@ -159,18 +156,65 @@ func BalanceGate(l *ledger.Service, errResp ErrorResponder) func(http.Handler) h
 				errResp(w, http.StatusUnauthorized, "unauthenticated", "login required")
 				return
 			}
-			err := l.CanStart(r.Context(), u.ID)
-			switch {
-			case err == nil:
-				next.ServeHTTP(w, r)
-			case errors.Is(err, ledger.ErrInsufficientFunds):
-				errResp(w, http.StatusPaymentRequired, "insufficient_funds", err.Error())
-			default:
-				errResp(w, http.StatusTooManyRequests, "too_many_streams", err.Error())
+
+			// 1. Pool health — can we even route a request?
+			if !poolAvailable(r.Context()) {
+				errResp(w, http.StatusServiceUnavailable, "no_pool_keys", "no active pool keys available")
+				return
 			}
+
+			// 2. Per-user budget check.
+			day := time.Now().UTC().Unix() / 86400
+			allowRow, err := q.GetUserDailyAllowance(r.Context(), store.GetUserDailyAllowanceParams{
+				UserID: u.ID,
+				Day:    day,
+			})
+			if err != nil {
+				// No allowance row yet — reconciler hasn't set one. Default: allow.
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			spendRow, err := q.GetUserDailySpend(r.Context(), store.GetUserDailySpendParams{
+				UserID: u.ID,
+				Day:    day,
+			})
+			if err != nil {
+				// No spend yet — definitely allow.
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			sharedRemaining := allowRow.SharedAllowanceMicros - spendRow.SharedSpentMicros
+			if sharedRemaining > 0 {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			// No shared remaining — check private reservation.
+			// Private = user's own keys' (max - shared) summed.
+			// For now we look this up from pool_keys directly.
+			privateRows, err := q.ListPoolKeysForUser(r.Context(), u.ID)
+			if err == nil {
+				var privateReserved int64
+				for _, k := range privateRows {
+					if k.Active == 1 && k.RevokedAt.Valid == false {
+						privateReserved += k.MaxMicros - k.SharedMicros
+					}
+				}
+				privateRemaining := privateReserved - spendRow.PrivateSpentMicros
+				if privateRemaining > 0 {
+					next.ServeHTTP(w, r)
+					return
+				}
+			}
+
+			errResp(w, http.StatusPaymentRequired, "insufficient_funds",
+				"your shared allowance and private reservation for today are both exhausted")
 		})
 	}
 }
+
 
 // ---- per-user rate limiter --------------------------------------------
 

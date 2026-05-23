@@ -209,7 +209,8 @@ export type UsageData = {
 
 export const getUsage = () => api.get<UsageData>('/api/usage');
 
-export const listModels = () => api.get<Model[]>('/api/models');
+export const listModels = () =>
+  api.get<{ models: Model[]; refreshed_at: number }>('/api/models');
 
 export const listSessions = () => api.get<Session[]>('/api/sessions');
 export const revokeSession = (id: string) => api.del<void>(`/api/sessions/${id}`);

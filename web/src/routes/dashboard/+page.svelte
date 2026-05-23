@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { balance, listKeys, me, poolStats, getAllocations, type APIKey, type User, type Allocations } from '$lib/api';
+  import { balance, listKeys, me, poolStats, getAllocations, recomputeAllocations, type APIKey, type User, type Allocations } from '$lib/api';
   import type { PoolStats } from '$lib/api';
   import { onMount } from 'svelte';
 
@@ -22,6 +22,31 @@
   });
 
   let activeKeyCount = $derived(keys.filter((k) => !k.revoked).length);
+
+  let recomputing = $state(false);
+  let recomputeCooldown = $state(false);
+
+  async function handleRecompute() {
+    if (recomputing || recomputeCooldown) return;
+    recomputing = true;
+    try {
+      allocs = await recomputeAllocations();
+    } catch {
+      // silent
+    } finally {
+      recomputing = false;
+      recomputeCooldown = true;
+      setTimeout(() => { recomputeCooldown = false; }, 5000);
+    }
+  }
+
+  function fmtRecompute(at: number): string {
+    if (!at) return '';
+    const diff = Math.floor((Date.now() / 1000) - at);
+    if (diff < 60) return 'just now';
+    if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+    return `${Math.floor(diff / 3600)}h ago`;
+  }
 
   let today = $derived(
     new Intl.DateTimeFormat('en-GB', {
@@ -85,8 +110,22 @@
     {#if allocs && allocs.users.length > 0}
       <div class="alloc-card">
         <div class="alloc-head">
-          <span class="alloc-title">Who gets what</span>
-          <span class="alloc-total mono">{trim(formatUSD(allocs.pool?.total_shared_micros ?? 0))}/day shared</span>
+          <div class="alloc-head-left">
+            <span class="alloc-title">Who gets what</span>
+            {#if allocs.last_recompute?.at}
+              <span class="alloc-stamp mono">recomputed {fmtRecompute(allocs.last_recompute.at)}</span>
+            {/if}
+          </div>
+          <div class="alloc-head-right">
+            <span class="alloc-total mono">{trim(formatUSD(allocs.pool?.total_shared_micros ?? 0))}/day shared</span>
+            <button
+              class="btn-recompute mono"
+              onclick={handleRecompute}
+              disabled={recomputing || recomputeCooldown}
+              title="Recalculate per-user allowances from current pool state">
+              {recomputing ? 'calculating…' : 'recompute'}
+            </button>
+          </div>
         </div>
         <table class="alloc-table">
           <thead>
@@ -171,6 +210,43 @@ curl {typeof window !== 'undefined' ? window.location.origin : 'https://potluck.
     font-size: 0.78rem;
     color: var(--text-muted);
     font-family: var(--font-mono);
+  }
+
+  .alloc-head-left {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+  }
+
+  .alloc-head-right {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+  }
+
+  .alloc-stamp {
+    font-size: 0.68rem;
+    color: var(--text-faint, var(--text-muted));
+  }
+
+  .btn-recompute {
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 0.72rem;
+    padding: 0.25rem 0.65rem;
+    transition: all 0.15s;
+    white-space: nowrap;
+  }
+  .btn-recompute:hover:not(:disabled) {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+  .btn-recompute:disabled {
+    opacity: 0.5;
+    cursor: default;
   }
 
   .alloc-table {

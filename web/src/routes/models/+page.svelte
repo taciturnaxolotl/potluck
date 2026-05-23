@@ -3,13 +3,16 @@
   import { onMount } from 'svelte';
 
   let models = $state<Model[]>([]);
+  let refreshedAt = $state(0);
   let loading = $state(true);
   let err = $state<string | null>(null);
   let filter = $state<'all' | 'open' | 'proprietary'>('all');
 
   onMount(async () => {
     try {
-      models = await listModels();
+      const resp = await listModels();
+      models = resp.models;
+      refreshedAt = resp.refreshed_at;
     } catch (e: unknown) {
       err = e instanceof Error ? e.message : 'failed to load';
     } finally {
@@ -61,6 +64,13 @@
     return rows;
   });
 
+  function fmtAge(unix: number): string {
+    const diff = Math.floor(Date.now() / 1000 - unix);
+    if (diff < 60) return 'just now';
+    if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+    return `${Math.floor(diff / 3600)}h ago`;
+  }
+
   function fmtCtx(n: number): string {
     if (n >= 1_000_000) return (n / 1_000_000).toFixed(n % 1_000_000 === 0 ? 0 : 1) + 'M';
     if (n >= 1_000) return (n / 1_000).toFixed(0) + 'k';
@@ -94,7 +104,7 @@
 <article>
   <div class="eyebrow">the pot</div>
   <h1 class="display">models</h1>
-  <p class="lede">all models available via the api · spend is all-time · t/s from last 48h</p>
+  <p class="lede">all models available via the api · spend is all-time · t/s from last 48h{#if refreshedAt} · refreshed {fmtAge(refreshedAt)}{/if}</p>
 
   <div class="filters">
     {#each (['all', 'open', 'proprietary'] as const) as f}
