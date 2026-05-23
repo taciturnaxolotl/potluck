@@ -65,9 +65,6 @@ type Querier interface {
 	ListAPIKeysForUser(ctx context.Context, userID string) ([]ApiKey, error)
 	// All billing rows for a key after a given timestamp.
 	ListBillingRowsForKeyAfter(ctx context.Context, arg ListBillingRowsForKeyAfterParams) ([]PoolKeyBillingRow, error)
-	// Billing rows attributed to a user in a time window.
-	// Caller filters duplicates and sums in Go.
-	ListBillingRowsForUserToday(ctx context.Context, arg ListBillingRowsForUserTodayParams) ([]PoolKeyBillingRow, error)
 	ListContributionsForUser(ctx context.Context, arg ListContributionsForUserParams) ([]Contribution, error)
 	ListConversationsForUser(ctx context.Context, arg ListConversationsForUserParams) ([]Conversation, error)
 	ListEstimatedSpends(ctx context.Context, limit int64) ([]Spend, error)
@@ -134,6 +131,9 @@ type Querier interface {
 	SpendByDay(ctx context.Context, arg SpendByDayParams) ([]SpendByDayRow, error)
 	// Daily spend broken down by model for a user, for stacked chart.
 	SpendByDayAndModel(ctx context.Context, arg SpendByDayAndModelParams) ([]SpendByDayAndModelRow, error)
+	// Total non-duplicate cost for a key, all time. Used to keep
+	// pool_keys.total_micros accurate after reconciliation.
+	SumBillingRowsForKey(ctx context.Context, poolKeyID string) (interface{}, error)
 	SumContributions(ctx context.Context, userID string) (interface{}, error)
 	SumSpends(ctx context.Context, userID string) (interface{}, error)
 	// Called after fetching real spend from pioneer's billing API.
@@ -159,6 +159,7 @@ type Querier interface {
 	UpdatePoolKeyLimit(ctx context.Context, arg UpdatePoolKeyLimitParams) error
 	// Updates the two-budget limits. Server enforces 0 <= shared <= max.
 	UpdatePoolKeyLimits(ctx context.Context, arg UpdatePoolKeyLimitsParams) error
+	UpdatePoolKeyTotalMicros(ctx context.Context, arg UpdatePoolKeyTotalMicrosParams) error
 	// pool_key_billing_rows: ingested pioneer billing log entries.
 	//
 	// attribution integer enum:

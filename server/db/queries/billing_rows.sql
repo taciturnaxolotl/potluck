@@ -29,7 +29,13 @@ WHERE pool_key_id = ?
   AND pioneer_created_at > ?
 ORDER BY pioneer_created_at ASC;
 
--- name: ListBillingRowsForUserToday :many
+-- name: SumBillingRowsForKey :one
+-- Total non-duplicate cost for a key, all time. Used to keep
+-- pool_keys.total_micros accurate after reconciliation.
+SELECT COALESCE(SUM(cost_micros * 0) + SUM(cost_micros), 0)
+FROM pool_key_billing_rows
+WHERE pool_key_id = ?
+  AND is_duplicate = 0;
 -- Billing rows attributed to a user in a time window.
 -- Caller filters duplicates and sums in Go.
 SELECT * FROM pool_key_billing_rows

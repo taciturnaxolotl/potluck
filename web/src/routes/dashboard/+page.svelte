@@ -1,11 +1,8 @@
 <script lang="ts">
-  import { balance, listKeys, me, poolStats, getAllocations, recomputeAllocations, type APIKey, type User, type Allocations } from '$lib/api';
-  import type { PoolStats } from '$lib/api';
+  import { listKeys, me, getAllocations, recomputeAllocations, type APIKey, type User, type Allocations } from '$lib/api';
   import { onMount } from 'svelte';
 
   let user = $state<User | null>(null);
-  let bal = $state<{ balance_micros: number; balance_usd: string } | null>(null);
-  let pool = $state<PoolStats | null>(null);
   let keys = $state<APIKey[]>([]);
   let allocs = $state<Allocations | null>(null);
   let err = $state<string | null>(null);
@@ -13,13 +10,16 @@
 
   onMount(async () => {
     try {
-      [user, bal, pool, keys, allocs] = await Promise.all([me(), balance(), poolStats(), listKeys(), getAllocations()]);
+      [user, keys, allocs] = await Promise.all([me(), listKeys(), getAllocations()]);
     } catch (e: unknown) {
       err = e instanceof Error ? e.message : 'failed to load';
     } finally {
       loading = false;
     }
   });
+
+  // Find my allocation row.
+  let myAlloc = $derived(allocs?.users.find(u => u.user_id === user?.id) ?? null);
 
   let activeKeyCount = $derived(keys.filter((k) => !k.revoked).length);
 
@@ -61,10 +61,12 @@
     return '$' + (Math.abs(usd) < 0.01 && usd !== 0 ? usd.toFixed(4) : usd.toFixed(2));
   }
 
-  // For stat cards: whole dollars, no cents. $99,998 not $99998.18.
+  // For stat cards: whole dollars when ≥$1, cents when smaller.
   function fmtStat(micros: number): string {
-    const usd = Math.round(micros / 1_000_000);
-    return '$' + usd.toLocaleString('en-US');
+    const usd = micros / 1_000_000;
+    if (usd === 0) return '$0';
+    if (Math.abs(usd) < 1) return '$' + usd.toFixed(3).replace(/0+$/, '').replace(/\.$/, '');
+    return '$' + Math.round(usd).toLocaleString('en-US');
   }
 
   function trim(usd: string) {
@@ -80,8 +82,8 @@
   <div class="eyebrow">halo {user?.display_name?.split(' ')[0] ?? 'there'} · {today}</div>
   <h1 class="display">Réserve communale</h1>
   <p class="lede">
-    {#if pool && pool.contributors > 0}
-      {pool.contributors} chefs stirring, one pot, equal ladle
+    {#if allocs && allocs.pool.active_key_count > 0}
+      {allocs.pool.active_key_count} {allocs.pool.active_key_count === 1 ? 'key' : 'keys'} in the pool · {allocs.users.length} {allocs.users.length === 1 ? 'chef' : 'chefs'} sharing
     {:else}
       the token melting pot
     {/if}
@@ -94,16 +96,16 @@
   {:else}
     <div class="stat-grid">
       <div class="stat">
-        <div class="stat-label">Your bowl</div>
-        <div class="stat-num">{fmtStat(bal ? bal.balance_micros : 0)}<span class="stat-unit">left to spend</span></div>
+        <div class="stat-label">Your allowance today</div>
+        <div class="stat-num">{fmtStat(myAlloc?.shared_allowance_today_micros ?? 0)}<span class="stat-unit">to spend shared</span></div>
       </div>
       <div class="stat">
-        <div class="stat-label">In the pot</div>
-        <div class="stat-num">{fmtStat(allocs?.pool?.total_shared_micros ?? 0)}<span class="stat-unit">daily pool shared</span></div>
+        <div class="stat-label">Pool remaining</div>
+        <div class="stat-num">{fmtStat(allocs?.pool?.remaining_pool_today_micros ?? 0)}<span class="stat-unit">left today</span></div>
       </div>
       <div class="stat">
-        <div class="stat-label">Keys in the drawer</div>
-        <div class="stat-num">{activeKeyCount}<span class="stat-unit">{activeKeyCount === 1 ? 'minted' : 'in rotation'}</span></div>
+        <div class="stat-label">Your API keys</div>
+        <div class="stat-num">{activeKeyCount}<span class="stat-unit">{activeKeyCount === 1 ? 'active' : 'active'}</span></div>
       </div>
     </div>
 
@@ -169,7 +171,7 @@
 curl {typeof window !== 'undefined' ? window.location.origin : 'https://potluck.dunkirk.sh'}/v1/chat/completions \
   -H <span class="st">"Authorization: Bearer {keys[0]?.masked ?? 'pot_cedar_••••••••••••••••••_9xK2m'}"</span> \
   -H <span class="st">"Content-Type: application/json"</span> \
-  -d <span class="st">'&lbrace;"model": "gpt-4o-mini", "messages": [&lbrace;"role":"user","content":"hello"&rbrace;]&rbrace;'</span></pre>
+  -d <span class="st">'&lbrace;"model": "claude-haiku-4-5", "messages": [&lbrace;"role":"user","content":"hello"&rbrace;]&rbrace;'</span></pre>
     </div>
 
     {#if activeKeyCount === 0}

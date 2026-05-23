@@ -253,8 +253,12 @@ func (r *Reconciler) ingestBillingRows(ctx context.Context, key store.PoolKey, p
 		})
 
 		// Accumulate spend for today only, non-duplicate rows.
+		// Only goes to private if the user owns the key AND the key has
+		// a non-zero private reservation (max > shared).
 		if isDup == 0 && attrUserID.Valid && ts >= dayStart {
-			addSpend(attrUserID.String, costMicros, attrUserID.String == key.UserID)
+			ownsKeyAndHasPrivate := attrUserID.String == key.UserID &&
+				(key.MaxMicros-key.SharedMicros) > 0
+			addSpend(attrUserID.String, costMicros, ownsKeyAndHasPrivate)
 		}
 	}
 

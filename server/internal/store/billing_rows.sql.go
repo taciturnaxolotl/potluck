@@ -76,57 +76,20 @@ func (q *Queries) ListBillingRowsForKeyAfter(ctx context.Context, arg ListBillin
 	return items, nil
 }
 
-const listBillingRowsForUserToday = `-- name: ListBillingRowsForUserToday :many
-SELECT id, pool_key_id, pioneer_created_at, credit_micros, cost_micros, token_usage, model, endpoint, attributed_user_id, attribution, is_duplicate, matched_request_id, ingested_at FROM pool_key_billing_rows
-WHERE attributed_user_id = ?
-  AND pioneer_created_at >= ?
-  AND pioneer_created_at < ?
-ORDER BY pioneer_created_at ASC
+const sumBillingRowsForKey = `-- name: SumBillingRowsForKey :one
+SELECT COALESCE(SUM(cost_micros * 0) + SUM(cost_micros), 0)
+FROM pool_key_billing_rows
+WHERE pool_key_id = ?
+  AND is_duplicate = 0
 `
 
-type ListBillingRowsForUserTodayParams struct {
-	AttributedUserID   sql.NullString `json:"attributed_user_id"`
-	PioneerCreatedAt   int64          `json:"pioneer_created_at"`
-	PioneerCreatedAt_2 int64          `json:"pioneer_created_at_2"`
-}
-
-// Billing rows attributed to a user in a time window.
-// Caller filters duplicates and sums in Go.
-func (q *Queries) ListBillingRowsForUserToday(ctx context.Context, arg ListBillingRowsForUserTodayParams) ([]PoolKeyBillingRow, error) {
-	rows, err := q.db.QueryContext(ctx, listBillingRowsForUserToday, arg.AttributedUserID, arg.PioneerCreatedAt, arg.PioneerCreatedAt_2)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []PoolKeyBillingRow{}
-	for rows.Next() {
-		var i PoolKeyBillingRow
-		if err := rows.Scan(
-			&i.ID,
-			&i.PoolKeyID,
-			&i.PioneerCreatedAt,
-			&i.CreditMicros,
-			&i.CostMicros,
-			&i.TokenUsage,
-			&i.Model,
-			&i.Endpoint,
-			&i.AttributedUserID,
-			&i.Attribution,
-			&i.IsDuplicate,
-			&i.MatchedRequestID,
-			&i.IngestedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
+// Total non-duplicate cost for a key, all time. Used to keep
+// pool_keys.total_micros accurate after reconciliation.
+func (q *Queries) SumBillingRowsForKey(ctx context.Context, poolKeyID string) (interface{}, error) {
+	row := q.db.QueryRowContext(ctx, sumBillingRowsForKey, poolKeyID)
+	var coalesce interface{}
+	err := row.Scan(&coalesce)
+	return coalesce, err
 }
 
 const upsertBillingRow = `-- name: UpsertBillingRow :exec

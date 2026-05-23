@@ -284,3 +284,17 @@ func (q *Queries) UpdatePoolKeyLimits(ctx context.Context, arg UpdatePoolKeyLimi
 	)
 	return err
 }
+
+const updatePoolKeyTotalMicros = `-- name: UpdatePoolKeyTotalMicros :exec
+UPDATE pool_keys SET total_micros = ? WHERE id = ?
+`
+
+type UpdatePoolKeyTotalMicrosParams struct {
+	TotalMicros int64  `json:"total_micros"`
+	ID          string `json:"id"`
+}
+
+func (q *Queries) UpdatePoolKeyTotalMicros(ctx context.Context, arg UpdatePoolKeyTotalMicrosParams) error {
+	_, err := q.db.ExecContext(ctx, updatePoolKeyTotalMicros, arg.TotalMicros, arg.ID)
+	return err
+}

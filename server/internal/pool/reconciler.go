@@ -318,6 +318,15 @@ func (r *Reconciler) probeKey(ctx context.Context, key store.PoolKey) {
 
 	// Ingest new billing rows and attribute to users.
 	r.ingestBillingRows(ctx, key, plaintext)
+
+	// Update total_micros from the authoritative sum of all billing rows.
+	if totalRaw, err := r.q.SumBillingRowsForKey(ctx, key.ID); err == nil {
+		total := billingCursorToInt64(totalRaw)
+		_ = r.q.UpdatePoolKeyTotalMicros(ctx, store.UpdatePoolKeyTotalMicrosParams{
+			TotalMicros: total,
+			ID:          key.ID,
+		})
+	}
 }
 
 func nullStr(s string) sql.NullString {

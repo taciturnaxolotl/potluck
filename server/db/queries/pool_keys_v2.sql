@@ -19,6 +19,9 @@ UPDATE pool_keys SET
     last_billing_sync_at         = ?
 WHERE id = ?;
 
+-- name: UpdatePoolKeyTotalMicros :exec
+UPDATE pool_keys SET total_micros = ? WHERE id = ?;
+
 -- name: UpdatePoolKeyLimits :exec
 -- Updates the two-budget limits. Server enforces 0 <= shared <= max.
 UPDATE pool_keys SET

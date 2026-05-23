@@ -24,7 +24,7 @@ import (
 // Client disconnect → upstream canceled → no spend for tokens we didn't deliver.
 // This is correct for stateless API clients (not refreshing tabs).
 func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
-	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 8<<20))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return

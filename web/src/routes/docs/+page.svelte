@@ -19,9 +19,40 @@
 
   let activeKey = $derived(keys.find(k => !k.revoked) ?? null);
   let keyExample = $derived(activeKey?.masked ?? 'pot_cedar_••••••••••••••••••_9xK2m');
-  let firstModel = $derived(models[0]?.id ?? 'gpt-4o-mini');
+  let firstModel = $derived(models[0]?.id ?? 'claude-haiku-4-5');
 
-  function h(s: string) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+  let copied = $state(false);
+
+  function crushConfig(): string {
+    const chatModels = models.length > 0
+      ? models
+      : [
+          { id: 'claude-haiku-4-5', label: 'Claude Haiku 4.5', context_window: 200000 },
+          { id: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6', context_window: 1000000 }
+        ];
+    return JSON.stringify({
+      '$schema': 'https://charm.land/crush.json',
+      providers: {
+        potluck: {
+          type: 'openai-compat',
+          base_url: `${baseURL}/v1`,
+          api_key: keyExample,
+          models: chatModels.map(m => ({
+            id: m.id,
+            name: m.label || m.id,
+            context_window: m.context_window ?? 200000,
+            default_max_tokens: 4096
+          }))
+        }
+      }
+    }, null, 2);
+  }
+
+  async function copyToClipboard(text: string) {
+    await navigator.clipboard.writeText(text);
+    copied = true;
+    setTimeout(() => { copied = false; }, 2000);
+  }
 </script>
 
 <div class="page">
@@ -147,6 +178,16 @@ console.log(resp.choices[0].message.content);</pre>
 
     <h3>Claude Code / Cursor / any tool</h3>
     <p>Set <code>OPENAI_BASE_URL={baseURL}/v1</code> and <code>OPENAI_API_KEY=&lt;your key&gt;</code>.</p>
+
+    <h3>Crush</h3>
+    <p>Add a provider block to <code>~/.config/crush/crush.json</code> (or a project-level <code>crush.json</code>). Models are pulled from the live catalog — haiku is fastest for day-to-day use.</p>
+    {#key crushConfig()}
+      <div class="codeblock-wrap">
+        <pre class="codeblock codeblock-scroll">{crushConfig()}</pre>
+        <button class="copy-btn mono" onclick={() => copyToClipboard(crushConfig())}>{copied ? 'copied!' : 'copy'}</button>
+      </div>
+    {/key}
+    <p>To avoid hardcoding your key use <code>"api_key": "$POTLUCK_API_KEY"</code> and export the env var.</p>
   </section>
 
   <!-- ERRORS -->
@@ -251,4 +292,34 @@ x-potluck-balance-cents: 142</pre>
   .error-table td { padding: 0.55rem 0.75rem; border-bottom: 1px solid var(--border); color: var(--text); vertical-align: top; }
   .error-table tr:last-child td { border-bottom: none; }
   .error-table td:last-child { color: var(--text-muted); }
+
+  .codeblock-wrap {
+    position: relative;
+    margin: 0 0 1rem;
+  }
+  .codeblock-wrap .codeblock {
+    margin: 0;
+  }
+  .codeblock-scroll {
+    max-height: 420px;
+    overflow-y: auto;
+  }
+  .copy-btn {
+    position: absolute;
+    top: 0.5rem;
+    right: 0.5rem;
+    background: light-dark(oklch(92% 0.006 270), oklch(28% 0.012 270));
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 0.68rem;
+    padding: 0.2rem 0.55rem;
+    transition: all 0.15s;
+    letter-spacing: 0.04em;
+  }
+  .copy-btn:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
 </style>

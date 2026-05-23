@@ -121,7 +121,7 @@
 curl https://potluck.dunkirk.sh/v1/chat/completions \
   -H <span class="st">"Authorization: Bearer pot_cedar_KJ3mN8pQwR5vX2yZ4b_9xK2m"</span> \
   -H <span class="st">"Content-Type: application/json"</span> \
-  -d <span class="st">'&lbrace;"model": "gpt-4o-mini", "messages": [...]&rbrace;'</span></pre>
+  -d <span class="st">'&lbrace;"model": "claude-haiku-4-5", "messages": [&lbrace;"role":"user","content":"hello"&rbrace;]&rbrace;'</span></pre>
   </section>
 
   <section class="body">
