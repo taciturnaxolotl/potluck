@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"time"
@@ -195,6 +196,7 @@ func (s *Server) streamCompletion(w http.ResponseWriter, r *http.Request, body [
 	flusher, _ := w.(http.Flusher)
 
 	var usage *provider.Usage
+	chunkCount := 0
 	for {
 		select {
 		case <-r.Context().Done():
@@ -204,6 +206,9 @@ func (s *Server) streamCompletion(w http.ResponseWriter, r *http.Request, body [
 			return
 		case ch, ok := <-chunks:
 			if !ok {
+				// Chunks channel closed — should only happen after errs fires.
+				// If we get here without an error it means the goroutine exited
+				// cleanly (sent [DONE] or hit the no-DONE error path above).
 				_, _ = w.Write([]byte("data: [DONE]\n\n"))
 				go settle(s.Q, s.Pool, sel, reqID, usage, u)
 				return
@@ -219,6 +224,7 @@ func (s *Server) streamCompletion(w http.ResponseWriter, r *http.Request, body [
 				go settle(s.Q, s.Pool, sel, reqID, usage, u)
 				return
 			}
+			chunkCount++
 			_, _ = w.Write([]byte("data: "))
 			_, _ = w.Write(ch.Raw)
 			_, _ = w.Write([]byte("\n\n"))
@@ -227,6 +233,10 @@ func (s *Server) streamCompletion(w http.ResponseWriter, r *http.Request, body [
 			}
 		case e := <-errs:
 			if e != nil {
+				tokensReceived := 0
+				if usage != nil {
+					tokensReceived = usage.TotalTokens
+				}
 				charmlog.Error("stream error from pioneer",
 					"user_id", func() string {
 						if u != nil { return u.ID }
@@ -235,9 +245,24 @@ func (s *Server) streamCompletion(w http.ResponseWriter, r *http.Request, body [
 					"model", model,
 					"pool_key_id", sel.KeyID(),
 					"req_id", reqID,
+					"chunks_received", chunkCount,
+					"tokens_received", tokensReceived,
 					"err", e,
 				)
-				writeError(w, http.StatusBadGateway, "provider_error", e.Error())
+				// Send the error as an SSE event in OpenAI's envelope so the
+				// client (crush, etc.) can display it properly. We've already
+				// committed the 200 header so we can't change the status.
+				errJSON, _ := json.Marshal(map[string]any{
+					"error": map[string]any{
+						"message": e.Error(),
+						"type":    "server_error",
+						"code":    "provider_error",
+					},
+				})
+				_, _ = fmt.Fprintf(w, "data: %s\n\ndata: [DONE]\n\n", errJSON)
+				if flusher != nil {
+					flusher.Flush()
+				}
 				if u != nil {
 					go finishRequest(s.Q, reqID, 0, 0, 0, "error")
 				}

@@ -120,6 +120,8 @@
     <p class="muted">loading…</p>
   {:else if err}
     <p class="error">{err}</p>
+  {:else if models.length === 0}
+    <p class="muted">catalog is being populated — check back in a minute.</p>
   {:else}
     <div class="model-table">
       <div class="table-head">

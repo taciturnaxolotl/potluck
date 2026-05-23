@@ -107,6 +107,8 @@ func (c *Client) StreamChat(ctx context.Context, req ChatRequest) (<-chan Chunk,
 		scanner := bufio.NewScanner(resp.Body)
 		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 
+		chunkCount := 0
+		gotDone := false
 		for scanner.Scan() {
 			line := scanner.Bytes()
 			if !bytes.HasPrefix(line, []byte("data:")) {
@@ -114,6 +116,7 @@ func (c *Client) StreamChat(ctx context.Context, req ChatRequest) (<-chan Chunk,
 			}
 			payload := bytes.TrimSpace(line[len("data:"):])
 			if bytes.Equal(payload, []byte("[DONE]")) {
+				gotDone = true
 				chunks <- Chunk{Done: true}
 				return
 			}
@@ -122,10 +125,16 @@ func (c *Client) StreamChat(ctx context.Context, req ChatRequest) (<-chan Chunk,
 				errs <- err
 				return
 			}
+			chunkCount++
 			chunks <- ch
 		}
 		if err := scanner.Err(); err != nil {
-			errs <- err
+			errs <- fmt.Errorf("provider: stream read error after %d chunks: %w", chunkCount, err)
+			return
+		}
+		// Scanner closed cleanly but we never saw [DONE] — pioneer dropped the connection.
+		if !gotDone {
+			errs <- fmt.Errorf("provider: stream closed without [DONE] after %d chunks (pioneer dropped connection)", chunkCount)
 		}
 	}()
 
