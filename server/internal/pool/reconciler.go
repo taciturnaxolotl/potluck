@@ -87,7 +87,7 @@ type probeResult struct {
 
 // probePlanInfo calls /billing/plan-info and /billing/billing-status for a key.
 func probePlanInfo(ctx context.Context, httpClient *http.Client, apiKey string) probeResult {
-	ctx, cancel := context.WithTimeout(ctx, 12*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 
 	do := func(url string) ([]byte, int, error) {
@@ -205,9 +205,17 @@ func (r *Reconciler) tick(ctx context.Context) {
 	}
 
 	for _, key := range keys {
-		// Skip if already permanently revoked (race with above).
+		// Skip permanently revoked (race with above).
 		if key.RevokedAt.Valid {
 			continue
+		}
+		// Skip unauthorized keys unless they haven't been probed in >23h
+		// (daily reset window). The health prober handles those separately.
+		if key.PioneerHealth == HealthUnauthorized {
+			lastSync := key.LastBillingSyncAt.Int64
+			if time.Now().Unix()-lastSync < 23*3600 {
+				continue
+			}
 		}
 		r.probeKey(ctx, key)
 	}
@@ -257,8 +265,8 @@ func (r *Reconciler) probeKey(ctx context.Context, key store.PoolKey) {
 		return
 
 	case result.err != nil:
-		// Network/decode error — transient, log and skip.
-		r.log.Error("reconciler: probe failed",
+		// Network/decode error — transient, leave health unchanged, retry next tick.
+		r.log.Warn("reconciler: probe transient error",
 			"key_id", key.ID, "label", key.Label, "err", result.err)
 		return
 	}
@@ -307,6 +315,9 @@ func (r *Reconciler) probeKey(ctx context.Context, key store.PoolKey) {
 		"today_usd", fmt.Sprintf("%.2f", float64(result.todayMicros)/1_000_000),
 		"remaining_usd", fmt.Sprintf("%.2f", float64(result.remainingMicros)/1_000_000),
 	)
+
+	// Ingest new billing rows and attribute to users.
+	r.ingestBillingRows(ctx, key, plaintext)
 }
 
 func nullStr(s string) sql.NullString {

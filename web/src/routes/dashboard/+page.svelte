@@ -36,6 +36,12 @@
     return '$' + (Math.abs(usd) < 0.01 && usd !== 0 ? usd.toFixed(4) : usd.toFixed(2));
   }
 
+  // For stat cards: whole dollars, no cents. $99,998 not $99998.18.
+  function fmtStat(micros: number): string {
+    const usd = Math.round(micros / 1_000_000);
+    return '$' + usd.toLocaleString('en-US');
+  }
+
   function trim(usd: string) {
     return usd.endsWith('.00') ? usd.slice(0, -3) : usd;
   }
@@ -64,11 +70,11 @@
     <div class="stat-grid">
       <div class="stat">
         <div class="stat-label">Your bowl</div>
-        <div class="stat-num">{trim(formatUSD(bal ? bal.balance_micros : 0))}<span class="stat-unit">left to spend</span></div>
+        <div class="stat-num">{fmtStat(bal ? bal.balance_micros : 0)}<span class="stat-unit">left to spend</span></div>
       </div>
       <div class="stat">
         <div class="stat-label">In the pot</div>
-        <div class="stat-num">{trim(formatUSD(allocs?.total_daily_limit_micros ?? 0))}<span class="stat-unit">daily pool cap</span></div>
+        <div class="stat-num">{fmtStat(allocs?.pool?.total_shared_micros ?? 0)}<span class="stat-unit">daily pool shared</span></div>
       </div>
       <div class="stat">
         <div class="stat-label">Keys in the drawer</div>
@@ -80,7 +86,7 @@
       <div class="alloc-card">
         <div class="alloc-head">
           <span class="alloc-title">Who gets what</span>
-          <span class="alloc-total mono">{trim(formatUSD(allocs.total_daily_limit_micros))}/day pool</span>
+          <span class="alloc-total mono">{trim(formatUSD(allocs.pool?.total_shared_micros ?? 0))}/day shared</span>
         </div>
         <table class="alloc-table">
           <thead>
@@ -102,15 +108,15 @@
                   {#if isMe}<span class="you-badge">you</span>{/if}
                 </td>
                 <td class="num mono">{u.key_count}</td>
-                <td class="num mono">{trim(formatUSD(u.daily_limit_micros))}</td>
+                <td class="num mono">{trim(formatUSD(u.shared_contribution_micros))}</td>
                 <td class="num mono share-cell">
                   <div class="share-bar-wrap">
                     <div class="share-bar" style="width:{pct(u.share_fraction)}"></div>
                   </div>
                   <span>{pct(u.share_fraction)}</span>
                 </td>
-                <td class="num mono">{trim(formatUSD(u.today_micros))}</td>
-                <td class="num mono" class:negative={u.remaining_today < 0}>{trim(formatUSD(u.remaining_today))}</td>
+                <td class="num mono">{trim(formatUSD(u.shared_spent_today_micros))}</td>
+                <td class="num mono" class:negative={u.shared_remaining_today_micros < 0}>{trim(formatUSD(u.shared_remaining_today_micros))}</td>
               </tr>
             {/each}
           </tbody>

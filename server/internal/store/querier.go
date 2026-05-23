@@ -81,7 +81,7 @@ type Querier interface {
 	// The since parameter scopes only the TPS calculation; token counts are
 	// all-time so spend reflects the full history.
 	ListModelStats(ctx context.Context, startedAt int64) ([]ListModelStatsRow, error)
-	// Per-user pool key stats: daily commitment, today's spend, all-time spend.
+	// Per-user pool key stats: shared contribution, today's spend, all-time spend.
 	// Only users who have contributed at least one pool key appear.
 	ListPoolAllocations(ctx context.Context) ([]ListPoolAllocationsRow, error)
 	// All keys (for the pool management page). Includes inactive and other users' keys.

@@ -41,6 +41,7 @@ func (s *Server) Mount(r chi.Router) {
 	r.Get("/balance", s.handleBalance)
 	r.Post("/contributions", s.handleContribute)
 	r.Get("/allocations", s.handleAllocations)
+	r.Post("/allocations/recompute", s.handleRecomputeAllocations)
 
 	r.Get("/models", s.handleListModels)
 	r.Get("/usage", s.handleUsage)

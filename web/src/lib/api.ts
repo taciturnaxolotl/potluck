@@ -110,17 +110,29 @@ export type AllocationUser = {
   display_name: string;
   email: string;
   key_count: number;
-  daily_limit_micros: number;
-  today_micros: number;
-  total_micros: number;
-  request_count: number;
+  shared_contribution_micros: number;
+  private_reservation_micros: number;
+  shared_allowance_today_micros: number;
+  shared_spent_today_micros: number;
+  private_spent_today_micros: number;
+  shared_remaining_today_micros: number;
   share_fraction: number;
-  remaining_today: number;
 };
 
 export type Allocations = {
-  total_daily_limit_micros: number;
+  pool: {
+    total_shared_micros: number;
+    spent_today_shared_micros: number;
+    remaining_pool_today_micros: number;
+    active_key_count: number;
+    active_team_count: number;
+  };
   users: AllocationUser[];
+  last_recompute: {
+    at: number;
+    by_user_id: string;
+    by_display_name: string;
+  } | null;
 };
 
 export const getAllocations = () => api.get<Allocations>('/api/allocations');
@@ -207,33 +219,44 @@ export type PoolKey = {
   user_id: string;
   label: string;
   active: boolean;
-  daily_limit_micros: number;
+  max_micros: number;
+  shared_micros: number;
+  private_micros: number;
   today_micros: number;
   total_micros: number;
   request_count: number;
+  pioneer_health: number; // 0=unknown 1=healthy 2=unauthorized
+  pioneer_team_id: string;
+  pioneer_payment_plan: string;
+  pioneer_credit_limit_micros: number;
+  pioneer_remaining_micros: number;
+  pending_validation: boolean;
   created_at: number;
   last_used_at: number;
+  last_billing_sync_at: number;
   owner_name: string;
   owner_email: string;
   mine: boolean;
 };
 
 export const listPoolKeys = () => api.get<PoolKey[]>('/api/pool-keys');
-export const addPoolKey = (label: string, apiKey: string, dailyLimitMicros?: number) =>
-  api.post<PoolKey>('/api/pool-keys', {
+export const addPoolKey = (label: string, apiKey: string, maxMicros?: number, sharedMicros?: number) =>
+  api.post<PoolKey & { pending_validation?: boolean; pending_reason?: string }>('/api/pool-keys', {
     label,
     api_key: apiKey,
-    ...(dailyLimitMicros != null ? { daily_limit_micros: dailyLimitMicros } : {})
+    ...(maxMicros != null ? { daily_limit_micros: maxMicros } : {})
   });
 export const setPoolKeyActive = (id: string, active: boolean) =>
   api.patch<void>(`/api/pool-keys/${id}/active`, { active });
 export const updatePoolKeyLabel = (id: string, label: string) =>
   api.patch<void>(`/api/pool-keys/${id}/label`, { label });
-export const updatePoolKeyLimit = (id: string, dailyLimitMicros: number) =>
-  api.patch<void>(`/api/pool-keys/${id}/limit`, { daily_limit_micros: dailyLimitMicros });
+export const updatePoolKeyLimits = (id: string, maxMicros: number, sharedMicros: number) =>
+  api.patch<void>(`/api/pool-keys/${id}/limits`, { max_micros: maxMicros, shared_micros: sharedMicros });
 export const syncPoolKey = (id: string) =>
   api.post<{ today_micros: number }>(`/api/pool-keys/${id}/sync`);
 export const deletePoolKey = (id: string) => api.del<void>(`/api/pool-keys/${id}`);
+export const recomputeAllocations = () =>
+  api.post<Allocations>('/api/allocations/recompute');
 
 export async function logout(): Promise<void> {
   await fetch('/auth/logout', { method: 'POST', credentials: 'include' });

@@ -33,9 +33,10 @@
     theme = cycleTheme();
   }
 
-  // Trim a trailing ".00" so "$83" reads cleaner than "$83.00".
+  // Whole-dollar display for the stat cards — no cents, comma thousands.
   function pretty(usd: string) {
-    return usd.endsWith('.00') ? usd.slice(0, -3) : usd;
+    const n = Math.round(parseFloat(usd));
+    return n.toLocaleString('en-US');
   }
 
   // Human-friendly compact rendering for token counts. 1.2M, 340k, 87, etc.
