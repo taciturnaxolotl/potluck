@@ -3,23 +3,39 @@ package v1
 import (
 	"encoding/json"
 	"net/http"
-	"time"
 )
 
-// handleListModels returns the list of models we serve. The web UI uses
-// this for the model picker; tools like Continue use it for autodiscovery.
-//
-// For now this is a static list seeded at server build time. When we wire
-// the model_prices table this should join against it for capabilities and
-// pricing.
-func (s *Server) handleListModels(w http.ResponseWriter, _ *http.Request) {
-	now := time.Now().Unix()
-	models := []map[string]any{
-		{"id": "gpt-4o-mini", "object": "model", "created": now, "owned_by": "potluck"},
+// handleListModels returns available models in OpenAI's /v1/models shape.
+// Reads from models_catalog (populated hourly by pool.ModelsRefresher).
+func (s *Server) handleListModels(w http.ResponseWriter, r *http.Request) {
+	rows, err := s.Q.ListModelCatalog(r.Context())
+	if err != nil || len(rows) == 0 {
+		// Empty catalog — return empty list, not an error. Clients handle this.
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"object": "list",
+			"data":   []any{},
+		})
+		return
 	}
+
+	data := make([]map[string]any, 0, len(rows))
+	for _, m := range rows {
+		var created int64
+		if m.RefreshedAt > 0 {
+			created = m.RefreshedAt
+		}
+		data = append(data, map[string]any{
+			"id":       m.ID,
+			"object":   "model",
+			"created":  created,
+			"owned_by": "potluck",
+		})
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"object": "list",
-		"data":   models,
+		"data":   data,
 	})
 }
