@@ -159,15 +159,23 @@ func (s *Server) streamCompletion(w http.ResponseWriter, r *http.Request, body [
 		})
 	}
 
-	// Ensure stream_options.include_usage is on for accurate settlement.
-	var req map[string]any
+	// Inject stream_options.include_usage into the raw body so we get
+	// accurate usage for settlement. We forward the body as-is otherwise
+	// to preserve tool_calls, tool_call_id, and any other fields that
+	// our typed ChatMessage struct would strip.
+	var req map[string]json.RawMessage
 	if err := json.Unmarshal(body, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
-	req["stream"] = true
+	req["stream"] = json.RawMessage(`true`)
 	if _, ok := req["stream_options"]; !ok {
-		req["stream_options"] = map[string]any{"include_usage": true}
+		req["stream_options"] = json.RawMessage(`{"include_usage":true}`)
+	}
+	patchedBody, err := json.Marshal(req)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "server_error", err.Error())
+		return
 	}
 
 	pc := &provider.Client{
@@ -175,12 +183,7 @@ func (s *Server) streamCompletion(w http.ResponseWriter, r *http.Request, body [
 		APIKey:  sel.APIKey(),
 		HTTP:    s.Provider.HTTP,
 	}
-	chunks, errs, err := pc.StreamChat(r.Context(), provider.ChatRequest{
-		Model:         asString(req["model"]),
-		Messages:      messagesFromMap(req["messages"]),
-		Stream:        true,
-		StreamOptions: &provider.StreamOpts{IncludeUsage: true},
-	})
+	chunks, errs, err := pc.StreamChatRaw(r.Context(), patchedBody)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "provider_down", err.Error())
 		if u != nil {
@@ -305,23 +308,4 @@ func asString(v any) string {
 	return s
 }
 
-// messagesFromMap turns the JSON-decoded `messages` array into the typed
-// slice provider.StreamChat wants.
-func messagesFromMap(v any) []provider.ChatMessage {
-	arr, ok := v.([]any)
-	if !ok {
-		return nil
-	}
-	out := make([]provider.ChatMessage, 0, len(arr))
-	for _, item := range arr {
-		m, ok := item.(map[string]any)
-		if !ok {
-			continue
-		}
-		out = append(out, provider.ChatMessage{
-			Role:    asString(m["role"]),
-			Content: asString(m["content"]),
-		})
-	}
-	return out
-}
+

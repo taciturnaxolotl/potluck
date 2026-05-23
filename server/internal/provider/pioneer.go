@@ -78,6 +78,13 @@ func (c *Client) StreamChat(ctx context.Context, req ChatRequest) (<-chan Chunk,
 	if err != nil {
 		return nil, nil, err
 	}
+	return c.StreamChatRaw(ctx, body)
+}
+
+// StreamChatRaw is like StreamChat but takes a pre-built JSON body.
+// Use this when you need to forward fields (tool_calls, tool_call_id, etc.)
+// that ChatMessage doesn't model — the body passes through untouched.
+func (c *Client) StreamChatRaw(ctx context.Context, body []byte) (<-chan Chunk, <-chan error, error) {
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+"/v1/chat/completions", bytes.NewReader(body))
 	if err != nil {
 		return nil, nil, err
