@@ -106,6 +106,12 @@ func main() {
 		log.Fatal("pool: init failed", "err", err)
 	}
 
+	// Start the background reconciler: syncs pioneer billing data every 10 min.
+	reconcilerCtx, reconcilerCancel := context.WithCancel(context.Background())
+	defer reconcilerCancel()
+	reconciler := pool.NewReconciler(q, keyPool.Decrypt, log.Default())
+	go reconciler.Run(reconcilerCtx)
+
 	// Hack Club Auth client. Nil when unconfigured; the handlers degrade
 	// gracefully and return 503 with a friendly note.
 	var hcaClient *hca.Client
@@ -136,12 +142,11 @@ func main() {
 	r.Post("/auth/logout", hcaLogoutHandler(authSvc, cfg.IsProduction()))
 
 	apiSrv := &web.Server{
-		Q:             q,
-		Auth:          authSvc,
-		Ledger:        ledg,
-		Hub:           hub,
-		Pool:          keyPool,
-		PioneerAPIKey: cfg.Pioneer.APIKey,
+		Q:      q,
+		Auth:   authSvc,
+		Ledger: ledg,
+		Hub:    hub,
+		Pool:   keyPool,
 	}
 	v1Srv := &v1.Server{
 		Q:        q,

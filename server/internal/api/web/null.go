@@ -11,6 +11,20 @@ func sqlNullInt64Ptr(v *int64) sql.NullInt64 {
 	return sql.NullInt64{Int64: *v, Valid: true}
 }
 
+func nullStrWeb(s string) sql.NullString {
+	if s == "" {
+		return sql.NullString{}
+	}
+	return sql.NullString{String: s, Valid: true}
+}
+
+func nullIntWeb(v int64) sql.NullInt64 {
+	if v == 0 {
+		return sql.NullInt64{}
+	}
+	return sql.NullInt64{Int64: v, Valid: true}
+}
+
 // toInt64 unboxes the interface{} sqlc emits for SUM/COALESCE aggregates.
 func toInt64(v any) int64 {
 	switch x := v.(type) {

@@ -32,9 +32,8 @@ var ErrNoKeys = errors.New("pool: no active keys available")
 
 // Manager is the pool key manager. Embed in handler structs or pass as a dep.
 type Manager struct {
-	q          *store.Queries
-	secret     []byte // 32 bytes for AES-256; nil = encryption disabled
-	fallbackKey string // used when pool is empty (PIONEER_API_KEY)
+	q      *store.Queries
+	secret []byte // 32 bytes for AES-256; nil = encryption disabled
 }
 
 // New constructs a Manager.
@@ -44,8 +43,8 @@ type Manager struct {
 //     encryption — only safe for dev without real keys in the DB.
 //   - fallbackKey: the static PIONEER_API_KEY; used when the pool has no
 //     active keys. Pass "" to disable fallback.
-func New(q *store.Queries, secretHex string, fallbackKey string) (*Manager, error) {
-	m := &Manager{q: q, fallbackKey: fallbackKey}
+func New(q *store.Queries, secretHex string, _ string) (*Manager, error) {
+	m := &Manager{q: q}
 	if secretHex != "" {
 		// Accept both hex (64 chars) and base64 (44 chars) for convenience.
 		var secret []byte
@@ -66,16 +65,13 @@ func New(q *store.Queries, secretHex string, fallbackKey string) (*Manager, erro
 	return m, nil
 }
 
-// Pick selects the best key for a request and returns its decrypted plaintext.
-// Records the key id on the returned Selection for later spend recording.
+// Pick selects the best key for a request using the v2 picker (health-aware,
+// $10 buffer, max_micros cap). Returns ErrNoKeys when the pool has no
+// eligible keys — the caller should surface this as a 503 to the user.
 func (m *Manager) Pick(ctx context.Context) (*Selection, error) {
-	today := todayUTC()
-	key, err := m.q.PickPoolKey(ctx, today)
+	key, err := m.q.PickPoolKeyV2(ctx)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			if m.fallbackKey != "" {
-				return &Selection{keyID: "", plaintext: m.fallbackKey, fallback: true}, nil
-			}
 			return nil, ErrNoKeys
 		}
 		return nil, fmt.Errorf("pool: pick key: %w", err)
@@ -91,12 +87,12 @@ func (m *Manager) Pick(ctx context.Context) (*Selection, error) {
 // Call this after the upstream call settles (use context.Background() — the
 // request context may already be canceled).
 func (m *Manager) RecordSpend(ctx context.Context, sel *Selection, amountMicros int64) error {
-	if sel.fallback || sel.keyID == "" {
-		return nil // static fallback key — no pool row to update
+	if sel.keyID == "" {
+		return nil
 	}
 	now := time.Now().Unix()
 	return m.q.RecordPoolKeySpend(ctx, store.RecordPoolKeySpendParams{
-		TodayDate:   todayUTC(),
+		TodayDate:   time.Now().UTC().Unix() / 86400,
 		TodayMicros: amountMicros,
 		LastUsedAt:  sql.NullInt64{Int64: now, Valid: true},
 		ID:          sel.keyID,
@@ -169,19 +165,10 @@ func Fingerprint(plaintext string) string {
 type Selection struct {
 	keyID     string
 	plaintext string
-	fallback  bool
 }
 
 // APIKey returns the decrypted pioneer API key for use in HTTP headers.
 func (s *Selection) APIKey() string { return s.plaintext }
 
-// IsFallback reports whether the fallback static key was used.
-func (s *Selection) IsFallback() bool { return s.fallback }
-
-// KeyID returns the DB row ID of the selected key (empty for fallback).
+// KeyID returns the DB row ID of the selected key.
 func (s *Selection) KeyID() string { return s.keyID }
-
-// todayUTC returns the current UTC day as unix seconds / 86400.
-func todayUTC() int64 {
-	return time.Now().UTC().Unix() / 86400
-}

@@ -27,12 +27,11 @@ import (
 
 // Server bundles the deps the web handlers need.
 type Server struct {
-	Q             *store.Queries
-	Auth          *auth.Service
-	Ledger        *ledger.Service
-	Hub           *stream.Hub
-	Pool          *pool.Manager
-	PioneerAPIKey string
+	Q      *store.Queries
+	Auth   *auth.Service
+	Ledger *ledger.Service
+	Hub    *stream.Hub
+	Pool   *pool.Manager
 }
 
 // Mount registers /api/* routes on r. The caller wraps with cookie-auth
@@ -61,7 +60,7 @@ func (s *Server) Mount(r chi.Router) {
 	r.Post("/pool-keys", s.handleAddPoolKey)
 	r.Patch("/pool-keys/{id}/active", s.handleSetPoolKeyActive)
 	r.Patch("/pool-keys/{id}/label", s.handleUpdatePoolKeyLabel)
-	r.Patch("/pool-keys/{id}/limit", s.handleUpdatePoolKeyLimit)
+	r.Patch("/pool-keys/{id}/limits", s.handleUpdatePoolKeyLimits)
 	r.Post("/pool-keys/{id}/sync", s.handleSyncPoolKeySpend)
 	r.Delete("/pool-keys/{id}", s.handleDeletePoolKey)
 

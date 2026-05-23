@@ -3,26 +3,26 @@ package v1
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"io"
 	"net/http"
+	"time"
 
+	"github.com/google/uuid"
+
+	apimw "github.com/taciturnaxolotl/potluck/internal/api/middleware"
+	"github.com/taciturnaxolotl/potluck/internal/pool"
 	"github.com/taciturnaxolotl/potluck/internal/provider"
+	"github.com/taciturnaxolotl/potluck/internal/store"
 )
 
-// handleChatCompletions proxies POST /v1/chat/completions to pioneer
-// with minimal fuss. Streaming requests stay streaming; non-streaming
-// responses are buffered (small payloads, OpenAI shape).
+// handleChatCompletions proxies POST /v1/chat/completions to pioneer.
+// Streaming requests stay streaming; non-streaming responses are buffered.
 //
-// Cancellation semantics differ from the /api/* surface: here the
-// upstream is bound to the request context. Client disconnect ➜ upstream
-// canceled ➜ no spend recorded for tokens we won't deliver. This is the
-// right choice for stateless API clients that aren't refreshing tabs.
-//
-// Spend recording is intentionally NOT in this stub yet — see
-// design/public-api.md. Wiring it up requires settling against
-// stream_options.include_usage on the streaming path and the response's
-// own usage block on the non-streaming path.
+// Cancellation semantics: the upstream is bound to the request context.
+// Client disconnect → upstream canceled → no spend for tokens we didn't deliver.
+// This is correct for stateless API clients (not refreshing tabs).
 func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
 	if err != nil {
@@ -31,9 +31,6 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 	defer r.Body.Close()
 
-	// Peek to decide stream vs JSON without unmarshalling the whole body
-	// into a typed struct (which we deliberately avoid — pioneer surfaces
-	// fields we may not know about and clients expect those passed through).
 	var probe struct {
 		Stream bool   `json:"stream"`
 		Model  string `json:"model"`
@@ -44,19 +41,41 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if probe.Stream {
-		s.streamCompletion(w, r, body)
+		s.streamCompletion(w, r, body, probe.Model)
 		return
 	}
-	s.bufferedCompletion(w, r, body)
+	s.bufferedCompletion(w, r, body, probe.Model)
 }
 
-// bufferedCompletion handles a non-streaming chat completion: forward the
-// body, return whatever pioneer returns. We do NOT re-shape the response.
-func (s *Server) bufferedCompletion(w http.ResponseWriter, r *http.Request, body []byte) {
+// bufferedCompletion handles a non-streaming chat completion.
+func (s *Server) bufferedCompletion(w http.ResponseWriter, r *http.Request, body []byte, model string) {
 	sel, err := s.Pool.Pick(r.Context())
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, "no_pool_keys", "no active pool keys available")
 		return
+	}
+
+	u, _ := apimw.UserFromContext(r.Context())
+	apiKey, _ := apimw.APIKeyFromContext(r.Context())
+
+	// Write request log row immediately.
+	reqID := uuid.NewString()
+	poolKeyID := sql.NullString{String: sel.KeyID(), Valid: sel.KeyID() != ""}
+	apiKeyID := sql.NullString{}
+	if apiKey != nil {
+		apiKeyID = sql.NullString{String: apiKey.ID, Valid: true}
+	}
+	startedAt := time.Now().Unix()
+	if u != nil {
+		_, _ = s.Q.CreatePotluckRequest(r.Context(), store.CreatePotluckRequestParams{
+			ID:        reqID,
+			UserID:    u.ID,
+			ApiKeyID:  apiKeyID,
+			PoolKeyID: poolKeyID,
+			Surface:   "v1",
+			Model:     model,
+			StartedAt: startedAt,
+		})
 	}
 
 	req, err := http.NewRequestWithContext(r.Context(),
@@ -71,35 +90,74 @@ func (s *Server) bufferedCompletion(w http.ResponseWriter, r *http.Request, body
 	resp, err := s.Provider.HTTP.Do(req)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "provider_down", err.Error())
+		if u != nil {
+			go finishRequest(s.Q, reqID, 0, 0, 0, "error")
+		}
 		return
 	}
 	defer resp.Body.Close()
 
+	// Buffer the response so we can parse usage before returning.
+	respBody, _ := io.ReadAll(resp.Body)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(resp.StatusCode)
-	_, _ = io.Copy(w, resp.Body)
+	_, _ = w.Write(respBody)
 
-	// Record spend asynchronously — don't hold the client on a DB write.
-	// Non-streaming: we don't have token counts here yet, record 0 to
-	// increment request_count and last_used_at. TODO: parse response usage.
+	// Parse usage from the response body and settle asynchronously.
 	go func() {
+		var respJSON struct {
+			Usage *provider.Usage `json:"usage"`
+		}
+		_ = json.Unmarshal(respBody, &respJSON)
+		var prompt, completion, total int64
+		if respJSON.Usage != nil {
+			prompt = int64(respJSON.Usage.PromptTokens)
+			completion = int64(respJSON.Usage.CompletionTokens)
+			total = int64(respJSON.Usage.TotalTokens)
+		}
+		status := "done"
+		if resp.StatusCode/100 != 2 {
+			status = "error"
+		}
+		if u != nil {
+			finishRequest(s.Q, reqID, prompt, completion, total, status)
+		}
 		_ = s.Pool.RecordSpend(context.Background(), sel, 0)
 	}()
 }
 
-// streamCompletion forwards an SSE chat completion straight through. We
-// use provider.StreamChat for the chunk parser (so we can settle spend at
-// the end) but the bytes the client sees are pioneer's verbatim where
-// possible.
-func (s *Server) streamCompletion(w http.ResponseWriter, r *http.Request, body []byte) {
+// streamCompletion forwards an SSE chat completion straight through.
+func (s *Server) streamCompletion(w http.ResponseWriter, r *http.Request, body []byte, model string) {
 	sel, err := s.Pool.Pick(r.Context())
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, "no_pool_keys", "no active pool keys available")
 		return
 	}
 
-	// Decode just enough to ensure stream_options.include_usage is on, so
-	// we can settle accurately. Re-marshal and forward.
+	u, _ := apimw.UserFromContext(r.Context())
+	apiKey, _ := apimw.APIKeyFromContext(r.Context())
+
+	// Write request log row immediately.
+	reqID := uuid.NewString()
+	poolKeyID := sql.NullString{String: sel.KeyID(), Valid: sel.KeyID() != ""}
+	apiKeyID := sql.NullString{}
+	if apiKey != nil {
+		apiKeyID = sql.NullString{String: apiKey.ID, Valid: true}
+	}
+	startedAt := time.Now().Unix()
+	if u != nil {
+		_, _ = s.Q.CreatePotluckRequest(r.Context(), store.CreatePotluckRequestParams{
+			ID:        reqID,
+			UserID:    u.ID,
+			ApiKeyID:  apiKeyID,
+			PoolKeyID: poolKeyID,
+			Surface:   "v1",
+			Model:     model,
+			StartedAt: startedAt,
+		})
+	}
+
+	// Ensure stream_options.include_usage is on for accurate settlement.
 	var req map[string]any
 	if err := json.Unmarshal(body, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
@@ -110,7 +168,6 @@ func (s *Server) streamCompletion(w http.ResponseWriter, r *http.Request, body [
 		req["stream_options"] = map[string]any{"include_usage": true}
 	}
 
-	// Use a per-request client copy with the selected pool key.
 	pc := &provider.Client{
 		BaseURL: s.Provider.BaseURL,
 		APIKey:  sel.APIKey(),
@@ -124,6 +181,9 @@ func (s *Server) streamCompletion(w http.ResponseWriter, r *http.Request, body [
 	})
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "provider_down", err.Error())
+		if u != nil {
+			go finishRequest(s.Q, reqID, 0, 0, 0, "error")
+		}
 		return
 	}
 
@@ -133,23 +193,29 @@ func (s *Server) streamCompletion(w http.ResponseWriter, r *http.Request, body [
 	w.WriteHeader(http.StatusOK)
 	flusher, _ := w.(http.Flusher)
 
-	var totalMicros int64
+	var usage *provider.Usage
 	for {
 		select {
 		case <-r.Context().Done():
+			if u != nil {
+				go finishRequest(s.Q, reqID, 0, 0, 0, "canceled")
+			}
 			return
 		case ch, ok := <-chunks:
 			if !ok {
 				_, _ = w.Write([]byte("data: [DONE]\n\n"))
-				go func() { _ = s.Pool.RecordSpend(context.Background(), sel, totalMicros) }()
+				go settle(s.Q, s.Pool, sel, reqID, usage, u)
 				return
+			}
+			if ch.Usage != nil {
+				usage = ch.Usage
 			}
 			if ch.Done {
 				_, _ = w.Write([]byte("data: [DONE]\n\n"))
 				if flusher != nil {
 					flusher.Flush()
 				}
-				go func() { _ = s.Pool.RecordSpend(context.Background(), sel, totalMicros) }()
+				go settle(s.Q, s.Pool, sel, reqID, usage, u)
 				return
 			}
 			_, _ = w.Write([]byte("data: "))
@@ -161,10 +227,40 @@ func (s *Server) streamCompletion(w http.ResponseWriter, r *http.Request, body [
 		case e := <-errs:
 			if e != nil {
 				writeError(w, http.StatusBadGateway, "provider_error", e.Error())
+				if u != nil {
+					go finishRequest(s.Q, reqID, 0, 0, 0, "error")
+				}
 				return
 			}
 		}
 	}
+}
+
+// settle fires off the post-stream DB writes. Runs in a goroutine.
+func settle(q *store.Queries, poolMgr *pool.Manager, sel *pool.Selection, reqID string, usage *provider.Usage, u *store.User) {
+	var prompt, completion, total int64
+	if usage != nil {
+		prompt = int64(usage.PromptTokens)
+		completion = int64(usage.CompletionTokens)
+		total = int64(usage.TotalTokens)
+	}
+	if u != nil {
+		finishRequest(q, reqID, prompt, completion, total, "done")
+	}
+	_ = poolMgr.RecordSpend(context.Background(), sel, 0)
+}
+
+// finishRequest updates the potluck_requests row after the upstream call ends.
+func finishRequest(q *store.Queries, reqID string, prompt, completion, total int64, status string) {
+	now := time.Now().Unix()
+	_ = q.FinishPotluckRequest(context.Background(), store.FinishPotluckRequestParams{
+		FinishedAt:       sql.NullInt64{Int64: now, Valid: true},
+		PromptTokens:     sql.NullInt64{Int64: prompt, Valid: prompt > 0},
+		CompletionTokens: sql.NullInt64{Int64: completion, Valid: completion > 0},
+		TotalTokens:      sql.NullInt64{Int64: total, Valid: total > 0},
+		Status:           status,
+		ID:               reqID,
+	})
 }
 
 // asString safely extracts a string from a map[string]any without panicking.
@@ -174,8 +270,7 @@ func asString(v any) string {
 }
 
 // messagesFromMap turns the JSON-decoded `messages` array into the typed
-// slice provider.StreamChat wants. We accept map-shaped messages; anything
-// else is left to pioneer to reject.
+// slice provider.StreamChat wants.
 func messagesFromMap(v any) []provider.ChatMessage {
 	arr, ok := v.([]any)
 	if !ok {

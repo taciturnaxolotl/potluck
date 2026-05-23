@@ -68,20 +68,77 @@ type ModelPrice struct {
 	UpdatedAt         int64  `json:"updated_at"`
 }
 
+type ModelsCatalog struct {
+	ID                          string         `json:"id"`
+	Label                       string         `json:"label"`
+	Description                 string         `json:"description"`
+	ContextWindow               sql.NullInt64  `json:"context_window"`
+	MaxOutputTokens             sql.NullInt64  `json:"max_output_tokens"`
+	IsChat                      int64          `json:"is_chat"`
+	Tier                        sql.NullString `json:"tier"`
+	InputPricePerMillionMicros  sql.NullInt64  `json:"input_price_per_million_micros"`
+	OutputPricePerMillionMicros sql.NullInt64  `json:"output_price_per_million_micros"`
+	RawJson                     string         `json:"raw_json"`
+	RefreshedAt                 int64          `json:"refreshed_at"`
+}
+
 type PoolKey struct {
-	ID               string        `json:"id"`
-	UserID           string        `json:"user_id"`
-	Label            string        `json:"label"`
-	KeyCiphertext    string        `json:"key_ciphertext"`
-	KeyFingerprint   string        `json:"key_fingerprint"`
-	Active           int64         `json:"active"`
-	DailyLimitMicros int64         `json:"daily_limit_micros"`
-	TodayDate        int64         `json:"today_date"`
-	TodayMicros      int64         `json:"today_micros"`
-	TotalMicros      int64         `json:"total_micros"`
-	RequestCount     int64         `json:"request_count"`
-	CreatedAt        int64         `json:"created_at"`
-	LastUsedAt       sql.NullInt64 `json:"last_used_at"`
+	ID                       string         `json:"id"`
+	UserID                   string         `json:"user_id"`
+	Label                    string         `json:"label"`
+	KeyCiphertext            string         `json:"key_ciphertext"`
+	KeyFingerprint           string         `json:"key_fingerprint"`
+	Active                   int64          `json:"active"`
+	DailyLimitMicros         int64          `json:"daily_limit_micros"`
+	TodayDate                int64          `json:"today_date"`
+	TodayMicros              int64          `json:"today_micros"`
+	TotalMicros              int64          `json:"total_micros"`
+	RequestCount             int64          `json:"request_count"`
+	CreatedAt                int64          `json:"created_at"`
+	LastUsedAt               sql.NullInt64  `json:"last_used_at"`
+	MaxMicros                int64          `json:"max_micros"`
+	SharedMicros             int64          `json:"shared_micros"`
+	PioneerTeamID            sql.NullString `json:"pioneer_team_id"`
+	PioneerPaymentPlan       sql.NullString `json:"pioneer_payment_plan"`
+	PioneerCreditLimitMicros sql.NullInt64  `json:"pioneer_credit_limit_micros"`
+	PioneerRemainingMicros   sql.NullInt64  `json:"pioneer_remaining_micros"`
+	PioneerHealth            int64          `json:"pioneer_health"`
+	PioneerUnhealthySince    sql.NullInt64  `json:"pioneer_unhealthy_since"`
+	PendingValidation        int64          `json:"pending_validation"`
+	LastBillingSyncAt        sql.NullInt64  `json:"last_billing_sync_at"`
+	RevokedAt                sql.NullInt64  `json:"revoked_at"`
+}
+
+type PoolKeyBillingRow struct {
+	ID               string         `json:"id"`
+	PoolKeyID        string         `json:"pool_key_id"`
+	PioneerCreatedAt int64          `json:"pioneer_created_at"`
+	CreditMicros     int64          `json:"credit_micros"`
+	CostMicros       int64          `json:"cost_micros"`
+	TokenUsage       int64          `json:"token_usage"`
+	Model            string         `json:"model"`
+	Endpoint         string         `json:"endpoint"`
+	AttributedUserID sql.NullString `json:"attributed_user_id"`
+	Attribution      int64          `json:"attribution"`
+	IsDuplicate      int64          `json:"is_duplicate"`
+	MatchedRequestID sql.NullString `json:"matched_request_id"`
+	IngestedAt       int64          `json:"ingested_at"`
+}
+
+type PotluckRequest struct {
+	ID               string         `json:"id"`
+	UserID           string         `json:"user_id"`
+	ApiKeyID         sql.NullString `json:"api_key_id"`
+	PoolKeyID        sql.NullString `json:"pool_key_id"`
+	Surface          string         `json:"surface"`
+	Model            string         `json:"model"`
+	StartedAt        int64          `json:"started_at"`
+	FinishedAt       sql.NullInt64  `json:"finished_at"`
+	PromptTokens     sql.NullInt64  `json:"prompt_tokens"`
+	CompletionTokens sql.NullInt64  `json:"completion_tokens"`
+	TotalTokens      sql.NullInt64  `json:"total_tokens"`
+	Status           string         `json:"status"`
+	ErrorCode        sql.NullString `json:"error_code"`
 }
 
 type Session struct {
@@ -138,4 +195,19 @@ type User struct {
 	HcaID              sql.NullString `json:"hca_id"`
 	SlackID            sql.NullString `json:"slack_id"`
 	VerificationStatus sql.NullString `json:"verification_status"`
+}
+
+type UserDailyAllowance struct {
+	UserID                string `json:"user_id"`
+	Day                   int64  `json:"day"`
+	SharedAllowanceMicros int64  `json:"shared_allowance_micros"`
+	SetAt                 int64  `json:"set_at"`
+	SetByUserID           string `json:"set_by_user_id"`
+}
+
+type UserDailySpend struct {
+	UserID             string `json:"user_id"`
+	Day                int64  `json:"day"`
+	SharedSpentMicros  int64  `json:"shared_spent_micros"`
+	PrivateSpentMicros int64  `json:"private_spent_micros"`
 }

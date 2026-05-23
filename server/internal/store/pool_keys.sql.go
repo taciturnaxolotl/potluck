@@ -17,7 +17,7 @@ INSERT INTO pool_keys (
     active, daily_limit_micros, today_date, today_micros,
     total_micros, request_count, created_at
 ) VALUES (?, ?, ?, ?, ?, 1, ?, 0, 0, 0, 0, ?)
-RETURNING id, user_id, label, key_ciphertext, key_fingerprint, active, daily_limit_micros, today_date, today_micros, total_micros, request_count, created_at, last_used_at
+RETURNING id, user_id, label, key_ciphertext, key_fingerprint, active, daily_limit_micros, today_date, today_micros, total_micros, request_count, created_at, last_used_at, max_micros, shared_micros, pioneer_team_id, pioneer_payment_plan, pioneer_credit_limit_micros, pioneer_remaining_micros, pioneer_health, pioneer_unhealthy_since, pending_validation, last_billing_sync_at, revoked_at
 `
 
 type CreatePoolKeyParams struct {
@@ -61,6 +61,17 @@ func (q *Queries) CreatePoolKey(ctx context.Context, arg CreatePoolKeyParams) (P
 		&i.RequestCount,
 		&i.CreatedAt,
 		&i.LastUsedAt,
+		&i.MaxMicros,
+		&i.SharedMicros,
+		&i.PioneerTeamID,
+		&i.PioneerPaymentPlan,
+		&i.PioneerCreditLimitMicros,
+		&i.PioneerRemainingMicros,
+		&i.PioneerHealth,
+		&i.PioneerUnhealthySince,
+		&i.PendingValidation,
+		&i.LastBillingSyncAt,
+		&i.RevokedAt,
 	)
 	return i, err
 }
@@ -80,7 +91,7 @@ func (q *Queries) DeletePoolKey(ctx context.Context, arg DeletePoolKeyParams) er
 }
 
 const getPoolKey = `-- name: GetPoolKey :one
-SELECT id, user_id, label, key_ciphertext, key_fingerprint, active, daily_limit_micros, today_date, today_micros, total_micros, request_count, created_at, last_used_at FROM pool_keys WHERE id = ?
+SELECT id, user_id, label, key_ciphertext, key_fingerprint, active, daily_limit_micros, today_date, today_micros, total_micros, request_count, created_at, last_used_at, max_micros, shared_micros, pioneer_team_id, pioneer_payment_plan, pioneer_credit_limit_micros, pioneer_remaining_micros, pioneer_health, pioneer_unhealthy_since, pending_validation, last_billing_sync_at, revoked_at FROM pool_keys WHERE id = ?
 `
 
 func (q *Queries) GetPoolKey(ctx context.Context, id string) (PoolKey, error) {
@@ -100,6 +111,17 @@ func (q *Queries) GetPoolKey(ctx context.Context, id string) (PoolKey, error) {
 		&i.RequestCount,
 		&i.CreatedAt,
 		&i.LastUsedAt,
+		&i.MaxMicros,
+		&i.SharedMicros,
+		&i.PioneerTeamID,
+		&i.PioneerPaymentPlan,
+		&i.PioneerCreditLimitMicros,
+		&i.PioneerRemainingMicros,
+		&i.PioneerHealth,
+		&i.PioneerUnhealthySince,
+		&i.PendingValidation,
+		&i.LastBillingSyncAt,
+		&i.RevokedAt,
 	)
 	return i, err
 }
@@ -166,28 +188,39 @@ func (q *Queries) ListPoolAllocations(ctx context.Context) ([]ListPoolAllocation
 }
 
 const listPoolKeys = `-- name: ListPoolKeys :many
-SELECT pk.id, pk.user_id, pk.label, pk.key_ciphertext, pk.key_fingerprint, pk.active, pk.daily_limit_micros, pk.today_date, pk.today_micros, pk.total_micros, pk.request_count, pk.created_at, pk.last_used_at, u.display_name AS owner_name, u.email AS owner_email
+SELECT pk.id, pk.user_id, pk.label, pk.key_ciphertext, pk.key_fingerprint, pk.active, pk.daily_limit_micros, pk.today_date, pk.today_micros, pk.total_micros, pk.request_count, pk.created_at, pk.last_used_at, pk.max_micros, pk.shared_micros, pk.pioneer_team_id, pk.pioneer_payment_plan, pk.pioneer_credit_limit_micros, pk.pioneer_remaining_micros, pk.pioneer_health, pk.pioneer_unhealthy_since, pk.pending_validation, pk.last_billing_sync_at, pk.revoked_at, u.display_name AS owner_name, u.email AS owner_email
 FROM pool_keys pk
 JOIN users u ON u.id = pk.user_id
 ORDER BY pk.active DESC, pk.today_micros ASC
 `
 
 type ListPoolKeysRow struct {
-	ID               string        `json:"id"`
-	UserID           string        `json:"user_id"`
-	Label            string        `json:"label"`
-	KeyCiphertext    string        `json:"key_ciphertext"`
-	KeyFingerprint   string        `json:"key_fingerprint"`
-	Active           int64         `json:"active"`
-	DailyLimitMicros int64         `json:"daily_limit_micros"`
-	TodayDate        int64         `json:"today_date"`
-	TodayMicros      int64         `json:"today_micros"`
-	TotalMicros      int64         `json:"total_micros"`
-	RequestCount     int64         `json:"request_count"`
-	CreatedAt        int64         `json:"created_at"`
-	LastUsedAt       sql.NullInt64 `json:"last_used_at"`
-	OwnerName        string        `json:"owner_name"`
-	OwnerEmail       string        `json:"owner_email"`
+	ID                       string         `json:"id"`
+	UserID                   string         `json:"user_id"`
+	Label                    string         `json:"label"`
+	KeyCiphertext            string         `json:"key_ciphertext"`
+	KeyFingerprint           string         `json:"key_fingerprint"`
+	Active                   int64          `json:"active"`
+	DailyLimitMicros         int64          `json:"daily_limit_micros"`
+	TodayDate                int64          `json:"today_date"`
+	TodayMicros              int64          `json:"today_micros"`
+	TotalMicros              int64          `json:"total_micros"`
+	RequestCount             int64          `json:"request_count"`
+	CreatedAt                int64          `json:"created_at"`
+	LastUsedAt               sql.NullInt64  `json:"last_used_at"`
+	MaxMicros                int64          `json:"max_micros"`
+	SharedMicros             int64          `json:"shared_micros"`
+	PioneerTeamID            sql.NullString `json:"pioneer_team_id"`
+	PioneerPaymentPlan       sql.NullString `json:"pioneer_payment_plan"`
+	PioneerCreditLimitMicros sql.NullInt64  `json:"pioneer_credit_limit_micros"`
+	PioneerRemainingMicros   sql.NullInt64  `json:"pioneer_remaining_micros"`
+	PioneerHealth            int64          `json:"pioneer_health"`
+	PioneerUnhealthySince    sql.NullInt64  `json:"pioneer_unhealthy_since"`
+	PendingValidation        int64          `json:"pending_validation"`
+	LastBillingSyncAt        sql.NullInt64  `json:"last_billing_sync_at"`
+	RevokedAt                sql.NullInt64  `json:"revoked_at"`
+	OwnerName                string         `json:"owner_name"`
+	OwnerEmail               string         `json:"owner_email"`
 }
 
 // All keys (for the pool management page). Includes inactive and other users' keys.
@@ -214,6 +247,17 @@ func (q *Queries) ListPoolKeys(ctx context.Context) ([]ListPoolKeysRow, error) {
 			&i.RequestCount,
 			&i.CreatedAt,
 			&i.LastUsedAt,
+			&i.MaxMicros,
+			&i.SharedMicros,
+			&i.PioneerTeamID,
+			&i.PioneerPaymentPlan,
+			&i.PioneerCreditLimitMicros,
+			&i.PioneerRemainingMicros,
+			&i.PioneerHealth,
+			&i.PioneerUnhealthySince,
+			&i.PendingValidation,
+			&i.LastBillingSyncAt,
+			&i.RevokedAt,
 			&i.OwnerName,
 			&i.OwnerEmail,
 		); err != nil {
@@ -231,7 +275,7 @@ func (q *Queries) ListPoolKeys(ctx context.Context) ([]ListPoolKeysRow, error) {
 }
 
 const listPoolKeysForUser = `-- name: ListPoolKeysForUser :many
-SELECT id, user_id, label, key_ciphertext, key_fingerprint, active, daily_limit_micros, today_date, today_micros, total_micros, request_count, created_at, last_used_at FROM pool_keys WHERE user_id = ? ORDER BY created_at DESC
+SELECT id, user_id, label, key_ciphertext, key_fingerprint, active, daily_limit_micros, today_date, today_micros, total_micros, request_count, created_at, last_used_at, max_micros, shared_micros, pioneer_team_id, pioneer_payment_plan, pioneer_credit_limit_micros, pioneer_remaining_micros, pioneer_health, pioneer_unhealthy_since, pending_validation, last_billing_sync_at, revoked_at FROM pool_keys WHERE user_id = ? ORDER BY created_at DESC
 `
 
 func (q *Queries) ListPoolKeysForUser(ctx context.Context, userID string) ([]PoolKey, error) {
@@ -257,6 +301,17 @@ func (q *Queries) ListPoolKeysForUser(ctx context.Context, userID string) ([]Poo
 			&i.RequestCount,
 			&i.CreatedAt,
 			&i.LastUsedAt,
+			&i.MaxMicros,
+			&i.SharedMicros,
+			&i.PioneerTeamID,
+			&i.PioneerPaymentPlan,
+			&i.PioneerCreditLimitMicros,
+			&i.PioneerRemainingMicros,
+			&i.PioneerHealth,
+			&i.PioneerUnhealthySince,
+			&i.PendingValidation,
+			&i.LastBillingSyncAt,
+			&i.RevokedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -272,7 +327,7 @@ func (q *Queries) ListPoolKeysForUser(ctx context.Context, userID string) ([]Poo
 }
 
 const pickPoolKey = `-- name: PickPoolKey :one
-SELECT id, user_id, label, key_ciphertext, key_fingerprint, active, daily_limit_micros, today_date, today_micros, total_micros, request_count, created_at, last_used_at FROM pool_keys
+SELECT id, user_id, label, key_ciphertext, key_fingerprint, active, daily_limit_micros, today_date, today_micros, total_micros, request_count, created_at, last_used_at, max_micros, shared_micros, pioneer_team_id, pioneer_payment_plan, pioneer_credit_limit_micros, pioneer_remaining_micros, pioneer_health, pioneer_unhealthy_since, pending_validation, last_billing_sync_at, revoked_at FROM pool_keys
 WHERE active = 1
   AND (today_date < ?1 OR today_micros < daily_limit_micros)
 ORDER BY
@@ -302,6 +357,17 @@ func (q *Queries) PickPoolKey(ctx context.Context, todayDate int64) (PoolKey, er
 		&i.RequestCount,
 		&i.CreatedAt,
 		&i.LastUsedAt,
+		&i.MaxMicros,
+		&i.SharedMicros,
+		&i.PioneerTeamID,
+		&i.PioneerPaymentPlan,
+		&i.PioneerCreditLimitMicros,
+		&i.PioneerRemainingMicros,
+		&i.PioneerHealth,
+		&i.PioneerUnhealthySince,
+		&i.PendingValidation,
+		&i.LastBillingSyncAt,
+		&i.RevokedAt,
 	)
 	return i, err
 }

@@ -166,7 +166,14 @@ func fetchMergedModels(ctx context.Context, apiKey string) ([]mergedModel, error
 }
 
 func (s *Server) handleListModels(w http.ResponseWriter, r *http.Request) {
-	models, err := fetchMergedModels(r.Context(), s.PioneerAPIKey)
+	// Use a pool key for the model fetch. If the pool is empty we still
+	// try with an empty key — pioneer's /v1/models requires auth but the
+	// error is graceful.
+	apiKey := ""
+	if sel, err := s.Pool.Pick(r.Context()); err == nil {
+		apiKey = sel.APIKey()
+	}
+	models, err := fetchMergedModels(r.Context(), apiKey)
 	if err != nil {
 		writeErr(w, 502, "upstream_error", "could not fetch model list from provider")
 		return

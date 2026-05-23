@@ -10,10 +10,14 @@ import (
 )
 
 type Querier interface {
+	// Called by the reconciler when a pending_validation or unauthorized key
+	// comes back healthy (pioneer_health=1).
+	ActivatePoolKey(ctx context.Context, id string) error
 	AddAPIKeySpend(ctx context.Context, arg AddAPIKeySpendParams) error
 	AppendAssistantContent(ctx context.Context, arg AppendAssistantContentParams) error
 	AppendStreamChunk(ctx context.Context, arg AppendStreamChunkParams) error
 	ArchiveConversation(ctx context.Context, arg ArchiveConversationParams) error
+	CancelPotluckRequest(ctx context.Context, arg CancelPotluckRequestParams) error
 	CountActiveStreamsForUser(ctx context.Context, userID string) (int64, error)
 	CreateAPIKey(ctx context.Context, arg CreateAPIKeyParams) (ApiKey, error)
 	CreateContribution(ctx context.Context, arg CreateContributionParams) (Contribution, error)
@@ -25,6 +29,8 @@ type Querier interface {
 	// under its daily cap. Spend counters are maintained here; exact accounting
 	// lives in the spends table.
 	CreatePoolKey(ctx context.Context, arg CreatePoolKeyParams) (PoolKey, error)
+	// potluck_requests: per-request log for attribution and billing join.
+	CreatePotluckRequest(ctx context.Context, arg CreatePotluckRequestParams) (PotluckRequest, error)
 	CreateSession(ctx context.Context, arg CreateSessionParams) (Session, error)
 	CreateStream(ctx context.Context, arg CreateStreamParams) (Stream, error)
 	CreateUser(ctx context.Context, arg CreateUserParams) (User, error)
@@ -33,10 +39,15 @@ type Querier interface {
 	DeletePoolKey(ctx context.Context, arg DeletePoolKeyParams) error
 	DeleteSession(ctx context.Context, id string) error
 	DeleteSessionForUser(ctx context.Context, arg DeleteSessionForUserParams) error
+	FinishPotluckRequest(ctx context.Context, arg FinishPotluckRequestParams) error
 	GetAPIKeyByHash(ctx context.Context, keyHash string) (ApiKey, error)
 	GetConversation(ctx context.Context, arg GetConversationParams) (Conversation, error)
 	GetIdempotency(ctx context.Context, arg GetIdempotencyParams) (IdempotencyKey, error)
+	// Most recent recompute for today, for display in the dashboard.
+	GetLatestRecompute(ctx context.Context, day int64) (GetLatestRecomputeRow, error)
 	GetMessage(ctx context.Context, id string) (Message, error)
+	// Oldest refreshed_at across all models — tells us when the catalog is stale.
+	GetModelCatalogRefreshedAt(ctx context.Context) (interface{}, error)
 	GetModelPrice(ctx context.Context, model string) (ModelPrice, error)
 	GetPoolKey(ctx context.Context, id string) (PoolKey, error)
 	GetSession(ctx context.Context, arg GetSessionParams) (Session, error)
@@ -45,11 +56,26 @@ type Querier interface {
 	GetUserByEmail(ctx context.Context, email string) (User, error)
 	GetUserByHCAID(ctx context.Context, hcaID sql.NullString) (User, error)
 	GetUserByID(ctx context.Context, id string) (User, error)
+	GetUserDailyAllowance(ctx context.Context, arg GetUserDailyAllowanceParams) (UserDailyAllowance, error)
+	GetUserDailySpend(ctx context.Context, arg GetUserDailySpendParams) (UserDailySpend, error)
+	// Most recent pioneer_created_at for a key.
+	// COALESCE(SUM(pioneer_created_at*0) + MAX(...)) is a workaround for
+	// sqlc's sqlite parser rejecting bare COALESCE(MAX(...), 0).
+	LatestBillingRowTime(ctx context.Context, poolKeyID string) (interface{}, error)
 	ListAPIKeysForUser(ctx context.Context, userID string) ([]ApiKey, error)
+	// All billing rows for a key after a given timestamp.
+	ListBillingRowsForKeyAfter(ctx context.Context, arg ListBillingRowsForKeyAfterParams) ([]PoolKeyBillingRow, error)
+	// Billing rows attributed to a user in a time window.
+	// Caller filters duplicates and sums in Go.
+	ListBillingRowsForUserToday(ctx context.Context, arg ListBillingRowsForUserTodayParams) ([]PoolKeyBillingRow, error)
 	ListContributionsForUser(ctx context.Context, arg ListContributionsForUserParams) ([]Contribution, error)
 	ListConversationsForUser(ctx context.Context, arg ListConversationsForUserParams) ([]Conversation, error)
 	ListEstimatedSpends(ctx context.Context, limit int64) ([]Spend, error)
+	// Keys the reconciler should probe on each tick.
+	// Excludes permanently revoked keys.
+	ListKeysNeedingHealthCheck(ctx context.Context) ([]PoolKey, error)
 	ListMessagesForConversation(ctx context.Context, conversationID string) ([]Message, error)
+	ListModelCatalog(ctx context.Context) ([]ModelsCatalog, error)
 	ListModelPrices(ctx context.Context) ([]ModelPrice, error)
 	// Per-model aggregate: all-time token/spend totals + 48h TPS average.
 	// The since parameter scopes only the TPS calculation; token counts are
@@ -63,15 +89,31 @@ type Querier interface {
 	ListPoolKeysForUser(ctx context.Context, userID string) ([]PoolKey, error)
 	ListSessionsForUser(ctx context.Context, arg ListSessionsForUserParams) ([]Session, error)
 	ListStreamChunksAfter(ctx context.Context, arg ListStreamChunksAfterParams) ([]ListStreamChunksAfterRow, error)
+	// Keys that have been unauthorized (pioneer_health=2) since before cutoff.
+	// Used by the reconciler to trigger permanent revocation after 14 days.
+	ListUnhealthyKeysOlderThan(ctx context.Context, pioneerUnhealthySince sql.NullInt64) ([]PoolKey, error)
+	// Requests that finished in a given time window with no billing row matched yet.
+	// Used by the reconciler attribution pass.
+	ListUnmatchedRequestsForKey(ctx context.Context, arg ListUnmatchedRequestsForKeyParams) ([]PotluckRequest, error)
 	// Per-user contribution totals, spend totals, and derived balance.
 	// Used by the allocation calculator on the dashboard.
 	ListUserAllocations(ctx context.Context) ([]ListUserAllocationsRow, error)
+	ListUserDailyAllowancesForDay(ctx context.Context, day int64) ([]UserDailyAllowance, error)
+	ListUserDailySpendForDay(ctx context.Context, day int64) ([]UserDailySpend, error)
+	MarkPoolKeyRevoked(ctx context.Context, arg MarkPoolKeyRevokedParams) error
 	MaxStreamChunkSeq(ctx context.Context, streamID string) (interface{}, error)
 	// Select the best key to use for a request: active, under daily cap,
 	// least spend today. Resets stale today_* counters are handled in Go
 	// (compare today_date to current UTC day and update if stale).
 	// ?1 = current UTC day (unix / 86400)
 	PickPoolKey(ctx context.Context, todayDate int64) (PoolKey, error)
+	// Best active healthy key for a request:
+	//   active=1, not revoked, not pending validation
+	//   pioneer_health=1 (healthy)
+	//   pioneer_remaining_micros > 10,000,000 ($10 buffer = 1000 credits)
+	//   today_micros < max_micros
+	// Lowest today_micros wins; random tiebreak.
+	PickPoolKeyV2(ctx context.Context) (PoolKey, error)
 	PoolActiveKeyCount(ctx context.Context) (int64, error)
 	PoolContributorCount(ctx context.Context) (int64, error)
 	PoolSpentSince(ctx context.Context, createdAt int64) (interface{}, error)
@@ -104,15 +146,39 @@ type Querier interface {
 	TouchSession(ctx context.Context, arg TouchSessionParams) error
 	TouchUser(ctx context.Context, arg TouchUserParams) error
 	UpdateConversationTitle(ctx context.Context, arg UpdateConversationTitleParams) error
+	// Pool key v2 queries: health tracking, billing sync, two-budget updates.
+	//
+	// pioneer_health integer enum:
+	//   0 = unknown
+	//   1 = healthy
+	//   2 = unauthorized
+	// Sets health and snapshots billing info from /plan-info.
+	// Pass NULL for optional fields to leave them unchanged.
+	UpdatePoolKeyHealth(ctx context.Context, arg UpdatePoolKeyHealthParams) error
 	UpdatePoolKeyLabel(ctx context.Context, arg UpdatePoolKeyLabelParams) error
 	UpdatePoolKeyLimit(ctx context.Context, arg UpdatePoolKeyLimitParams) error
+	// Updates the two-budget limits. Server enforces 0 <= shared <= max.
+	UpdatePoolKeyLimits(ctx context.Context, arg UpdatePoolKeyLimitsParams) error
+	// pool_key_billing_rows: ingested pioneer billing log entries.
+	//
+	// attribution integer enum:
+	//   0 = matched        (joined to a potluck_requests row)
+	//   1 = judge_paired   (/llmaj/judge paired to preceding opus call)
+	//   2 = owner_fallback (no match, charged to key owner)
+	//   3 = duplicate      (double-logged by pioneer, not charged)
+	UpsertBillingRow(ctx context.Context, arg UpsertBillingRowParams) error
 	UpsertMessage(ctx context.Context, arg UpsertMessageParams) (Message, error)
+	// models_catalog: hourly-refreshed cache of /v1/models + /base-models.
+	UpsertModelCatalog(ctx context.Context, arg UpsertModelCatalogParams) error
 	UpsertModelPrice(ctx context.Context, arg UpsertModelPriceParams) error
 	UpsertSpend(ctx context.Context, arg UpsertSpendParams) (Spend, error)
 	// Find-or-create by HCA id, refreshing the cached identity fields on each
 	// successful sign-in. Email is updated too because HCA users can change
 	// theirs and the local copy should track upstream.
 	UpsertUserByHCAID(ctx context.Context, arg UpsertUserByHCAIDParams) (User, error)
+	UpsertUserDailyAllowance(ctx context.Context, arg UpsertUserDailyAllowanceParams) error
+	// user_daily_spend and user_daily_allowances.
+	UpsertUserDailySpend(ctx context.Context, arg UpsertUserDailySpendParams) error
 }
 
 var _ Querier = (*Queries)(nil)

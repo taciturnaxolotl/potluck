@@ -101,29 +101,54 @@ For the keys probed, both `team_id` and `stripe_customer_id` were
 returned — we'll snapshot the team id per key so the dedupe is local
 math, no extra API calls.
 
-### Reset cadence is not surfaced
+### Reset cadence is daily, confirmed
 
-The OpenAPI schema for `PlanInfoResponse` and `BillingStatusResponse`
-contains no field for reset cadence — no `reset_at`, `next_reset`,
-`period`, `cycle`, anything. Whether a key's `total_usage` resets daily,
-monthly, or never is purely a property of `payment_plan` and is
-invisible from the API.
+The OpenAPI schema for `PlanInfoResponse` contains no `reset_at` field,
+but empirical data from a `pro`-plan key across three days resolves the
+ambiguity:
 
-Empirically, the partner-tier key tested showed only one bucket
-(`2026-05-22`) in `full_history=true` results, consistent with either
-"new key first day of use" or "daily-resetting." We can't distinguish
-without watching across a UTC midnight rollover.
+```
+2026-05-20  68010 credits used  ($680)
+2026-05-21  33815 credits used  ($338)
+2026-05-22  100007 credits used ($1000, ~$0.07 over limit)
+total_usage = 0 on the morning of 2026-05-23 (just renewed)
+```
 
-**Implication**: don't trust `total_usage` as either lifetime or daily.
-Always derive what we need from the timeseries. "Today's spend" comes
-from `timeseries(today bucket).total_credits`. "Lifetime usage" comes
-from summing all buckets. Whichever interpretation is true for the
-underlying plan, our day-by-day arithmetic is correct.
+`credit_limit` is a **daily cap that resets at UTC midnight**, not a
+lifetime allowance. `total_usage` and `remaining_credits` from
+`/plan-info` reflect the current day only.
 
-`remaining_credits` from `/plan-info` is informational only — we display
-it but don't gate on it, because if the plan resets daily, "remaining"
-is for the current period and resets at midnight on pioneer's clock,
-which we don't see directly.
+Pioneer allows a small overshoot before cutting off a key — the pro-plan
+key hit 100007 credits against a 100000 limit before going 401. Don't
+assume the gate is hard; budget 1-2% headroom when computing "will this
+key cover the next request."
+
+**Known plans so far:**
+
+| plan | credit_limit | daily cap USD | has_payment_method |
+|---|---|---|---|
+| `partner` | 40000 | $400 | false |
+| `pro` | 100000 | $1000 | true |
+
+**We only accept `pro` plan keys.** `partner` and any unknown plan are
+rejected at add time with a clear error ("only pro-plan pioneer keys are
+supported"). This keeps the pool homogeneous and avoids surprises from
+plans we haven't characterized.
+
+`total_usage` is safe to use as "spent today." `remaining_credits` is
+safe to use as "remaining today." Both reset at UTC midnight.
+
+**$10 buffer rule.** The picker treats a key as exhausted when
+`remaining_credits < 1000` (1000 pioneer credits = $10). This gives
+headroom for in-flight requests to settle and for the ~$0.07 overshoot
+pioneer tolerates before cutting the key. The constant is
+`PoolKeyBufferCredits = 1000` in `internal/pool/pool.go`, which
+corresponds to `10_000_000` potluck micros.
+
+Implication for the reconciler: `total_usage` from `/plan-info` is
+exactly "spent today" — cheaper than a separate timeseries call for
+that specific number. We still pull the timeseries for historical data
+(charts, per-day attribution across multiple days).
 
 ### Per-request join is fuzzy
 
@@ -228,25 +253,43 @@ That's not useful — we always send a key. So when we get a 401 mid-flight
 or during the reconciler probe, we genuinely cannot tell whether the
 key is dead or just napping until the next reset.
 
-**Implications:**
+### 503 means "auth service down"
 
-- Adding a real-but-tapped-out key to the pool currently fails with
-  "rejected, double-check it." It would work tomorrow. The "add key"
-  flow needs a soft acceptance path: store the key as
-  `pending_validation`, retry on the reconciler's schedule, activate
-  when it works.
-- A 401 during normal operation must not be fatal. Mark the key
-  `pioneer_health = 'unauthorized'`, record the timestamp, exclude
-  from picker, retry tomorrow at midnight UTC + jitter. Reactivate
-  on first success.
-- After N consecutive days of 401 (default: 14), give up and mark
-  the key `revoked` for real. By that point either the key is dead
-  or the user has stopped paying their pioneer bill, and we shouldn't
-  keep probing forever.
-- The picker needs a circuit breaker: if Pick() hands out a key and
-  the actual chat call returns 401, mark the key unhealthy *during
-  the request*, immediately Pick() again, and retry once. Only fail
-  the user request if the entire pool is exhausted.
+Pioneer also returns `503 Service Unavailable` with a distinct body:
+
+```json
+{"detail": "Authentication service temporarily unavailable. Please retry shortly."}
+```
+
+This is not a key problem — it's pioneer being down. It must be handled
+differently from 401: don't mark the key unhealthy, don't count it
+toward the consecutive-failure counter, just skip and retry on the next
+tick. Log it at WARN level so we notice if it's sustained.
+
+**Three distinct failure modes on any pioneer call:**
+
+| Status | Body pattern | Meaning | Our action |
+|---|---|---|---|
+| `401` | `"Invalid API key..."` | Key invalid or exhausted | Soft-mark unhealthy, retry tomorrow |
+| `401` | `{"message":"Authentication required"...}` | No auth sent | Bug in our code |
+| `503` | `"Authentication service temporarily..."` | Pioneer auth down | Skip this tick, retry next |
+| `5xx` other | varies | Pioneer backend down | Skip, retry next; don't mark key |
+
+**Implications for the reconciler and picker:**
+
+- 401 → `pioneer_health = 'unauthorized'`, record `pioneer_unhealthy_since`, exclude from picker, retry tomorrow
+- 503 / other 5xx → leave health state unchanged, retry next scheduled tick
+- Adding a real-but-tapped-out key currently fails with "rejected,
+  double-check it." It would work tomorrow. The "add key" flow needs a
+  soft acceptance path: store the key as `pending_validation`, retry on
+  the reconciler's schedule, activate when it works.
+- The picker needs a circuit breaker: if Pick() hands out a key and the
+  actual chat call returns 401, mark the key unhealthy *during the
+  request*, immediately Pick() again, retry once. Only fail the user
+  request if the entire pool is exhausted.
+- After N consecutive days of 401 (default: 14), give up and mark the
+  key `revoked` for real. By that point either the key is dead or the
+  user has stopped paying their pioneer bill.
 
 This is the single most important behavioral change in the new design —
 without it, we permanently lose contributed keys to transient limits.
@@ -352,8 +395,8 @@ Background goroutine, 10-minute ticker. Per active key:
    - Otherwise: attribute to the key owner ("off-platform usage").
 5. Update `user_daily_spend` rows in a transaction.
 6. Set `pool_keys.last_billing_sync_at = now()`.
-7. Update `today_micros` cache from
-   `GET /billing/usage/timeseries?full_history=false&interval_minutes=1440`.
+7. Update `today_micros` cache directly from `total_usage` in the
+   `/plan-info` response (already fetched in step 1 — no extra call).
 
 On any 401 during steps 1-7: mark the key `pioneer_health =
 'unauthorized'`, set `pioneer_unhealthy_since = now()` if not already
@@ -708,11 +751,10 @@ real data.
 - **Should the recompute button be rate-limited?** Pressing it in a
   tight loop is harmless (idempotent, no API calls), but visually
   noisy. Cooldown on the button is probably enough.
-- **What about pioneer's per-team budget reset cycle?** If we discover
-  some keys reset weekly or monthly, we might want to surface that on
-  the key card. For now we assume daily, which is the most generous
-  reading and won't cause surprises (worst case "spent today" looks
-  smaller than reality and the cap is over-conservative).
+- **What about non-pro plan keys added in the future?** If pioneer
+  introduces new plans worth supporting, update `probePioneerBilling`'s
+  allowlist and add a row to the plans table above. Don't silently
+  accept unknown plans — fail loud so we can characterize them first.
 - **Failed pioneer requests** — pioneer returns 5xx on overload; today
   we just propagate to the user. We may want to retry with a different
   pool key on 5xx the same way we do on 401.
