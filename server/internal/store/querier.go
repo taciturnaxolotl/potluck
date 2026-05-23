@@ -77,8 +77,9 @@ type Querier interface {
 	// Per-model aggregate from billing rows + potluck_requests.
 	// since scopes the TPS window (48h); cost/token counts are all-time.
 	ListModelStats(ctx context.Context, startedAt int64) ([]ListModelStatsRow, error)
-	// Per-user pool key stats: shared contribution, today's spend, all-time spend.
+	// Per-user pool key stats: shared contribution, private reservation, today's spend, all-time spend.
 	// Only users who have contributed at least one pool key appear.
+	// private_reservation_micros = sum(max_micros - shared_micros) for active keys.
 	ListPoolAllocations(ctx context.Context) ([]ListPoolAllocationsRow, error)
 	// All keys (for the pool management page). Includes inactive and other users' keys.
 	ListPoolKeys(ctx context.Context) ([]ListPoolKeysRow, error)

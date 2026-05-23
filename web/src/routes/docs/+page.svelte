@@ -85,6 +85,12 @@
 `curl ${baseURL}/v1/models \\
   -H "Authorization: Bearer ${keyExample}"`
     },
+    psModels: {
+      lang: 'powershell',
+      code: () =>
+`Invoke-RestMethod -Uri "${baseURL}/v1/models" \`
+  -Headers @{ Authorization = "Bearer ${keyExample}" }`
+    },
     responseModels: {
       lang: 'json',
       code: () =>
@@ -106,6 +112,15 @@
   -H "Authorization: Bearer ${keyExample}" \\
   -H "Content-Type: application/json" \\
   -d '{"model":"${firstModel}","messages":[{"role":"user","content":"What is the capital of France?"}]}'`
+    },
+    psChat: {
+      lang: 'powershell',
+      code: () =>
+`Invoke-RestMethod -Uri "${baseURL}/v1/chat/completions" \`
+  -Method Post \`
+  -Headers @{ Authorization = "Bearer ${keyExample}" } \`
+  -ContentType "application/json" \`
+  -Body '{"model":"${firstModel}","messages":[{"role":"user","content":"What is the capital of France?"}]}'`
     },
     responseChat: {
       lang: 'json',
@@ -129,6 +144,15 @@
   -H "Authorization: Bearer ${keyExample}" \\
   -H "Content-Type: application/json" \\
   -d '{"model":"${firstModel}","stream":true,"messages":[{"role":"user","content":"Count to three."}]}'`
+    },
+    psStream: {
+      lang: 'powershell',
+      code: () =>
+`Invoke-RestMethod -Uri "${baseURL}/v1/chat/completions" \`
+  -Method Post \`
+  -Headers @{ Authorization = "Bearer ${keyExample}" } \`
+  -ContentType "application/json" \`
+  -Body '{"model":"${firstModel}","stream":true,"messages":[{"role":"user","content":"Count to three."}]}'`
     },
     responseStream: {
       lang: 'text',
@@ -213,6 +237,9 @@ x-potluck-balance-cents: 142`
   // Resolve all highlighted HTML reactively. Each entry is a Promise<string>
   // that we await in the template with {#await}.
   // We use a derived to re-trigger when the dynamic inputs change.
+  // ---- shell tab state ------------------------------------------------
+  let shellTab = $state<'bash' | 'powershell'>('bash');
+
   let highlighted = $derived(
     Object.fromEntries(
       Object.entries(snippets).map(([id, s]) => [id, highlight(s.code(), s.lang)])
@@ -248,12 +275,27 @@ x-potluck-balance-cents: 142`
     <h2>List models</h2>
     <div class="endpoint"><span class="method get">GET</span><code>{baseURL}/v1/models</code></div>
     <p>Returns available models. No balance required — free read.</p>
-    {#await highlighted.curlModels then html}
-      <div class="codeblock-wrap">
-        <pre class="codeblock">{@html html}</pre>
-        <button class="copy-btn" aria-label="Copy" onclick={() => copy('curlModels', snippets.curlModels.code())}>{#if copiedMap['curlModels']}<Check size={13} />{:else}<Copy size={13} />{/if}</button>
-      </div>
-    {/await}
+    <div class="shell-block">
+    <div class="shell-tabs">
+      <button class="shell-tab" class:active={shellTab === 'bash'} onclick={() => shellTab = 'bash'}>bash</button>
+      <button class="shell-tab" class:active={shellTab === 'powershell'} onclick={() => shellTab = 'powershell'}>powershell</button>
+    </div>
+    {#if shellTab === 'bash'}
+      {#await highlighted.curlModels then html}
+        <div class="codeblock-wrap">
+          <pre class="codeblock">{@html html}</pre>
+          <button class="copy-btn" aria-label="Copy" onclick={() => copy('curlModels', snippets.curlModels.code())}>{#if copiedMap['curlModels']}<Check size={13} />{:else}<Copy size={13} />{/if}</button>
+        </div>
+      {/await}
+    {:else}
+      {#await highlighted.psModels then html}
+        <div class="codeblock-wrap">
+          <pre class="codeblock">{@html html}</pre>
+          <button class="copy-btn" aria-label="Copy" onclick={() => copy('psModels', snippets.psModels.code())}>{#if copiedMap['psModels']}<Check size={13} />{:else}<Copy size={13} />{/if}</button>
+        </div>
+      {/await}
+    {/if}
+    </div>
     <div class="response-label">Response</div>
     {#await highlighted.responseModels then html}
       <div class="codeblock-wrap">
@@ -269,12 +311,27 @@ x-potluck-balance-cents: 142`
     <p>OpenAI-compatible chat completions. Supports both streaming and non-streaming. Requires a positive balance.</p>
 
     <h3>Non-streaming</h3>
-    {#await highlighted.curlChat then html}
-      <div class="codeblock-wrap">
-        <pre class="codeblock">{@html html}</pre>
-        <button class="copy-btn" aria-label="Copy" onclick={() => copy('curlChat', snippets.curlChat.code())}>{#if copiedMap['curlChat']}<Check size={13} />{:else}<Copy size={13} />{/if}</button>
-      </div>
-    {/await}
+    <div class="shell-block">
+    <div class="shell-tabs">
+      <button class="shell-tab" class:active={shellTab === 'bash'} onclick={() => shellTab = 'bash'}>bash</button>
+      <button class="shell-tab" class:active={shellTab === 'powershell'} onclick={() => shellTab = 'powershell'}>powershell</button>
+    </div>
+    {#if shellTab === 'bash'}
+      {#await highlighted.curlChat then html}
+        <div class="codeblock-wrap">
+          <pre class="codeblock">{@html html}</pre>
+          <button class="copy-btn" aria-label="Copy" onclick={() => copy('curlChat', snippets.curlChat.code())}>{#if copiedMap['curlChat']}<Check size={13} />{:else}<Copy size={13} />{/if}</button>
+        </div>
+      {/await}
+    {:else}
+      {#await highlighted.psChat then html}
+        <div class="codeblock-wrap">
+          <pre class="codeblock">{@html html}</pre>
+          <button class="copy-btn" aria-label="Copy" onclick={() => copy('psChat', snippets.psChat.code())}>{#if copiedMap['psChat']}<Check size={13} />{:else}<Copy size={13} />{/if}</button>
+        </div>
+      {/await}
+    {/if}
+    </div>
     <div class="response-label">Response</div>
     {#await highlighted.responseChat then html}
       <div class="codeblock-wrap">
@@ -283,12 +340,27 @@ x-potluck-balance-cents: 142`
     {/await}
 
     <h3>Streaming</h3>
-    {#await highlighted.curlStream then html}
-      <div class="codeblock-wrap">
-        <pre class="codeblock">{@html html}</pre>
-        <button class="copy-btn" aria-label="Copy" onclick={() => copy('curlStream', snippets.curlStream.code())}>{#if copiedMap['curlStream']}<Check size={13} />{:else}<Copy size={13} />{/if}</button>
-      </div>
-    {/await}
+    <div class="shell-block">
+    <div class="shell-tabs">
+      <button class="shell-tab" class:active={shellTab === 'bash'} onclick={() => shellTab = 'bash'}>bash</button>
+      <button class="shell-tab" class:active={shellTab === 'powershell'} onclick={() => shellTab = 'powershell'}>powershell</button>
+    </div>
+    {#if shellTab === 'bash'}
+      {#await highlighted.curlStream then html}
+        <div class="codeblock-wrap">
+          <pre class="codeblock">{@html html}</pre>
+          <button class="copy-btn" aria-label="Copy" onclick={() => copy('curlStream', snippets.curlStream.code())}>{#if copiedMap['curlStream']}<Check size={13} />{:else}<Copy size={13} />{/if}</button>
+        </div>
+      {/await}
+    {:else}
+      {#await highlighted.psStream then html}
+        <div class="codeblock-wrap">
+          <pre class="codeblock">{@html html}</pre>
+          <button class="copy-btn" aria-label="Copy" onclick={() => copy('psStream', snippets.psStream.code())}>{#if copiedMap['psStream']}<Check size={13} />{:else}<Copy size={13} />{/if}</button>
+        </div>
+      {/await}
+    {/if}
+    </div>
     <div class="response-label">SSE stream</div>
     {#await highlighted.responseStream then html}
       <div class="codeblock-wrap">
@@ -419,6 +491,36 @@ x-potluck-balance-cents: 142`
   }
   .method.get  { background: light-dark(#d1fae5, #064e3b); color: light-dark(#065f46, #6ee7b7); }
   .method.post { background: light-dark(#dbeafe, #1e3a5f); color: light-dark(#1d4ed8, #93c5fd); }
+
+  /* ---- shell tabs ------------------------------------------------------ */
+  .shell-tabs {
+    display: flex;
+    gap: 0.15rem;
+    margin-bottom: -1px; /* overlap the codeblock border below */
+    position: relative;
+    z-index: 1;
+  }
+  .shell-tab {
+    font-family: var(--font-mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.04em;
+    padding: 0.2rem 0.65rem;
+    border: 1px solid var(--border);
+    border-bottom: none;
+    border-radius: 5px 5px 0 0;
+    background: light-dark(oklch(94% 0.004 270), oklch(22% 0.01 270));
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: all 0.12s;
+  }
+  .shell-tab.active {
+    background: var(--bg-code);
+    color: var(--text);
+    border-color: var(--border-on-code);
+  }
+  .shell-block .codeblock {
+    border-top-left-radius: 0;
+  }
 
   /* ---- code blocks ----------------------------------------------------- */
   .codeblock-wrap {

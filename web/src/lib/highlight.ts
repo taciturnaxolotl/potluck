@@ -24,10 +24,10 @@ const theme = createCssVariablesTheme({
 
 const highlighterPromise = createHighlighter({
 	themes: [theme],
-	langs: ['bash', 'json', 'python', 'typescript', 'http']
+	langs: ['bash', 'json', 'python', 'typescript', 'http', 'powershell']
 });
 
-export type Lang = 'bash' | 'json' | 'python' | 'typescript' | 'http' | 'text';
+export type Lang = 'bash' | 'json' | 'python' | 'typescript' | 'http' | 'powershell' | 'text';
 
 /**
  * Returns an HTML string with syntax-highlighted code, wrapped in a

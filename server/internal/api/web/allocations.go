@@ -134,7 +134,7 @@ func (s *Server) buildAllocations(r *http.Request) map[string]any {
 			Email:                      row.Email,
 			KeyCount:                   toInt64(row.KeyCount),
 			SharedContributionMicros:   shared,
-			PrivateReservationMicros:   0,
+			PrivateReservationMicros:   toInt64(row.PrivateReservationMicros),
 			SharedAllowanceTodayMicros: allowance,
 			SharedSpentTodayMicros:     spend.shared,
 			PrivateSpentTodayMicros:    spend.private,

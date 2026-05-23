@@ -132,8 +132,9 @@ SELECT
     u.display_name,
     u.email,
     COUNT(pk.id)                                              AS key_count,
-    COALESCE(SUM(CASE WHEN pk.active = 1 THEN pk.shared_micros ELSE 0 END), 0) AS daily_limit_micros,
-    COALESCE(SUM(CASE WHEN pk.active = 1 THEN pk.today_micros ELSE 0 END), 0)  AS today_micros,
+    COALESCE(SUM(CASE WHEN pk.active = 1 THEN pk.shared_micros ELSE 0 END), 0)              AS daily_limit_micros,
+    COALESCE(SUM(CASE WHEN pk.active = 1 THEN pk.max_micros - pk.shared_micros ELSE 0 END), 0) AS private_reservation_micros,
+    COALESCE(SUM(CASE WHEN pk.active = 1 THEN pk.today_micros ELSE 0 END), 0)               AS today_micros,
     COALESCE(SUM(pk.total_micros), 0)                         AS total_micros,
     COALESCE(SUM(pk.request_count), 0)                        AS request_count
 FROM pool_keys pk
@@ -143,18 +144,20 @@ ORDER BY daily_limit_micros DESC
 `
 
 type ListPoolAllocationsRow struct {
-	UserID           string      `json:"user_id"`
-	DisplayName      string      `json:"display_name"`
-	Email            string      `json:"email"`
-	KeyCount         int64       `json:"key_count"`
-	DailyLimitMicros interface{} `json:"daily_limit_micros"`
-	TodayMicros      interface{} `json:"today_micros"`
-	TotalMicros      interface{} `json:"total_micros"`
-	RequestCount     interface{} `json:"request_count"`
+	UserID                   string      `json:"user_id"`
+	DisplayName              string      `json:"display_name"`
+	Email                    string      `json:"email"`
+	KeyCount                 int64       `json:"key_count"`
+	DailyLimitMicros         interface{} `json:"daily_limit_micros"`
+	PrivateReservationMicros interface{} `json:"private_reservation_micros"`
+	TodayMicros              interface{} `json:"today_micros"`
+	TotalMicros              interface{} `json:"total_micros"`
+	RequestCount             interface{} `json:"request_count"`
 }
 
-// Per-user pool key stats: shared contribution, today's spend, all-time spend.
+// Per-user pool key stats: shared contribution, private reservation, today's spend, all-time spend.
 // Only users who have contributed at least one pool key appear.
+// private_reservation_micros = sum(max_micros - shared_micros) for active keys.
 func (q *Queries) ListPoolAllocations(ctx context.Context) ([]ListPoolAllocationsRow, error) {
 	rows, err := q.db.QueryContext(ctx, listPoolAllocations)
 	if err != nil {
@@ -170,6 +173,7 @@ func (q *Queries) ListPoolAllocations(ctx context.Context) ([]ListPoolAllocation
 			&i.Email,
 			&i.KeyCount,
 			&i.DailyLimitMicros,
+			&i.PrivateReservationMicros,
 			&i.TodayMicros,
 			&i.TotalMicros,
 			&i.RequestCount,
