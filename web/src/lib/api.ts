@@ -82,6 +82,7 @@ export type Message = {
 };
 
 export const me = () => api.get<User>('/api/me');
+export const updateMe = (display_name: string) => api.patch<User>('/api/me', { display_name });
 export const balance = () =>
   api.get<{ balance_micros: number; balance_usd: string }>('/api/balance');
 export const listConversations = () => api.get<Conversation[]>('/api/conversations');

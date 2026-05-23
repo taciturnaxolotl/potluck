@@ -118,13 +118,30 @@ func (q *Queries) TouchUser(ctx context.Context, arg TouchUserParams) error {
 	return err
 }
 
+const updateDisplayName = `-- name: UpdateDisplayName :exec
+UPDATE users SET display_name = ? WHERE id = ?
+`
+
+type UpdateDisplayNameParams struct {
+	DisplayName string `json:"display_name"`
+	ID          string `json:"id"`
+}
+
+func (q *Queries) UpdateDisplayName(ctx context.Context, arg UpdateDisplayNameParams) error {
+	_, err := q.db.ExecContext(ctx, updateDisplayName, arg.DisplayName, arg.ID)
+	return err
+}
+
 const upsertUserByHCAID = `-- name: UpsertUserByHCAID :one
 INSERT INTO users (
     id, email, display_name, hca_id, slack_id, verification_status, created_at
 ) VALUES (?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(hca_id) DO UPDATE SET
     email = excluded.email,
-    display_name = excluded.display_name,
+    display_name = CASE WHEN display_name = '' OR display_name IS NULL
+                        THEN excluded.display_name
+                        ELSE display_name
+                   END,
     slack_id = excluded.slack_id,
     verification_status = excluded.verification_status
 RETURNING id, email, display_name, created_at, last_seen_at, hca_id, slack_id, verification_status
@@ -141,8 +158,9 @@ type UpsertUserByHCAIDParams struct {
 }
 
 // Find-or-create by HCA id, refreshing the cached identity fields on each
-// successful sign-in. Email is updated too because HCA users can change
-// theirs and the local copy should track upstream.
+// successful sign-in. Email is updated because HCA emails can change.
+// display_name is only set from HCA on first login; manual renames are
+// preserved by keeping the existing value when it's already non-empty.
 func (q *Queries) UpsertUserByHCAID(ctx context.Context, arg UpsertUserByHCAIDParams) (User, error) {
 	row := q.db.QueryRowContext(ctx, upsertUserByHCAID,
 		arg.ID,

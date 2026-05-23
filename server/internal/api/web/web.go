@@ -38,6 +38,7 @@ type Server struct {
 // + Require beforehand.
 func (s *Server) Mount(r chi.Router) {
 	r.Get("/me", s.handleMe)
+	r.Patch("/me", s.handleUpdateMe)
 	r.Get("/balance", s.handleBalance)
 	r.Post("/contributions", s.handleContribute)
 	r.Get("/allocations", s.handleAllocations)
@@ -97,6 +98,33 @@ func currentUser(r *http.Request) (*store.User, bool) { return apimw.UserFromCon
 
 func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 	u, _ := currentUser(r)
+	writeJSON(w, 200, u)
+}
+
+type updateMeReq struct {
+	DisplayName string `json:"display_name"`
+}
+
+func (s *Server) handleUpdateMe(w http.ResponseWriter, r *http.Request) {
+	u, _ := currentUser(r)
+	var req updateMeReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, 400, "invalid_request", err.Error())
+		return
+	}
+	name := req.DisplayName
+	if len(name) == 0 || len(name) > 64 {
+		writeErr(w, 400, "invalid_request", "display_name must be 1–64 characters")
+		return
+	}
+	if err := s.Q.UpdateDisplayName(r.Context(), store.UpdateDisplayNameParams{
+		DisplayName: name,
+		ID:          u.ID,
+	}); err != nil {
+		writeErr(w, 500, "internal", err.Error())
+		return
+	}
+	u.DisplayName = name
 	writeJSON(w, 200, u)
 }
 

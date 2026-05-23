@@ -77,8 +77,8 @@ type Querier interface {
 	// Per-model aggregate from billing rows + potluck_requests.
 	// since scopes the TPS window (48h); cost/token counts are all-time.
 	ListModelStats(ctx context.Context, startedAt int64) ([]ListModelStatsRow, error)
-	// Per-user pool key stats: shared contribution, private reservation, today's spend, all-time spend.
-	// Only users who have contributed at least one pool key appear.
+	// All users with their pool key stats (if any).
+	// Users without keys appear with zero contributions.
 	// private_reservation_micros = sum(max_micros - shared_micros) for active keys.
 	ListPoolAllocations(ctx context.Context) ([]ListPoolAllocationsRow, error)
 	// All keys (for the pool management page). Includes inactive and other users' keys.
@@ -146,6 +146,7 @@ type Querier interface {
 	TouchSession(ctx context.Context, arg TouchSessionParams) error
 	TouchUser(ctx context.Context, arg TouchUserParams) error
 	UpdateConversationTitle(ctx context.Context, arg UpdateConversationTitleParams) error
+	UpdateDisplayName(ctx context.Context, arg UpdateDisplayNameParams) error
 	// Pool key v2 queries: health tracking, billing sync, two-budget updates.
 	//
 	// pioneer_health integer enum:
@@ -174,8 +175,9 @@ type Querier interface {
 	UpsertModelPrice(ctx context.Context, arg UpsertModelPriceParams) error
 	UpsertSpend(ctx context.Context, arg UpsertSpendParams) (Spend, error)
 	// Find-or-create by HCA id, refreshing the cached identity fields on each
-	// successful sign-in. Email is updated too because HCA users can change
-	// theirs and the local copy should track upstream.
+	// successful sign-in. Email is updated because HCA emails can change.
+	// display_name is only set from HCA on first login; manual renames are
+	// preserved by keeping the existing value when it's already non-empty.
 	UpsertUserByHCAID(ctx context.Context, arg UpsertUserByHCAIDParams) (User, error)
 	UpsertUserDailyAllowance(ctx context.Context, arg UpsertUserDailyAllowanceParams) error
 	// user_daily_spend and user_daily_allowances.

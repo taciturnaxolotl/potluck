@@ -2,6 +2,7 @@
   import { goto } from '$app/navigation';
   import {
     me,
+    updateMe,
     balance,
     listKeys,
     createKey,
@@ -35,6 +36,40 @@
 
   // Sign-out
   let signingOut = $state(false);
+
+  // Name editing
+  let editingName = $state(false);
+  let nameInput = $state('');
+  let nameSaving = $state(false);
+  let nameErr = $state<string | null>(null);
+
+  function startEditName() {
+    nameInput = user?.display_name ?? '';
+    nameErr = null;
+    editingName = true;
+  }
+
+  function focusOnMount(el: HTMLElement) { el.focus(); }
+
+  function cancelEditName() {
+    editingName = false;
+    nameErr = null;
+  }
+
+  async function saveDisplayName() {
+    const name = nameInput.trim();
+    if (!name || !user) return;
+    nameSaving = true;
+    nameErr = null;
+    try {
+      user = await updateMe(name);
+      editingName = false;
+    } catch (e: unknown) {
+      nameErr = e instanceof Error ? e.message : 'failed to save';
+    } finally {
+      nameSaving = false;
+    }
+  }
 
   onMount(async () => {
     try {
@@ -206,7 +241,19 @@
           <div class="avatar avatar-placeholder">{user.display_name[0]?.toUpperCase() ?? '?'}</div>
         {/if}
         <div class="identity-info">
-          <div class="identity-name">{user.display_name}</div>
+          {#if editingName}
+            <form class="name-form" onsubmit={(e) => { e.preventDefault(); saveDisplayName(); }}>
+              <input class="name-input" bind:value={nameInput} maxlength={64} use:focusOnMount />
+              <button class="name-save" type="submit" disabled={nameSaving}>{nameSaving ? '…' : 'save'}</button>
+              <button class="name-cancel" type="button" onclick={cancelEditName}>cancel</button>
+            </form>
+            {#if nameErr}<div class="name-err">{nameErr}</div>{/if}
+          {:else}
+            <div class="identity-name">
+              {user.display_name}
+              <button class="name-edit-btn" onclick={startEditName} aria-label="Edit name">edit</button>
+            </div>
+          {/if}
           <div class="identity-email muted">{user.email}</div>
           <div class="identity-since muted">member since {formatDate(user.created_at)}</div>
         </div>
@@ -422,6 +469,64 @@
   .identity-name {
     font-weight: 500;
     font-size: 1rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .name-edit-btn {
+    font-size: 0.72rem;
+    font-family: var(--font-mono);
+    color: var(--text-muted);
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 0;
+    opacity: 0.6;
+    transition: opacity 0.15s, color 0.15s;
+  }
+  .name-edit-btn:hover { opacity: 1; color: var(--accent); }
+  .name-form {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+  }
+  .name-input {
+    font-family: var(--font-sans);
+    font-size: 1rem;
+    font-weight: 500;
+    color: var(--text);
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 0.2rem 0.5rem;
+    width: 14rem;
+    outline: none;
+  }
+  .name-input:focus { border-color: var(--accent); }
+  .name-save, .name-cancel {
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    padding: 0.2rem 0.55rem;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    border: 1px solid var(--border);
+    transition: all 0.12s;
+  }
+  .name-save {
+    background: var(--accent);
+    color: var(--text-on-accent);
+    border-color: var(--accent);
+  }
+  .name-save:disabled { opacity: 0.6; cursor: default; }
+  .name-cancel {
+    background: none;
+    color: var(--text-muted);
+  }
+  .name-cancel:hover { border-color: var(--accent); color: var(--accent); }
+  .name-err {
+    font-size: 0.78rem;
+    color: light-dark(#b91c1c, #fca5a5);
+    margin-top: 0.2rem;
   }
   .identity-email,
   .identity-since {
