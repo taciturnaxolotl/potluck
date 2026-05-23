@@ -57,6 +57,36 @@
   --code-comment: light-dark(rgba(48, 52, 63, 0.5), rgba(255, 217, 218, 0.4));
   --code-keyword: light-dark(var(--dark-raspberry), var(--blush-rose));
 
+  /* ---- shiki CSS-variables theme mapping --------------------------------
+   * These map shiki's semantic token roles to design-system colours.
+   * shiki emits  style="--shiki-light:#xxx; --shiki-dark:#yyy" on each
+   * token span; the rules below override those inline values with our
+   * design tokens so the theme stays coherent with the rest of the UI.
+   *
+   * light-dark() picks the right side based on <meta name="color-scheme">,
+   * the same mechanism used everywhere else in the design system.
+   */
+  --shiki-foreground:         light-dark(var(--jet-black), #fff5f5);
+  --shiki-background:         var(--bg-code);
+  /* keywords / control flow */
+  --shiki-token-keyword:      light-dark(var(--dark-raspberry), var(--blush-rose));
+  /* string literals */
+  --shiki-token-string:       light-dark(#7c3829, #f4b8a8);
+  /* string expression / template parts */
+  --shiki-token-string-expression: light-dark(#7c3829, #f4b8a8);
+  /* comments */
+  --shiki-token-comment:      light-dark(rgba(48,52,63,0.48), rgba(255,217,218,0.38));
+  /* function / method names */
+  --shiki-token-function:     light-dark(#2b5c8a, #93c5fd);
+  /* constants / literals (true, false, null, numbers) */
+  --shiki-token-constant:     light-dark(#89023e, var(--blush-rose));
+  /* parameter names */
+  --shiki-token-parameter:    light-dark(#555, #ccc);
+  /* punctuation (braces, brackets, commas) */
+  --shiki-token-punctuation:  light-dark(rgba(48,52,63,0.7), rgba(255,217,218,0.6));
+  /* link / url / special */
+  --shiki-token-link:         light-dark(#2b5c8a, #93c5fd);
+
   /* ---- radii / spacing scale ------------------------------------------ */
   --radius-sm: 6px;
   --radius-md: 10px;
