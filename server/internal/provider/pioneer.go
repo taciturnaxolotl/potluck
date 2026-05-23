@@ -140,13 +140,23 @@ type rawChunk struct {
 		} `json:"delta"`
 		FinishReason *string `json:"finish_reason,omitempty"`
 	} `json:"choices"`
-	Usage *Usage `json:"usage,omitempty"`
+	Usage *Usage    `json:"usage,omitempty"`
+	Error *struct {
+		Message string `json:"message"`
+		Type    string `json:"type"`
+		Code    string `json:"code"`
+	} `json:"error,omitempty"`
 }
 
 func decodeChunk(payload []byte) (Chunk, error) {
 	var rc rawChunk
 	if err := json.Unmarshal(payload, &rc); err != nil {
 		return Chunk{}, fmt.Errorf("provider: decode chunk: %w", err)
+	}
+	// Pioneer sends mid-stream errors as {"error":{"message":...}} chunks.
+	if rc.Error != nil {
+		return Chunk{}, fmt.Errorf("provider: upstream error: %s (type=%s code=%s)",
+			rc.Error.Message, rc.Error.Type, rc.Error.Code)
 	}
 	c := Chunk{Raw: append([]byte(nil), payload...), Usage: rc.Usage}
 	if len(rc.Choices) > 0 {

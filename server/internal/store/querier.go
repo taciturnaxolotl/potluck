@@ -74,9 +74,8 @@ type Querier interface {
 	ListMessagesForConversation(ctx context.Context, conversationID string) ([]Message, error)
 	ListModelCatalog(ctx context.Context) ([]ModelsCatalog, error)
 	ListModelPrices(ctx context.Context) ([]ModelPrice, error)
-	// Per-model aggregate: all-time token/spend totals + 48h TPS average.
-	// The since parameter scopes only the TPS calculation; token counts are
-	// all-time so spend reflects the full history.
+	// Per-model aggregate from billing rows + potluck_requests.
+	// since scopes the TPS window (48h); cost/token counts are all-time.
 	ListModelStats(ctx context.Context, startedAt int64) ([]ListModelStatsRow, error)
 	// Per-user pool key stats: shared contribution, today's spend, all-time spend.
 	// Only users who have contributed at least one pool key appear.
@@ -126,8 +125,8 @@ type Querier interface {
 	RevokeAPIKey(ctx context.Context, arg RevokeAPIKeyParams) error
 	SetPoolKeyActive(ctx context.Context, arg SetPoolKeyActiveParams) error
 	SetStreamStatus(ctx context.Context, arg SetStreamStatusParams) error
-	// Daily spend for a user over the last N days.
-	// Returns one row per day (epoch of start of day in UTC) + amount in micros.
+	// Daily spend for a user over the last N days, from billing rows.
+	// Only potluck-routed rows (matched_request_id IS NOT NULL) are included.
 	SpendByDay(ctx context.Context, arg SpendByDayParams) ([]SpendByDayRow, error)
 	// Daily spend broken down by model for a user, for stacked chart.
 	SpendByDayAndModel(ctx context.Context, arg SpendByDayAndModelParams) ([]SpendByDayAndModelRow, error)

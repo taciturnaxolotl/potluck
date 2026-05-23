@@ -1,6 +1,7 @@
 package web
 
 import (
+	"database/sql"
 	"net/http"
 	"time"
 
@@ -11,20 +12,20 @@ func (s *Server) handleUsage(w http.ResponseWriter, r *http.Request) {
 	u, _ := currentUser(r)
 	now := time.Now()
 
-	since30 := now.AddDate(0, 0, -30).Unix()
+	since30 := now.AddDate(0, 0, -29).Unix()
 	daily, err := s.Q.SpendByDay(r.Context(), store.SpendByDayParams{
-		UserID:    u.ID,
-		CreatedAt: since30,
+		AttributedUserID: sql.NullString{String: u.ID, Valid: true},
+		PioneerCreatedAt: since30,
 	})
 	if err != nil {
 		writeErr(w, 500, "internal", err.Error())
 		return
 	}
 
-	since7 := now.AddDate(0, 0, -7).Unix()
+	since7 := now.AddDate(0, 0, -6).Unix()
 	byModel, err := s.Q.SpendByDayAndModel(r.Context(), store.SpendByDayAndModelParams{
-		UserID:    u.ID,
-		CreatedAt: since7,
+		AttributedUserID: sql.NullString{String: u.ID, Valid: true},
+		PioneerCreatedAt: since7,
 	})
 	if err != nil {
 		writeErr(w, 500, "internal", err.Error())

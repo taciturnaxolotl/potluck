@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"time"
 
+	charmlog "charm.land/log/v2"
 	"github.com/google/uuid"
 
 	apimw "github.com/taciturnaxolotl/potluck/internal/api/middleware"
@@ -226,6 +227,16 @@ func (s *Server) streamCompletion(w http.ResponseWriter, r *http.Request, body [
 			}
 		case e := <-errs:
 			if e != nil {
+				charmlog.Error("stream error from pioneer",
+					"user_id", func() string {
+						if u != nil { return u.ID }
+						return ""
+					}(),
+					"model", model,
+					"pool_key_id", sel.KeyID(),
+					"req_id", reqID,
+					"err", e,
+				)
 				writeError(w, http.StatusBadGateway, "provider_error", e.Error())
 				if u != nil {
 					go finishRequest(s.Q, reqID, 0, 0, 0, "error")

@@ -12,20 +12,23 @@ import (
 
 const spendByDay = `-- name: SpendByDay :many
 SELECT
-    (created_at / 86400) * 86400          AS day,
-    SUM(amount_micros)                     AS amount_micros,
-    SUM(input_tokens)                      AS input_tokens,
-    SUM(output_tokens)                     AS output_tokens
-FROM spends
-WHERE user_id = ?
-  AND created_at >= ?
+    (pkbr.pioneer_created_at / 86400) * 86400  AS day,
+    SUM(pkbr.cost_micros)                       AS amount_micros,
+    SUM(COALESCE(pr.prompt_tokens, 0))          AS input_tokens,
+    SUM(COALESCE(pr.completion_tokens, 0))      AS output_tokens
+FROM pool_key_billing_rows pkbr
+LEFT JOIN potluck_requests pr ON pr.id = pkbr.matched_request_id
+WHERE pkbr.attributed_user_id = ?
+  AND pkbr.pioneer_created_at >= ?
+  AND pkbr.is_duplicate = 0
+  AND pkbr.matched_request_id IS NOT NULL
 GROUP BY day
 ORDER BY day ASC
 `
 
 type SpendByDayParams struct {
-	UserID    string `json:"user_id"`
-	CreatedAt int64  `json:"created_at"`
+	AttributedUserID sql.NullString `json:"attributed_user_id"`
+	PioneerCreatedAt int64          `json:"pioneer_created_at"`
 }
 
 type SpendByDayRow struct {
@@ -35,10 +38,10 @@ type SpendByDayRow struct {
 	OutputTokens sql.NullFloat64 `json:"output_tokens"`
 }
 
-// Daily spend for a user over the last N days.
-// Returns one row per day (epoch of start of day in UTC) + amount in micros.
+// Daily spend for a user over the last N days, from billing rows.
+// Only potluck-routed rows (matched_request_id IS NOT NULL) are included.
 func (q *Queries) SpendByDay(ctx context.Context, arg SpendByDayParams) ([]SpendByDayRow, error) {
-	rows, err := q.db.QueryContext(ctx, spendByDay, arg.UserID, arg.CreatedAt)
+	rows, err := q.db.QueryContext(ctx, spendByDay, arg.AttributedUserID, arg.PioneerCreatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -66,22 +69,27 @@ func (q *Queries) SpendByDay(ctx context.Context, arg SpendByDayParams) ([]Spend
 }
 
 const spendByDayAndModel = `-- name: SpendByDayAndModel :many
+;
+
 SELECT
-    (created_at / 86400) * 86400          AS day,
-    model,
-    SUM(amount_micros)                     AS amount_micros,
-    SUM(input_tokens)                      AS input_tokens,
-    SUM(output_tokens)                     AS output_tokens
-FROM spends
-WHERE user_id = ?
-  AND created_at >= ?
-GROUP BY day, model
+    (pkbr.pioneer_created_at / 86400) * 86400  AS day,
+    pkbr.model,
+    SUM(pkbr.cost_micros)                       AS amount_micros,
+    SUM(COALESCE(pr.prompt_tokens, 0))          AS input_tokens,
+    SUM(COALESCE(pr.completion_tokens, 0))      AS output_tokens
+FROM pool_key_billing_rows pkbr
+LEFT JOIN potluck_requests pr ON pr.id = pkbr.matched_request_id
+WHERE pkbr.attributed_user_id = ?
+  AND pkbr.pioneer_created_at >= ?
+  AND pkbr.is_duplicate = 0
+  AND pkbr.matched_request_id IS NOT NULL
+GROUP BY day, pkbr.model
 ORDER BY day ASC, amount_micros DESC
 `
 
 type SpendByDayAndModelParams struct {
-	UserID    string `json:"user_id"`
-	CreatedAt int64  `json:"created_at"`
+	AttributedUserID sql.NullString `json:"attributed_user_id"`
+	PioneerCreatedAt int64          `json:"pioneer_created_at"`
 }
 
 type SpendByDayAndModelRow struct {
@@ -94,7 +102,7 @@ type SpendByDayAndModelRow struct {
 
 // Daily spend broken down by model for a user, for stacked chart.
 func (q *Queries) SpendByDayAndModel(ctx context.Context, arg SpendByDayAndModelParams) ([]SpendByDayAndModelRow, error) {
-	rows, err := q.db.QueryContext(ctx, spendByDayAndModel, arg.UserID, arg.CreatedAt)
+	rows, err := q.db.QueryContext(ctx, spendByDayAndModel, arg.AttributedUserID, arg.PioneerCreatedAt)
 	if err != nil {
 		return nil, err
 	}

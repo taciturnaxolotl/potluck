@@ -39,7 +39,7 @@
     const now  = Math.floor(Date.now() / 1000);
     const out: { day: number; usd: number }[] = [];
     for (let i = 0; i < 30; i++) {
-      const d = (Math.floor((now - 30 * 86400) / 86400) + i) * 86400;
+      const d = (Math.floor((now - 29 * 86400) / 86400) + i) * 86400;
       out.push({ day: d, usd: (map.get(d)?.amount_micros ?? 0) / 1_000_000 });
     }
     return out;
@@ -61,7 +61,7 @@
   let stackData = $derived.by(() => {
     const now    = Math.floor(Date.now() / 1000);
     const days   = Array.from({ length: 7 }, (_, i) =>
-      (Math.floor((now - 7 * 86400) / 86400) + i) * 86400
+      (Math.floor((now - 6 * 86400) / 86400) + i) * 86400
     );
     const models = [...new Set(byModel.map(r => r.model))];
     const lookup = new Map<number, Map<string, number>>();
@@ -126,9 +126,20 @@
   let totalIn    = $derived(daily.reduce((s, d) => s + d.input_tokens, 0));
   let totalOut   = $derived(daily.reduce((s, d) => s + d.output_tokens, 0));
 
-  function fmtUSD(v: number)    { if (v === 0) return '$0'; if (v < 0.001) return '<$0.001'; return '$' + v.toFixed(v < 0.1 ? 4 : 2); }
+  function fmtUSD(v: number) {
+    if (v === 0) return '$0';
+    if (v < 0.001) return '<$0.001';
+    if (v < 0.01)  return '$' + v.toFixed(4);
+    if (v < 1)     return '$' + v.toFixed(3).replace(/0+$/, '').replace(/\.$/, '');
+    if (v < 100)   return '$' + v.toFixed(2);
+    return '$' + Math.round(v).toLocaleString('en-US');
+  }
   function fmtMicros(m: number) { return fmtUSD(m / 1_000_000); }
-  function fmtDay(unix: number) { return new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short' }).format(new Date(unix * 1000)); }
+  function fmtDay(unix: number) {
+    return new Intl.DateTimeFormat('en-GB', {
+      day: 'numeric', month: 'short', timeZone: 'UTC'
+    }).format(new Date(unix * 1000));
+  }
   function fmtTokens(n: number) {
     if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M';
     if (n >= 1_000)     return (n / 1_000).toFixed(0) + 'k';

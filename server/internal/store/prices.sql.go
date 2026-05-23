@@ -60,24 +60,24 @@ func (q *Queries) ListModelPrices(ctx context.Context) ([]ModelPrice, error) {
 
 const listModelStats = `-- name: ListModelStats :many
 SELECT
-    sp.model,
+    pkbr.model,
     COUNT(*)                                          AS request_count,
-    SUM(sp.input_tokens)                              AS total_input_tokens,
-    SUM(sp.output_tokens)                             AS total_output_tokens,
+    SUM(COALESCE(pr.prompt_tokens, 0))                AS total_input_tokens,
+    SUM(COALESCE(pr.completion_tokens, 0))            AS total_output_tokens,
     AVG(
         CASE
-            WHEN st.finished_at IS NOT NULL
-             AND st.finished_at > st.started_at
-             AND st.started_at >= ?
-            THEN CAST(sp.output_tokens AS REAL)
-                 / ((st.finished_at - st.started_at))
+            WHEN pr.finished_at IS NOT NULL
+             AND pr.finished_at > pr.started_at
+             AND pr.started_at >= ?
+            THEN CAST(COALESCE(pr.completion_tokens, 0) AS REAL)
+                 / (pr.finished_at - pr.started_at)
             ELSE NULL
         END
     )                                                 AS avg_tps
-FROM spends sp
-JOIN streams st ON st.id = sp.stream_id
-WHERE st.status = 'done'
-GROUP BY sp.model
+FROM pool_key_billing_rows pkbr
+LEFT JOIN potluck_requests pr ON pr.id = pkbr.matched_request_id
+WHERE pkbr.is_duplicate = 0
+GROUP BY pkbr.model
 ORDER BY request_count DESC
 `
 
@@ -89,9 +89,8 @@ type ListModelStatsRow struct {
 	AvgTps            sql.NullFloat64 `json:"avg_tps"`
 }
 
-// Per-model aggregate: all-time token/spend totals + 48h TPS average.
-// The since parameter scopes only the TPS calculation; token counts are
-// all-time so spend reflects the full history.
+// Per-model aggregate from billing rows + potluck_requests.
+// since scopes the TPS window (48h); cost/token counts are all-time.
 func (q *Queries) ListModelStats(ctx context.Context, startedAt int64) ([]ListModelStatsRow, error) {
 	rows, err := q.db.QueryContext(ctx, listModelStats, startedAt)
 	if err != nil {
