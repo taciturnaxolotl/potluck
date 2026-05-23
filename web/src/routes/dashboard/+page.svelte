@@ -134,10 +134,9 @@
             <tr>
               <th>chef</th>
               <th class="num">keys</th>
-              <th class="num">daily share</th>
-              <th class="num">share</th>
-              <th class="num">spent today</th>
-              <th class="num">remaining today</th>
+              <th class="num">contributed</th>
+              <th class="num">pool %</th>
+              <th class="num">used / allowance</th>
             </tr>
           </thead>
           <tbody>
@@ -156,8 +155,11 @@
                   </div>
                   <span>{pct(u.share_fraction)}</span>
                 </td>
-                <td class="num mono">{trim(formatUSD(u.shared_spent_today_micros))}</td>
-                <td class="num mono" class:negative={u.shared_remaining_today_micros < 0}>{trim(formatUSD(u.shared_remaining_today_micros))}</td>
+                <td class="num mono usage-cell" class:negative={u.shared_remaining_today_micros < 0}>
+                  <span class="usage-used">{trim(formatUSD(u.shared_spent_today_micros))}</span>
+                  <span class="usage-sep">/</span>
+                  <span class="usage-total">{trim(formatUSD(u.shared_allowance_today_micros))}</span>
+                </td>
               </tr>
             {/each}
           </tbody>
@@ -316,4 +318,8 @@ curl {typeof window !== 'undefined' ? window.location.origin : 'https://potluck.
   }
 
   .negative { color: light-dark(#89023e, #ea638c); }
+
+  .usage-cell { white-space: nowrap; }
+  .usage-sep { color: var(--text-faint); margin: 0 0.15em; }
+  .usage-total { color: var(--text-muted); }
 </style>

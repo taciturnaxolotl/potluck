@@ -37,39 +37,99 @@ func (s *Server) handleRecomputeAllocations(w http.ResponseWriter, r *http.Reque
 		spentByUser[sp.UserID] = sp.SharedSpentMicros
 	}
 
-	var totalShared, totalSpent int64
+	var totalShared int64
 	for _, row := range rows {
 		totalShared += toInt64(row.DailyLimitMicros)
 	}
-	for _, sp := range spendRows {
-		totalSpent += sp.SharedSpentMicros
-	}
-	remaining := totalShared - totalSpent
-	if remaining < 0 {
-		remaining = 0
-	}
 
-	// Equal split: every user gets an equal share of the remaining pool
-	// regardless of whether they contributed a key.
-	nUsers := int64(len(rows))
-	for _, row := range rows {
-		var fairShare int64
-		if nUsers > 0 {
-			fairShare = remaining / nUsers
-		}
-		spent := spentByUser[row.UserID]
-		allowance := spent + fairShare
+	// Build the user list with their spend, then run max-min fair share.
+	userIDs := make([]string, len(rows))
+	spends := make([]int64, len(rows))
+	for i, row := range rows {
+		userIDs[i] = row.UserID
+		spends[i] = spentByUser[row.UserID]
+	}
+	allowances := fairShareAllocate(totalShared, spends)
 
+	for i, id := range userIDs {
 		_ = s.Q.UpsertUserDailyAllowance(r.Context(), store.UpsertUserDailyAllowanceParams{
-			UserID:                row.UserID,
+			UserID:                id,
 			Day:                   day,
-			SharedAllowanceMicros: allowance,
+			SharedAllowanceMicros: allowances[i],
 			SetAt:                 now,
 			SetByUserID:           u.ID,
 		})
 	}
 
 	writeJSON(w, 200, s.buildAllocations(r))
+}
+
+// fairShareAllocate distributes `pool` across users using max-min fair share
+// (water-filling). Each user's allowance is at least their existing spend
+// (we never claw back what was already used); remaining capacity is split
+// equally among users whose spend is below the running fair-share level.
+//
+// Algorithm:
+//  1. Anyone whose spend exceeds the equal split gets locked at their spend.
+//  2. The remaining pool is split equally among the rest.
+//  3. Repeat until no new lock-ins happen (converges in <= n passes).
+//
+// If total spend already exceeds the pool, every user gets exactly their
+// spend (i.e. the pool is over-allocated and the table will show $0 left).
+func fairShareAllocate(pool int64, spends []int64) []int64 {
+	n := len(spends)
+	if n == 0 {
+		return nil
+	}
+
+	allowances := make([]int64, n)
+	locked := make([]bool, n)
+
+	for {
+		// Sum of locked allowances and count of unlocked users.
+		var lockedTotal int64
+		unlocked := 0
+		for i := range spends {
+			if locked[i] {
+				lockedTotal += allowances[i]
+			} else {
+				unlocked++
+			}
+		}
+		if unlocked == 0 {
+			break
+		}
+		remaining := pool - lockedTotal
+		if remaining < 0 {
+			remaining = 0
+		}
+		share := remaining / int64(unlocked)
+
+		// Lock anyone whose spend exceeds the current share. Their
+		// allowance gets pinned to their spend.
+		newLocks := 0
+		for i, sp := range spends {
+			if locked[i] {
+				continue
+			}
+			if sp > share {
+				allowances[i] = sp
+				locked[i] = true
+				newLocks++
+			}
+		}
+		if newLocks == 0 {
+			// Stable: everyone unlocked gets the current share.
+			for i := range spends {
+				if !locked[i] {
+					allowances[i] = share
+				}
+			}
+			break
+		}
+	}
+
+	return allowances
 }
 
 // buildAllocations computes the full allocations payload.
@@ -115,22 +175,29 @@ func (s *Server) buildAllocations(r *http.Request) map[string]any {
 		ShareFraction              float64 `json:"share_fraction"`
 	}
 
-	nUsers := int64(len(rows))
+	// Live fair-share estimate for users with no stored allowance yet.
+	// Same algorithm as the recompute, so the estimate matches what a
+	// recompute would produce.
+	liveSpends := make([]int64, len(rows))
+	for i, row := range rows {
+		liveSpends[i] = spendByUser[row.UserID].shared
+	}
+	liveAllowances := fairShareAllocate(totalShared, liveSpends)
+
 	out := make([]userEntry, 0, len(rows))
-	for _, row := range rows {
+	for i, row := range rows {
 		shared := toInt64(row.DailyLimitMicros)
 		// share_fraction reflects contribution to the pool, not the divy split.
 		var frac float64
 		if totalShared > 0 {
 			frac = float64(shared) / float64(totalShared)
 		}
-		allowance := allowByUser[row.UserID]
-		if allowance == 0 && nUsers > 0 {
-			// No stored allowance yet — estimate an equal split for display.
-			allowance = remaining / nUsers
-			if allowance < 0 {
-				allowance = 0
-			}
+		allowance, hasStored := allowByUser[row.UserID], false
+		if _, ok := allowByUser[row.UserID]; ok {
+			hasStored = true
+		}
+		if !hasStored {
+			allowance = liveAllowances[i]
 		}
 		spend := spendByUser[row.UserID]
 		out = append(out, userEntry{

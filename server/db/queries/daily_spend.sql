@@ -14,14 +14,12 @@ SELECT * FROM user_daily_spend WHERE user_id = ? AND day = ?;
 SELECT * FROM user_daily_spend WHERE day = ?;
 
 -- name: UpsertUserDailyAllowance :exec
+-- Always overwrites; caller is responsible for passing MAX(fairShare, alreadySpent).
 INSERT INTO user_daily_allowances (
     user_id, day, shared_allowance_micros, set_at, set_by_user_id
 ) VALUES (?, ?, ?, ?, ?)
 ON CONFLICT(user_id, day) DO UPDATE SET
-    shared_allowance_micros = MAX(
-        excluded.shared_allowance_micros,
-        user_daily_allowances.shared_allowance_micros
-    ),
+    shared_allowance_micros = excluded.shared_allowance_micros,
     set_at         = excluded.set_at,
     set_by_user_id = excluded.set_by_user_id;
 
