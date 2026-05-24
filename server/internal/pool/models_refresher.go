@@ -120,19 +120,21 @@ func (r *ModelsRefresher) refresh(ctx context.Context) {
 
 	now := time.Now().Unix()
 	upserted := 0
+
+	// Build v1 index for enrichment.
+	v1ByID := map[string]v1Model{}
 	for _, m := range v1Models {
-		bm := baseByID[m.ID]
-		label := m.DisplayName
-		if label == "" {
-			label = bm.Label
-		}
+		v1ByID[m.ID] = m
+	}
+
+	// Primary source: /base-models (includes models not in /v1, e.g. off-plan).
+	for _, bm := range baseModels {
+		vm := v1ByID[bm.ID]
+
+		label := bm.Label
 		desc := bm.Description
 		tier := bm.Tier
-		if tier == "" {
-			tier = m.Tier
-		}
 
-		// Convert USD price per million tokens to micros per million.
 		var inputMicros, outputMicros int64
 		if bm.InputPricePerMil > 0 {
 			inputMicros = int64(math.Round(bm.InputPricePerMil * 1_000_000))
@@ -141,19 +143,35 @@ func (r *ModelsRefresher) refresh(ctx context.Context) {
 			outputMicros = int64(math.Round(*bm.OutputPricePerMil * 1_000_000))
 		}
 
-		isChat := int64(1) // everything in /v1/models is chat-capable
-		if bm.IsChatModel == false && bm.ID != "" {
-			isChat = 0
+		isChat := int64(0)
+		if bm.IsChatModel {
+			isChat = 1
 		}
 
-		rawJSON, _ := json.Marshal(m)
+		// Enrich with /v1 data where available.
+		var ctxWindow, maxOutput int64
+		var rawJSON []byte
+		if vm.ID != "" {
+			if vm.DisplayName != "" {
+				label = vm.DisplayName
+			}
+			if vm.Tier != "" {
+				tier = vm.Tier
+			}
+			ctxWindow = int64(vm.MaxInputTokens)
+			maxOutput = int64(vm.MaxTokens)
+			rawJSON, _ = json.Marshal(vm)
+		} else {
+			ctxWindow = bm.ContextWindow
+			rawJSON, _ = json.Marshal(bm)
+		}
 
 		_ = r.q.UpsertModelCatalog(ctx, store.UpsertModelCatalogParams{
-			ID:                            m.ID,
+			ID:                            bm.ID,
 			Label:                         label,
 			Description:                   desc,
-			ContextWindow:                 nullInt64(int64(m.MaxInputTokens)),
-			MaxOutputTokens:               nullInt64(int64(m.MaxTokens)),
+			ContextWindow:                 nullInt64(ctxWindow),
+			MaxOutputTokens:               nullInt64(maxOutput),
 			IsChat:                        isChat,
 			Tier:                          nullString(tier),
 			InputPricePerMillionMicros:    nullInt64(inputMicros),
@@ -164,7 +182,32 @@ func (r *ModelsRefresher) refresh(ctx context.Context) {
 		upserted++
 	}
 
-	r.log.Info("models refresher: catalog updated", "models", upserted)
+	// Also upsert any models that only exist in /v1 (unlikely but don't lose them).
+	for _, vm := range v1Models {
+		if _, ok := baseByID[vm.ID]; ok {
+			continue // already handled above
+		}
+		label := vm.DisplayName
+		var inputMicros, outputMicros int64
+		isChat := int64(1)
+		rawJSON, _ := json.Marshal(vm)
+
+		_ = r.q.UpsertModelCatalog(ctx, store.UpsertModelCatalogParams{
+			ID:                            vm.ID,
+			Label:                         label,
+			ContextWindow:                 nullInt64(int64(vm.MaxInputTokens)),
+			MaxOutputTokens:               nullInt64(int64(vm.MaxTokens)),
+			IsChat:                        isChat,
+			Tier:                          nullString(vm.Tier),
+			InputPricePerMillionMicros:    nullInt64(inputMicros),
+			OutputPricePerMillionMicros:   nullInt64(outputMicros),
+			RawJson:                       string(rawJSON),
+			RefreshedAt:                   now,
+		})
+		upserted++
+	}
+
+	r.log.Info("models refresher: catalog updated", "base_models", len(baseModels), "v1_models", len(v1Models), "upserted", upserted)
 }
 
 // pickKey returns a decrypted pioneer API key from the pool, or "" if none available.
