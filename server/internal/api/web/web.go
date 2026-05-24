@@ -503,7 +503,10 @@ func (s *Server) handleStreamEvents(w http.ResponseWriter, r *http.Request) {
 	flusher, _ := w.(http.Flusher)
 
 	emit := func(ev stream.Event) {
-		b, _ := json.Marshal(ev)
+		b := []byte(ev.Raw)
+		if len(b) == 0 {
+			b, _ = json.Marshal(ev)
+		}
 		_, _ = w.Write([]byte("data: "))
 		_, _ = w.Write(b)
 		_, _ = w.Write([]byte("\n\n"))
@@ -512,7 +515,12 @@ func (s *Server) handleStreamEvents(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// 1) Replay durable chunks after the requested seq.
+	// 1) Subscribe to the live bus FIRST so we don't miss events between
+	// replay and subscribe.
+	bus := s.Hub.Subscriber(streamID)
+	ch, done, doneEv := bus.Subscribe(64)
+
+	// 2) Replay durable chunks from DB (missed while disconnected).
 	events, err := stream.Replay(r.Context(), s.Q, streamID, afterSeq)
 	if err == nil {
 		for _, ev := range events {
@@ -523,10 +531,27 @@ func (s *Server) handleStreamEvents(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	// Replay done; now drain any events the bus buffered since subscribe,
+	// then continue tailing live.
+	for {
+		select {
+		case ev, ok := <-ch:
+			if !ok {
+				return
+			}
+			if ev.Seq <= afterSeq {
+				continue
+			}
+			emit(ev)
+			afterSeq = ev.Seq
+			if ev.Type == "done" || ev.Type == "error" {
+				return
+			}
+		default:
+		}
+		break
+	}
 
-	// 2) Attach to live bus for tailing events.
-	bus := s.Hub.Subscriber(streamID)
-	ch, done, doneEv := bus.Subscribe(64)
 	if done {
 		if doneEv.Seq > afterSeq {
 			emit(doneEv)

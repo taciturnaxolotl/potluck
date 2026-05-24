@@ -194,6 +194,7 @@ func Replay(ctx context.Context, q *store.Queries, streamID string, afterSeq int
 		_ = json.Unmarshal([]byte(r.Data), &ev)
 		ev.Seq = r.Seq
 		ev.Type = r.Event
+		ev.Raw = json.RawMessage(r.Data)
 		out = append(out, ev)
 	}
 	return out, nil

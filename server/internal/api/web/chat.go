@@ -15,6 +15,7 @@ import (
 	"github.com/taciturnaxolotl/potluck/internal/pool"
 	"github.com/taciturnaxolotl/potluck/internal/provider"
 	"github.com/taciturnaxolotl/potluck/internal/store"
+	"github.com/taciturnaxolotl/potluck/internal/stream"
 	"github.com/taciturnaxolotl/potluck/internal/tools"
 )
 
@@ -263,6 +264,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	clientGone := false
 	ctxDone := r.Context().Done()
 	genCtx := context.Background()
+	bus := s.Hub.Subscriber(streamID)
 
 	emit := func(event string, payload map[string]any) {
 		seq++
@@ -275,6 +277,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 			Data:      string(b),
 			CreatedAt: time.Now().Unix(),
 		})
+		bus.Publish(stream.Event{Seq: seq, Type: event, Raw: json.RawMessage(b)})
 		if clientGone {
 			return
 		}

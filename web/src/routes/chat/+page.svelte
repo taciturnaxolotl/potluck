@@ -186,6 +186,8 @@
       activeStreamId = resumeStreamId;
       streamingMsgId = resumeAssistantId;
       activeAfterSeq = Number.isFinite(resumeAfterSeq) ? resumeAfterSeq : 0;
+      streamStartMs = Date.now();
+      streamFirstTokenMs = 0;
       attachStreamConsumer(resumeStreamId, resumeConvId, resumeAssistantId, Math.floor(Date.now() / 1000), resumeAfterSeq);
     }
   });
@@ -430,7 +432,6 @@
     let resolvedUserId = tmpUserId;
     let resolvedAssistantId = tmpAssistantId;
     let accContent = '';
-    let handedOffToStreamConsumer = false;
 
     try {
       const res = await fetch('/api/chat', {
@@ -475,6 +476,14 @@
             ev = JSON.parse(data);
           } catch {
             continue;
+          }
+
+          // Keep activeAfterSeq current so resume picks up from the right spot.
+          if (typeof ev.seq === 'number' && ev.seq > activeAfterSeq) {
+            activeAfterSeq = ev.seq;
+            if (activeStreamId) {
+              localStorage.setItem('chat:active_stream_after_seq', String(activeAfterSeq));
+            }
           }
 
           switch (ev.type) {
@@ -534,15 +543,13 @@
                 goto(`/chat?c=${serverConvId}`, { replaceState: true, noScroll: true, keepFocus: true });
               }
 
+              // Save stream metadata for resume-on-reload — don't hand off mid-stream.
               if (serverStreamId) {
                 activeStreamId = serverStreamId;
                 localStorage.setItem('chat:active_stream_id', serverStreamId);
                 localStorage.setItem('chat:active_stream_conv_id', convId);
                 localStorage.setItem('chat:active_stream_assistant_id', resolvedAssistantId);
                 localStorage.setItem('chat:active_stream_after_seq', String(activeAfterSeq));
-                attachStreamConsumer(serverStreamId, convId, resolvedAssistantId, now, activeAfterSeq);
-                handedOffToStreamConsumer = true;
-                break outer;
               }
 
               break;
@@ -640,10 +647,8 @@
       await db.messages.delete(resolvedAssistantId);
       errorMsg = err instanceof Error ? err.message : 'Something went wrong';
     } finally {
-      if (!handedOffToStreamConsumer) {
-        streaming = false;
-        streamingMsgId = null;
-      }
+      streaming = false;
+      streamingMsgId = null;
     }
   }
 
