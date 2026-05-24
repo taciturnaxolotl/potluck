@@ -72,9 +72,9 @@
       lang: 'text',
       code: () =>
 `pot_cedar_KJ3mN8pQwR5vX2yZ4b_9xK2m
-     |     |                    +-- 5-char checksum (fast-fail typo detection)
+     |     |                    +-- 5-char checksum
      |     +----------------------- 18 chars, 107 bits of entropy
-     +----------------------------- mnemonic word (human reference only)`
+     +----------------------------- mnemonic word`
     },
     authHeader: {
       lang: 'http',
@@ -211,9 +211,42 @@ console.log(resp.choices[0].message.content);`
   }]
 }`
     },
+    claudeCode: {
+      lang: 'bash',
+      code: () =>
+`export ANTHROPIC_BASE_URL=${baseURL}/v1
+export ANTHROPIC_API_KEY=${keyExample}
+export ANTHROPIC_MODEL=${firstModel}
+export ANTHROPIC_SMALL_FAST_MODEL=${firstModel}
+claude`
+    },
     crushConfig: {
       lang: 'json',
       code: () => crushConfig() ?? ''
+    },
+    piConfig: {
+      lang: 'json',
+      code: () => JSON.stringify({
+        providers: {
+          potluck: {
+            baseUrl: `${baseURL}/v1`,
+            api: 'openai-completions',
+            apiKey: keyExample,
+            models: models.map(m => ({
+              id: m.id,
+              name: m.label || m.id,
+              contextWindow: m.context_window ?? 200000,
+              maxTokens: m.max_output_tokens ?? 4096,
+              cost: {
+                input:      m.input_per_mil  ?? 0,
+                output:     m.output_per_mil ?? m.input_per_mil ?? 0,
+                cacheRead:  0,
+                cacheWrite: 0
+              }
+            }))
+          }
+        }
+      }, null, 2)
     },
     errorResponse: {
       lang: 'json',
@@ -238,9 +271,6 @@ x-potluck-balance-cents: 142`
   // Resolve all highlighted HTML reactively. Each entry is a Promise<string>
   // that we await in the template with {#await}.
   // We use a derived to re-trigger when the dynamic inputs change.
-  // ---- shell tab state ------------------------------------------------
-  let shellTab = $state<'bash' | 'powershell'>('bash');
-
   let highlighted = $derived(
     Object.fromEntries(
       Object.entries(snippets).map(([id, s]) => [id, highlight(s.code(), s.lang)])
@@ -275,27 +305,30 @@ x-potluck-balance-cents: 142`
   <section>
     <h2>List models</h2>
     <div class="endpoint"><span class="method get">GET</span><code>{baseURL}/v1/models</code></div>
-    <p>Returns available models. No balance required — free read.</p>
-    <div class="shell-block">
-    <div class="shell-tabs">
-      <button class="shell-tab" class:active={shellTab === 'bash'} onclick={() => shellTab = 'bash'}>bash</button>
-      <button class="shell-tab" class:active={shellTab === 'powershell'} onclick={() => shellTab = 'powershell'}>powershell</button>
-    </div>
-    {#if shellTab === 'bash'}
-      {#await highlighted.curlModels then html}
-        <div class="codeblock-wrap">
-          <pre class="codeblock">{@html html}</pre>
-          <button class="copy-btn" aria-label="Copy" onclick={() => copy('curlModels', snippets.curlModels.code())}>{#if copiedMap['curlModels']}<Check size={13} />{:else}<Copy size={13} />{/if}</button>
-        </div>
-      {/await}
-    {:else}
-      {#await highlighted.psModels then html}
-        <div class="codeblock-wrap">
-          <pre class="codeblock">{@html html}</pre>
-          <button class="copy-btn" aria-label="Copy" onclick={() => copy('psModels', snippets.psModels.code())}>{#if copiedMap['psModels']}<Check size={13} />{:else}<Copy size={13} />{/if}</button>
-        </div>
-      {/await}
-    {/if}
+    <p>Returns available models. No balance required.</p>
+    <div class="tab-group shell-tabs" id="sh-models">
+      <input type="radio" name="sh-models" id="sh-models-bash" class="tab-radio" checked hidden>
+      <input type="radio" name="sh-models" id="sh-models-ps"   class="tab-radio" hidden>
+      <div class="tab-bar">
+        <label for="sh-models-bash" class="tab-label">bash</label>
+        <label for="sh-models-ps"   class="tab-label">powershell</label>
+      </div>
+      <div class="tab-pane" id="sh-models-bash-pane">
+        {#await highlighted.curlModels then html}
+          <div class="codeblock-wrap">
+            <pre class="codeblock">{@html html}</pre>
+            <button class="copy-btn" aria-label="Copy" onclick={() => copy('curlModels', snippets.curlModels.code())}>{#if copiedMap['curlModels']}<Check size={13} />{:else}<Copy size={13} />{/if}</button>
+          </div>
+        {/await}
+      </div>
+      <div class="tab-pane" id="sh-models-ps-pane">
+        {#await highlighted.psModels then html}
+          <div class="codeblock-wrap">
+            <pre class="codeblock">{@html html}</pre>
+            <button class="copy-btn" aria-label="Copy" onclick={() => copy('psModels', snippets.psModels.code())}>{#if copiedMap['psModels']}<Check size={13} />{:else}<Copy size={13} />{/if}</button>
+          </div>
+        {/await}
+      </div>
     </div>
     <div class="response-label">Response</div>
     {#await highlighted.responseModels then html}
@@ -312,26 +345,29 @@ x-potluck-balance-cents: 142`
     <p>OpenAI-compatible chat completions. Supports both streaming and non-streaming. Requires a positive balance.</p>
 
     <h3>Non-streaming</h3>
-    <div class="shell-block">
-    <div class="shell-tabs">
-      <button class="shell-tab" class:active={shellTab === 'bash'} onclick={() => shellTab = 'bash'}>bash</button>
-      <button class="shell-tab" class:active={shellTab === 'powershell'} onclick={() => shellTab = 'powershell'}>powershell</button>
-    </div>
-    {#if shellTab === 'bash'}
-      {#await highlighted.curlChat then html}
-        <div class="codeblock-wrap">
-          <pre class="codeblock">{@html html}</pre>
-          <button class="copy-btn" aria-label="Copy" onclick={() => copy('curlChat', snippets.curlChat.code())}>{#if copiedMap['curlChat']}<Check size={13} />{:else}<Copy size={13} />{/if}</button>
-        </div>
-      {/await}
-    {:else}
-      {#await highlighted.psChat then html}
-        <div class="codeblock-wrap">
-          <pre class="codeblock">{@html html}</pre>
-          <button class="copy-btn" aria-label="Copy" onclick={() => copy('psChat', snippets.psChat.code())}>{#if copiedMap['psChat']}<Check size={13} />{:else}<Copy size={13} />{/if}</button>
-        </div>
-      {/await}
-    {/if}
+    <div class="tab-group shell-tabs" id="sh-chat">
+      <input type="radio" name="sh-chat" id="sh-chat-bash" class="tab-radio" checked hidden>
+      <input type="radio" name="sh-chat" id="sh-chat-ps"   class="tab-radio" hidden>
+      <div class="tab-bar">
+        <label for="sh-chat-bash" class="tab-label">bash</label>
+        <label for="sh-chat-ps"   class="tab-label">powershell</label>
+      </div>
+      <div class="tab-pane" id="sh-chat-bash-pane">
+        {#await highlighted.curlChat then html}
+          <div class="codeblock-wrap">
+            <pre class="codeblock">{@html html}</pre>
+            <button class="copy-btn" aria-label="Copy" onclick={() => copy('curlChat', snippets.curlChat.code())}>{#if copiedMap['curlChat']}<Check size={13} />{:else}<Copy size={13} />{/if}</button>
+          </div>
+        {/await}
+      </div>
+      <div class="tab-pane" id="sh-chat-ps-pane">
+        {#await highlighted.psChat then html}
+          <div class="codeblock-wrap">
+            <pre class="codeblock">{@html html}</pre>
+            <button class="copy-btn" aria-label="Copy" onclick={() => copy('psChat', snippets.psChat.code())}>{#if copiedMap['psChat']}<Check size={13} />{:else}<Copy size={13} />{/if}</button>
+          </div>
+        {/await}
+      </div>
     </div>
     <div class="response-label">Response</div>
     {#await highlighted.responseChat then html}
@@ -341,26 +377,29 @@ x-potluck-balance-cents: 142`
     {/await}
 
     <h3>Streaming</h3>
-    <div class="shell-block">
-    <div class="shell-tabs">
-      <button class="shell-tab" class:active={shellTab === 'bash'} onclick={() => shellTab = 'bash'}>bash</button>
-      <button class="shell-tab" class:active={shellTab === 'powershell'} onclick={() => shellTab = 'powershell'}>powershell</button>
-    </div>
-    {#if shellTab === 'bash'}
-      {#await highlighted.curlStream then html}
-        <div class="codeblock-wrap">
-          <pre class="codeblock">{@html html}</pre>
-          <button class="copy-btn" aria-label="Copy" onclick={() => copy('curlStream', snippets.curlStream.code())}>{#if copiedMap['curlStream']}<Check size={13} />{:else}<Copy size={13} />{/if}</button>
-        </div>
-      {/await}
-    {:else}
-      {#await highlighted.psStream then html}
-        <div class="codeblock-wrap">
-          <pre class="codeblock">{@html html}</pre>
-          <button class="copy-btn" aria-label="Copy" onclick={() => copy('psStream', snippets.psStream.code())}>{#if copiedMap['psStream']}<Check size={13} />{:else}<Copy size={13} />{/if}</button>
-        </div>
-      {/await}
-    {/if}
+    <div class="tab-group shell-tabs" id="sh-stream">
+      <input type="radio" name="sh-stream" id="sh-stream-bash" class="tab-radio" checked hidden>
+      <input type="radio" name="sh-stream" id="sh-stream-ps"   class="tab-radio" hidden>
+      <div class="tab-bar">
+        <label for="sh-stream-bash" class="tab-label">bash</label>
+        <label for="sh-stream-ps"   class="tab-label">powershell</label>
+      </div>
+      <div class="tab-pane" id="sh-stream-bash-pane">
+        {#await highlighted.curlStream then html}
+          <div class="codeblock-wrap">
+            <pre class="codeblock">{@html html}</pre>
+            <button class="copy-btn" aria-label="Copy" onclick={() => copy('curlStream', snippets.curlStream.code())}>{#if copiedMap['curlStream']}<Check size={13} />{:else}<Copy size={13} />{/if}</button>
+          </div>
+        {/await}
+      </div>
+      <div class="tab-pane" id="sh-stream-ps-pane">
+        {#await highlighted.psStream then html}
+          <div class="codeblock-wrap">
+            <pre class="codeblock">{@html html}</pre>
+            <button class="copy-btn" aria-label="Copy" onclick={() => copy('psStream', snippets.psStream.code())}>{#if copiedMap['psStream']}<Check size={13} />{:else}<Copy size={13} />{/if}</button>
+          </div>
+        {/await}
+      </div>
     </div>
     <div class="response-label">SSE stream</div>
     {#await highlighted.responseStream then html}
@@ -373,51 +412,90 @@ x-potluck-balance-cents: 142`
   <!-- SDK CONFIG -->
   <section>
     <h2>SDK configuration</h2>
-    <p>Any OpenAI SDK works — just point the base URL here and use your potluck key.</p>
+    <p>Any OpenAI-compatible SDK works — just point the base URL here and use your potluck key.</p>
 
-    <h3>Python</h3>
-    {#await highlighted.python then html}
-      <div class="codeblock-wrap">
-        <pre class="codeblock">{@html html}</pre>
-        <button class="copy-btn" aria-label="Copy" onclick={() => copy('python', snippets.python.code())}>{#if copiedMap['python']}<Check size={13} />{:else}<Copy size={13} />{/if}</button>
+    <div class="tab-group sdk-tabs">
+      <input type="radio" name="sdk" id="sdk-python"     class="tab-radio" checked hidden>
+      <input type="radio" name="sdk" id="sdk-typescript" class="tab-radio" hidden>
+      <div class="tab-bar">
+        <label for="sdk-python"     class="tab-label">Python</label>
+        <label for="sdk-typescript" class="tab-label">TypeScript</label>
       </div>
-    {/await}
-
-    <h3>TypeScript / Node</h3>
-    {#await highlighted.typescript then html}
-      <div class="codeblock-wrap">
-        <pre class="codeblock">{@html html}</pre>
-        <button class="copy-btn" aria-label="Copy" onclick={() => copy('typescript', snippets.typescript.code())}>{#if copiedMap['typescript']}<Check size={13} />{:else}<Copy size={13} />{/if}</button>
-      </div>
-    {/await}
-
-    <h3>Continue (VS Code)</h3>
-    <p>In <code>~/.continue/config.json</code>:</p>
-    {#await highlighted.continueConfig then html}
-      <div class="codeblock-wrap">
-        <pre class="codeblock">{@html html}</pre>
-        <button class="copy-btn" aria-label="Copy" onclick={() => copy('continueConfig', snippets.continueConfig.code())}>{#if copiedMap['continueConfig']}<Check size={13} />{:else}<Copy size={13} />{/if}</button>
-      </div>
-    {/await}
-
-    <h3>Claude Code / Cursor / any tool</h3>
-    <p>Set <code>OPENAI_BASE_URL={baseURL}/v1</code> and <code>OPENAI_API_KEY=&lt;your key&gt;</code>.</p>
-
-    <h3><a href="https://github.com/charmbracelet/crush" target="_blank" rel="noopener">Crush</a></h3>
-    <p>Add a provider block to <code>~/.config/crush/crush.json</code> (or a project-level <code>crush.json</code>). Models and prices are pulled from the live catalog — haiku is fastest for day-to-day use.</p>
-    {#if crushConfig() !== null}
-      {#key crushConfig()}
-        {#await highlighted.crushConfig then html}
+      <div class="tab-pane" id="sdk-python-pane">
+        {#await highlighted.python then html}
           <div class="codeblock-wrap">
-            <pre class="codeblock codeblock-scroll">{@html html}</pre>
-            <button class="copy-btn" aria-label="Copy" onclick={() => copy('crushConfig', crushConfig()!)}>{#if copiedMap['crushConfig']}<Check size={13} />{:else}<Copy size={13} />{/if}</button>
+            <pre class="codeblock">{@html html}</pre>
+            <button class="copy-btn" aria-label="Copy" onclick={() => copy('python', snippets.python.code())}>{#if copiedMap['python']}<Check size={13} />{:else}<Copy size={13} />{/if}</button>
           </div>
         {/await}
-      {/key}
-    {:else}
-      <p class="loading-note mono">loading models…</p>
-    {/if}
-    <p>To avoid hardcoding your key use <code>"api_key": "$POTLUCK_API_KEY"</code> and export the env var.</p>
+      </div>
+      <div class="tab-pane" id="sdk-typescript-pane">
+        {#await highlighted.typescript then html}
+          <div class="codeblock-wrap">
+            <pre class="codeblock">{@html html}</pre>
+            <button class="copy-btn" aria-label="Copy" onclick={() => copy('typescript', snippets.typescript.code())}>{#if copiedMap['typescript']}<Check size={13} />{:else}<Copy size={13} />{/if}</button>
+          </div>
+        {/await}
+      </div>
+    </div>
+  </section>
+
+  <!-- CODE AGENTS -->
+  <section>
+    <h2>Code agents</h2>
+    <p>Potluck works as the backend for your favourite coding agent.</p>
+
+    <div class="tab-group agent-tabs">
+      <input type="radio" name="agent" id="agent-crush"   class="tab-radio" checked hidden>
+      <input type="radio" name="agent" id="agent-claude"  class="tab-radio" hidden>
+      <input type="radio" name="agent" id="agent-pi"      class="tab-radio" hidden>
+      <div class="tab-bar">
+        <label for="agent-crush"    class="tab-label">Crush</label>
+        <label for="agent-claude"   class="tab-label">Claude Code</label>
+        <label for="agent-pi"       class="tab-label">Pi</label>
+      </div>
+
+      <div class="tab-pane" id="agent-crush-pane">
+        <p class="tab-desc">Add a provider block to <code>~/.config/crush/crush.json</code> (or a project-level <code>crush.json</code>). Models and prices are pulled from the catalog so you may need to update them occasionally. If you want to avoid hardcoding your key replace <code>api_key</code> with <code>$POTLUCK_API_KEY</code>. Crush can be found at <a href="https://charm.land/crush" target="_blank" rel="noopener">charm.land/crush</a>.</p>
+        {#if crushConfig() !== null}
+          {#key crushConfig()}
+            {#await highlighted.crushConfig then html}
+              <div class="codeblock-wrap">
+                <pre class="codeblock codeblock-scroll">{@html html}</pre>
+                <button class="copy-btn" aria-label="Copy" onclick={() => copy('crushConfig', crushConfig()!)}>{#if copiedMap['crushConfig']}<Check size={13} />{:else}<Copy size={13} />{/if}</button>
+              </div>
+            {/await}
+          {/key}
+        {:else}
+          <p class="loading-note mono">loading models…</p>
+        {/if}
+      </div>
+
+      <div class="tab-pane" id="agent-claude-pane">
+        <p class="tab-desc">Export these env vars before running <code>claude</code>. Claude can be found at <a href="https://claude.com/product/claude-code" target="_blank" rel="noopener">claude.com/product/claude-code</a>.</p>
+        {#await highlighted.claudeCode then html}
+          <div class="codeblock-wrap">
+            <pre class="codeblock">{@html html}</pre>
+            <button class="copy-btn" aria-label="Copy" onclick={() => copy('claudeCode', snippets.claudeCode.code())}>{#if copiedMap['claudeCode']}<Check size={13} />{:else}<Copy size={13} />{/if}</button>
+          </div>
+        {/await}
+      </div>
+
+      <div class="tab-pane" id="agent-pi-pane">
+        <p class="tab-desc">Add to <code>~/.pi/agent/models.json</code>. Pi can be found at <a href="https://pi.dev" target="_blank" rel="noopener">pi.dev</a></p>
+        {#if models.length > 0}
+          {#await highlighted.piConfig then html}
+            <div class="codeblock-wrap">
+              <pre class="codeblock codeblock-scroll">{@html html}</pre>
+              <button class="copy-btn" aria-label="Copy" onclick={() => copy('piConfig', snippets.piConfig.code())}>{#if copiedMap['piConfig']}<Check size={13} />{:else}<Copy size={13} />{/if}</button>
+            </div>
+          {/await}
+        {:else}
+          <p class="loading-note mono">loading models…</p>
+        {/if}
+      </div>
+
+    </div>
   </section>
 
   <!-- ERRORS -->
@@ -494,38 +572,32 @@ x-potluck-balance-cents: 142`
     border-radius: 4px;
     font-family: var(--font-mono);
   }
-  .method.get  { background: light-dark(#d1fae5, #064e3b); color: light-dark(#065f46, #6ee7b7); }
-  .method.post { background: light-dark(#dbeafe, #1e3a5f); color: light-dark(#1d4ed8, #93c5fd); }
+  .method.get  {
+    background: light-dark(oklch(92% 0.01 270), oklch(22% 0.015 270));
+    color: light-dark(oklch(40% 0.03 270), oklch(72% 0.02 270));
+  }
+  .method.post {
+    background: light-dark(oklch(92% 0.04 350), oklch(25% 0.06 350));
+    color: var(--accent);
+  }
 
-  /* ---- shell tabs ------------------------------------------------------ */
-  .shell-tabs {
-    display: flex;
-    gap: 0.15rem;
-    margin-bottom: -1px; /* overlap the codeblock border below */
-    position: relative;
-    z-index: 1;
-  }
-  .shell-tab {
-    font-family: var(--font-mono);
-    font-size: 0.68rem;
-    letter-spacing: 0.04em;
-    padding: 0.2rem 0.65rem;
-    border: 1px solid var(--border);
-    border-bottom: none;
-    border-radius: 5px 5px 0 0;
-    background: light-dark(oklch(94% 0.004 270), oklch(22% 0.01 270));
-    color: var(--text-muted);
-    cursor: pointer;
-    transition: all 0.12s;
-  }
-  .shell-tab.active {
-    background: var(--bg-code);
+  /* ---- shell tab :has() rules ------------------------------------------ */
+  #sh-models:has(#sh-models-bash:checked) label[for="sh-models-bash"],
+  #sh-models:has(#sh-models-ps:checked)   label[for="sh-models-ps"],
+  #sh-chat:has(#sh-chat-bash:checked)     label[for="sh-chat-bash"],
+  #sh-chat:has(#sh-chat-ps:checked)       label[for="sh-chat-ps"],
+  #sh-stream:has(#sh-stream-bash:checked) label[for="sh-stream-bash"],
+  #sh-stream:has(#sh-stream-ps:checked)   label[for="sh-stream-ps"] {
+    background: var(--bg-page);
     color: var(--text);
-    border-color: var(--border-on-code);
+    box-shadow: 0 1px 3px light-dark(rgba(0,0,0,0.08), rgba(0,0,0,0.3));
   }
-  .shell-block .codeblock {
-    border-top-left-radius: 0;
-  }
+  #sh-models:has(#sh-models-bash:checked) #sh-models-bash-pane,
+  #sh-models:has(#sh-models-ps:checked)   #sh-models-ps-pane,
+  #sh-chat:has(#sh-chat-bash:checked)     #sh-chat-bash-pane,
+  #sh-chat:has(#sh-chat-ps:checked)       #sh-chat-ps-pane,
+  #sh-stream:has(#sh-stream-bash:checked) #sh-stream-bash-pane,
+  #sh-stream:has(#sh-stream-ps:checked)   #sh-stream-ps-pane { display: block; }
 
   /* ---- code blocks ----------------------------------------------------- */
   .codeblock-wrap {
@@ -587,4 +659,61 @@ x-potluck-balance-cents: 142`
   .error-table td { padding: 0.55rem 0.75rem; border-bottom: 1px solid var(--border); color: var(--text); vertical-align: top; }
   .error-table tr:last-child td { border-bottom: none; }
   .error-table td:last-child { color: var(--text-muted); }
+
+  /* ---- CSS :has() tab groups ------------------------------------------ */
+  .tab-group { margin-top: 0.75rem; }
+
+  .tab-radio { display: none; }
+
+  .tab-bar {
+    display: flex;
+    gap: 0.15rem;
+    background: light-dark(oklch(94% 0.005 270), oklch(20% 0.008 270));
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.25rem;
+    margin-bottom: 1rem;
+  }
+
+  .tab-label {
+    flex: 1;
+    text-align: center;
+    padding: 0.3rem 0.75rem;
+    border-radius: 5px;
+    font-size: 0.78rem;
+    font-family: var(--font-mono);
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: background 0.12s, color 0.12s;
+    user-select: none;
+  }
+  .tab-label:hover { color: var(--text); }
+
+  .tab-pane { display: none; }
+  .tab-desc { font-size: 0.85rem; color: var(--text-muted); margin: 0 0 0.6rem; line-height: 1.6; }
+  .tab-hint { font-size: 0.78rem; font-family: var(--font-mono); color: var(--text-muted); margin-top: 0.5rem; }
+  .tab-hint code { color: var(--text); background: light-dark(oklch(94% 0.005 270), oklch(25% 0.01 270)); padding: 0.1em 0.35em; border-radius: 4px; }
+  .loading-note { font-size: 0.78rem; color: var(--text-muted); }
+
+  /* SDK tabs */
+  .sdk-tabs:has(#sdk-python:checked)     label[for="sdk-python"],
+  .sdk-tabs:has(#sdk-typescript:checked) label[for="sdk-typescript"] {
+    background: var(--bg-page);
+    color: var(--text);
+    box-shadow: 0 1px 3px light-dark(rgba(0,0,0,0.08), rgba(0,0,0,0.3));
+  }
+  .sdk-tabs:has(#sdk-python:checked)     #sdk-python-pane,
+  .sdk-tabs:has(#sdk-typescript:checked) #sdk-typescript-pane { display: block; }
+
+  /* Agent tabs */
+  .agent-tabs:has(#agent-crush:checked)    label[for="agent-crush"],
+  .agent-tabs:has(#agent-claude:checked)   label[for="agent-claude"],
+  .agent-tabs:has(#agent-pi:checked)       label[for="agent-pi"] {
+    background: var(--bg-page);
+    color: var(--text);
+    box-shadow: 0 1px 3px light-dark(rgba(0,0,0,0.08), rgba(0,0,0,0.3));
+  }
+  .agent-tabs:has(#agent-crush:checked)    #agent-crush-pane,
+  .agent-tabs:has(#agent-claude:checked)   #agent-claude-pane,
+  .agent-tabs:has(#agent-pi:checked)       #agent-pi-pane { display: block; }
 </style>
