@@ -65,6 +65,9 @@ type Querier interface {
 	ListAPIKeysForUser(ctx context.Context, userID string) ([]ApiKey, error)
 	// All billing rows for a key after a given timestamp.
 	ListBillingRowsForKeyAfter(ctx context.Context, arg ListBillingRowsForKeyAfterParams) ([]PoolKeyBillingRow, error)
+	// Billing rows attributed to a user in a time window.
+	// Caller filters duplicates and sums in Go.
+	ListBillingRowsForUserBetween(ctx context.Context, arg ListBillingRowsForUserBetweenParams) ([]PoolKeyBillingRow, error)
 	ListContributionsForUser(ctx context.Context, arg ListContributionsForUserParams) ([]Contribution, error)
 	ListConversationsForUser(ctx context.Context, arg ListConversationsForUserParams) ([]Conversation, error)
 	ListEstimatedSpends(ctx context.Context, limit int64) ([]Spend, error)
@@ -104,6 +107,15 @@ type Querier interface {
 	// (compare today_date to current UTC day and update if stale).
 	// ?1 = current UTC day (unix / 86400)
 	PickPoolKey(ctx context.Context, todayDate int64) (PoolKey, error)
+	// User-aware picker for private-budget routing.
+	// Prefers a key OWNED BY THE REQUESTING USER that still has private
+	// reservation room (max_micros > shared_micros AND today's spend hasn't
+	// filled the key yet). Falls back to the standard v2 ordering when the
+	// user has no eligible own-key.
+	//
+	// The CASE expression buckets eligible keys: 0 = user's own-with-private,
+	// 1 = anything else. Within each bucket, lowest today_micros wins.
+	PickPoolKeyForUser(ctx context.Context, userID string) (PickPoolKeyForUserRow, error)
 	// Best active healthy key for a request:
 	//   active=1, not revoked, not pending validation
 	//   pioneer_health=1 (healthy)
@@ -181,9 +193,19 @@ type Querier interface {
 	// display_name is never set from HCA - cachet is the sole source of truth
 	// and syncCachetName updates it immediately after upsert.
 	UpsertUserByHCAID(ctx context.Context, arg UpsertUserByHCAIDParams) (User, error)
+	// Always overwrites with the computed breakdown.
+	// shared_allowance_micros should equal floor_micros + bonus_micros.
 	UpsertUserDailyAllowance(ctx context.Context, arg UpsertUserDailyAllowanceParams) error
 	// user_daily_spend and user_daily_allowances.
 	UpsertUserDailySpend(ctx context.Context, arg UpsertUserDailySpendParams) error
+	// Per-user historical spend profile over a time window.
+	// Returns one row per user, with total non-duplicate spend and the count
+	// of distinct UTC days that had any spend. Used by smartAllocate for
+	// demand prediction.
+	//
+	// ?1 = window start (unix seconds, inclusive)
+	// ?2 = window end   (unix seconds, exclusive)
+	UserHistoryProfile(ctx context.Context, arg UserHistoryProfileParams) ([]UserHistoryProfileRow, error)
 }
 
 var _ Querier = (*Queries)(nil)

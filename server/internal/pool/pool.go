@@ -75,6 +75,10 @@ func (m *Manager) HasHealthyKey(ctx context.Context) bool {
 // Pick selects the best key for a request using the v2 picker (health-aware,
 // $10 buffer, max_micros cap). Returns ErrNoKeys when the pool has no
 // eligible keys — the caller should surface this as a 503 to the user.
+//
+// Deprecated for new code paths: prefer PickForUser, which routes the
+// request through the user's own key first if they have private
+// reservation. Pick remains for callers without a user context.
 func (m *Manager) Pick(ctx context.Context) (*Selection, error) {
 	key, err := m.q.PickPoolKeyV2(ctx)
 	if err != nil {
@@ -82,6 +86,33 @@ func (m *Manager) Pick(ctx context.Context) (*Selection, error) {
 			return nil, ErrNoKeys
 		}
 		return nil, fmt.Errorf("pool: pick key: %w", err)
+	}
+	plaintext, err := m.Decrypt(key.KeyCiphertext)
+	if err != nil {
+		return nil, fmt.Errorf("pool: decrypt key %s: %w", key.ID, err)
+	}
+	return &Selection{keyID: key.ID, plaintext: plaintext}, nil
+}
+
+// PickForUser is the user-aware variant of Pick. It prefers a key owned
+// by the requesting user that still has private reservation capacity
+// (max_micros > shared_micros AND today_micros < max_micros). This makes
+// "private reservation" actually do what its name implies: the owner's
+// spend goes through their own key first so the reconciler attributes
+// it as private, not shared.
+//
+// Falls back to the standard pool order when the user has no eligible
+// own-key. Returns ErrNoKeys when the pool has no eligible keys.
+func (m *Manager) PickForUser(ctx context.Context, userID string) (*Selection, error) {
+	if userID == "" {
+		return m.Pick(ctx)
+	}
+	key, err := m.q.PickPoolKeyForUser(ctx, userID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrNoKeys
+		}
+		return nil, fmt.Errorf("pool: pick key for user %s: %w", userID, err)
 	}
 	plaintext, err := m.Decrypt(key.KeyCiphertext)
 	if err != nil {

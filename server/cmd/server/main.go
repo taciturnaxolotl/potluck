@@ -115,6 +115,12 @@ func main() {
 	// Start the models refresher: updates models_catalog hourly.
 	go pool.NewModelsRefresher(q, keyPool, log.Default()).Run(reconcilerCtx)
 
+	// Start the allocation recomputer: every N minutes, refresh per-user
+	// daily allowances using smartAllocate so behavior changes (light user
+	// spiking, new user joining) propagate without manual intervention.
+	allocSrv := &web.Server{Q: q}
+	go runAllocationRecomputer(reconcilerCtx, allocSrv, cfg.Spend.RecomputeIntervalSeconds)
+
 	// Hack Club Auth client. Nil when unconfigured; the handlers degrade
 	// gracefully and return 503 with a friendly note.
 	var hcaClient *hca.Client

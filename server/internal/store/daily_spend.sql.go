@@ -30,7 +30,7 @@ func (q *Queries) GetLatestRecompute(ctx context.Context, day int64) (GetLatestR
 }
 
 const getUserDailyAllowance = `-- name: GetUserDailyAllowance :one
-SELECT user_id, day, shared_allowance_micros, set_at, set_by_user_id FROM user_daily_allowances WHERE user_id = ? AND day = ?
+SELECT user_id, day, shared_allowance_micros, set_at, set_by_user_id, floor_micros, bonus_micros, predicted_total_micros, history_days_used FROM user_daily_allowances WHERE user_id = ? AND day = ?
 `
 
 type GetUserDailyAllowanceParams struct {
@@ -47,6 +47,10 @@ func (q *Queries) GetUserDailyAllowance(ctx context.Context, arg GetUserDailyAll
 		&i.SharedAllowanceMicros,
 		&i.SetAt,
 		&i.SetByUserID,
+		&i.FloorMicros,
+		&i.BonusMicros,
+		&i.PredictedTotalMicros,
+		&i.HistoryDaysUsed,
 	)
 	return i, err
 }
@@ -73,7 +77,7 @@ func (q *Queries) GetUserDailySpend(ctx context.Context, arg GetUserDailySpendPa
 }
 
 const listUserDailyAllowancesForDay = `-- name: ListUserDailyAllowancesForDay :many
-SELECT user_id, day, shared_allowance_micros, set_at, set_by_user_id FROM user_daily_allowances WHERE day = ?
+SELECT user_id, day, shared_allowance_micros, set_at, set_by_user_id, floor_micros, bonus_micros, predicted_total_micros, history_days_used FROM user_daily_allowances WHERE day = ?
 `
 
 func (q *Queries) ListUserDailyAllowancesForDay(ctx context.Context, day int64) ([]UserDailyAllowance, error) {
@@ -91,6 +95,10 @@ func (q *Queries) ListUserDailyAllowancesForDay(ctx context.Context, day int64) 
 			&i.SharedAllowanceMicros,
 			&i.SetAt,
 			&i.SetByUserID,
+			&i.FloorMicros,
+			&i.BonusMicros,
+			&i.PredictedTotalMicros,
+			&i.HistoryDaysUsed,
 		); err != nil {
 			return nil, err
 		}
@@ -139,30 +147,43 @@ func (q *Queries) ListUserDailySpendForDay(ctx context.Context, day int64) ([]Us
 
 const upsertUserDailyAllowance = `-- name: UpsertUserDailyAllowance :exec
 INSERT INTO user_daily_allowances (
-    user_id, day, shared_allowance_micros, set_at, set_by_user_id
-) VALUES (?, ?, ?, ?, ?)
+    user_id, day, shared_allowance_micros,
+    floor_micros, bonus_micros, predicted_total_micros, history_days_used,
+    set_at, set_by_user_id
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(user_id, day) DO UPDATE SET
-    shared_allowance_micros = MAX(
-        excluded.shared_allowance_micros,
-        user_daily_allowances.shared_allowance_micros
-    ),
-    set_at         = excluded.set_at,
-    set_by_user_id = excluded.set_by_user_id
+    shared_allowance_micros = excluded.shared_allowance_micros,
+    floor_micros            = excluded.floor_micros,
+    bonus_micros            = excluded.bonus_micros,
+    predicted_total_micros  = excluded.predicted_total_micros,
+    history_days_used       = excluded.history_days_used,
+    set_at                  = excluded.set_at,
+    set_by_user_id          = excluded.set_by_user_id
 `
 
 type UpsertUserDailyAllowanceParams struct {
 	UserID                string `json:"user_id"`
 	Day                   int64  `json:"day"`
 	SharedAllowanceMicros int64  `json:"shared_allowance_micros"`
+	FloorMicros           int64  `json:"floor_micros"`
+	BonusMicros           int64  `json:"bonus_micros"`
+	PredictedTotalMicros  int64  `json:"predicted_total_micros"`
+	HistoryDaysUsed       int64  `json:"history_days_used"`
 	SetAt                 int64  `json:"set_at"`
 	SetByUserID           string `json:"set_by_user_id"`
 }
 
+// Always overwrites with the computed breakdown.
+// shared_allowance_micros should equal floor_micros + bonus_micros.
 func (q *Queries) UpsertUserDailyAllowance(ctx context.Context, arg UpsertUserDailyAllowanceParams) error {
 	_, err := q.db.ExecContext(ctx, upsertUserDailyAllowance,
 		arg.UserID,
 		arg.Day,
 		arg.SharedAllowanceMicros,
+		arg.FloorMicros,
+		arg.BonusMicros,
+		arg.PredictedTotalMicros,
+		arg.HistoryDaysUsed,
 		arg.SetAt,
 		arg.SetByUserID,
 	)

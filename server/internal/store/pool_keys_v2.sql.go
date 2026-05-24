@@ -157,6 +157,100 @@ func (q *Queries) MarkPoolKeyRevoked(ctx context.Context, arg MarkPoolKeyRevoked
 	return err
 }
 
+const pickPoolKeyForUser = `-- name: PickPoolKeyForUser :one
+SELECT
+    pk.id, pk.user_id, pk.label, pk.key_ciphertext, pk.key_fingerprint,
+    pk.active, pk.daily_limit_micros, pk.today_date, pk.today_micros,
+    pk.total_micros, pk.request_count, pk.created_at, pk.last_used_at,
+    pk.max_micros, pk.shared_micros,
+    pk.pioneer_team_id, pk.pioneer_payment_plan,
+    pk.pioneer_credit_limit_micros, pk.pioneer_remaining_micros,
+    pk.pioneer_health, pk.pioneer_unhealthy_since,
+    pk.pending_validation, pk.last_billing_sync_at, pk.revoked_at,
+    CASE
+        WHEN pk.user_id = ? AND pk.max_micros > pk.shared_micros THEN 0
+        ELSE 1
+    END AS priority
+FROM pool_keys pk
+WHERE pk.active = 1
+  AND pk.revoked_at IS NULL
+  AND pk.pending_validation = 0
+  AND pk.pioneer_health = 1
+  AND (pk.pioneer_remaining_micros IS NULL OR pk.pioneer_remaining_micros > 10000000)
+  AND pk.today_micros < pk.max_micros
+ORDER BY priority ASC, pk.today_micros ASC, RANDOM()
+LIMIT 1
+`
+
+type PickPoolKeyForUserRow struct {
+	ID                       string         `json:"id"`
+	UserID                   string         `json:"user_id"`
+	Label                    string         `json:"label"`
+	KeyCiphertext            string         `json:"key_ciphertext"`
+	KeyFingerprint           string         `json:"key_fingerprint"`
+	Active                   int64          `json:"active"`
+	DailyLimitMicros         int64          `json:"daily_limit_micros"`
+	TodayDate                int64          `json:"today_date"`
+	TodayMicros              int64          `json:"today_micros"`
+	TotalMicros              int64          `json:"total_micros"`
+	RequestCount             int64          `json:"request_count"`
+	CreatedAt                int64          `json:"created_at"`
+	LastUsedAt               sql.NullInt64  `json:"last_used_at"`
+	MaxMicros                int64          `json:"max_micros"`
+	SharedMicros             int64          `json:"shared_micros"`
+	PioneerTeamID            sql.NullString `json:"pioneer_team_id"`
+	PioneerPaymentPlan       sql.NullString `json:"pioneer_payment_plan"`
+	PioneerCreditLimitMicros sql.NullInt64  `json:"pioneer_credit_limit_micros"`
+	PioneerRemainingMicros   sql.NullInt64  `json:"pioneer_remaining_micros"`
+	PioneerHealth            int64          `json:"pioneer_health"`
+	PioneerUnhealthySince    sql.NullInt64  `json:"pioneer_unhealthy_since"`
+	PendingValidation        int64          `json:"pending_validation"`
+	LastBillingSyncAt        sql.NullInt64  `json:"last_billing_sync_at"`
+	RevokedAt                sql.NullInt64  `json:"revoked_at"`
+	Priority                 int64          `json:"priority"`
+}
+
+// User-aware picker for private-budget routing.
+// Prefers a key OWNED BY THE REQUESTING USER that still has private
+// reservation room (max_micros > shared_micros AND today's spend hasn't
+// filled the key yet). Falls back to the standard v2 ordering when the
+// user has no eligible own-key.
+//
+// The CASE expression buckets eligible keys: 0 = user's own-with-private,
+// 1 = anything else. Within each bucket, lowest today_micros wins.
+func (q *Queries) PickPoolKeyForUser(ctx context.Context, userID string) (PickPoolKeyForUserRow, error) {
+	row := q.db.QueryRowContext(ctx, pickPoolKeyForUser, userID)
+	var i PickPoolKeyForUserRow
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.Label,
+		&i.KeyCiphertext,
+		&i.KeyFingerprint,
+		&i.Active,
+		&i.DailyLimitMicros,
+		&i.TodayDate,
+		&i.TodayMicros,
+		&i.TotalMicros,
+		&i.RequestCount,
+		&i.CreatedAt,
+		&i.LastUsedAt,
+		&i.MaxMicros,
+		&i.SharedMicros,
+		&i.PioneerTeamID,
+		&i.PioneerPaymentPlan,
+		&i.PioneerCreditLimitMicros,
+		&i.PioneerRemainingMicros,
+		&i.PioneerHealth,
+		&i.PioneerUnhealthySince,
+		&i.PendingValidation,
+		&i.LastBillingSyncAt,
+		&i.RevokedAt,
+		&i.Priority,
+	)
+	return i, err
+}
+
 const pickPoolKeyV2 = `-- name: PickPoolKeyV2 :one
 SELECT id, user_id, label, key_ciphertext, key_fingerprint, active, daily_limit_micros, today_date, today_micros, total_micros, request_count, created_at, last_used_at, max_micros, shared_micros, pioneer_team_id, pioneer_payment_plan, pioneer_credit_limit_micros, pioneer_remaining_micros, pioneer_health, pioneer_unhealthy_since, pending_validation, last_billing_sync_at, revoked_at FROM pool_keys
 WHERE active = 1

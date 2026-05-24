@@ -114,6 +114,12 @@ export type AllocationUser = {
   shared_contribution_micros: number;
   private_reservation_micros: number;
   shared_allowance_today_micros: number;
+  // smart-alloc breakdown: floor (guaranteed) + bonus (historical redistribution)
+  shared_allowance_floor_micros: number;
+  shared_allowance_bonus_micros: number;
+  predicted_total_today_micros: number;
+  history_days_used: number;
+  is_donating: boolean;
   shared_spent_today_micros: number;
   private_spent_today_micros: number;
   shared_remaining_today_micros: number;
@@ -127,6 +133,7 @@ export type Allocations = {
     remaining_pool_today_micros: number;
     active_key_count: number;
     active_team_count: number;
+    redistribution_surplus_micros: number;
   };
   users: AllocationUser[];
   last_recompute: {

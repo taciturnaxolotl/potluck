@@ -77,3 +77,35 @@ WHERE active = 1
   AND today_micros < max_micros
 ORDER BY today_micros ASC, RANDOM()
 LIMIT 1;
+
+-- name: PickPoolKeyForUser :one
+-- User-aware picker for private-budget routing.
+-- Prefers a key OWNED BY THE REQUESTING USER that still has private
+-- reservation room (max_micros > shared_micros AND today's spend hasn't
+-- filled the key yet). Falls back to the standard v2 ordering when the
+-- user has no eligible own-key.
+--
+-- The CASE expression buckets eligible keys: 0 = user's own-with-private,
+-- 1 = anything else. Within each bucket, lowest today_micros wins.
+SELECT
+    pk.id, pk.user_id, pk.label, pk.key_ciphertext, pk.key_fingerprint,
+    pk.active, pk.daily_limit_micros, pk.today_date, pk.today_micros,
+    pk.total_micros, pk.request_count, pk.created_at, pk.last_used_at,
+    pk.max_micros, pk.shared_micros,
+    pk.pioneer_team_id, pk.pioneer_payment_plan,
+    pk.pioneer_credit_limit_micros, pk.pioneer_remaining_micros,
+    pk.pioneer_health, pk.pioneer_unhealthy_since,
+    pk.pending_validation, pk.last_billing_sync_at, pk.revoked_at,
+    CASE
+        WHEN pk.user_id = ? AND pk.max_micros > pk.shared_micros THEN 0
+        ELSE 1
+    END AS priority
+FROM pool_keys pk
+WHERE pk.active = 1
+  AND pk.revoked_at IS NULL
+  AND pk.pending_validation = 0
+  AND pk.pioneer_health = 1
+  AND (pk.pioneer_remaining_micros IS NULL OR pk.pioneer_remaining_micros > 10000000)
+  AND pk.today_micros < pk.max_micros
+ORDER BY priority ASC, pk.today_micros ASC, RANDOM()
+LIMIT 1;

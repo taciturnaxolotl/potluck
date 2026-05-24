@@ -76,6 +76,59 @@ func (q *Queries) ListBillingRowsForKeyAfter(ctx context.Context, arg ListBillin
 	return items, nil
 }
 
+const listBillingRowsForUserBetween = `-- name: ListBillingRowsForUserBetween :many
+SELECT id, pool_key_id, pioneer_created_at, credit_micros, cost_micros, token_usage, model, endpoint, attributed_user_id, attribution, is_duplicate, matched_request_id, ingested_at FROM pool_key_billing_rows
+WHERE attributed_user_id = ?
+  AND pioneer_created_at >= ?
+  AND pioneer_created_at < ?
+ORDER BY pioneer_created_at ASC
+`
+
+type ListBillingRowsForUserBetweenParams struct {
+	AttributedUserID   sql.NullString `json:"attributed_user_id"`
+	PioneerCreatedAt   int64          `json:"pioneer_created_at"`
+	PioneerCreatedAt_2 int64          `json:"pioneer_created_at_2"`
+}
+
+// Billing rows attributed to a user in a time window.
+// Caller filters duplicates and sums in Go.
+func (q *Queries) ListBillingRowsForUserBetween(ctx context.Context, arg ListBillingRowsForUserBetweenParams) ([]PoolKeyBillingRow, error) {
+	rows, err := q.db.QueryContext(ctx, listBillingRowsForUserBetween, arg.AttributedUserID, arg.PioneerCreatedAt, arg.PioneerCreatedAt_2)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []PoolKeyBillingRow{}
+	for rows.Next() {
+		var i PoolKeyBillingRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.PoolKeyID,
+			&i.PioneerCreatedAt,
+			&i.CreditMicros,
+			&i.CostMicros,
+			&i.TokenUsage,
+			&i.Model,
+			&i.Endpoint,
+			&i.AttributedUserID,
+			&i.Attribution,
+			&i.IsDuplicate,
+			&i.MatchedRequestID,
+			&i.IngestedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const sumBillingRowsForKey = `-- name: SumBillingRowsForKey :one
 SELECT COALESCE(SUM(cost_micros * 0) + SUM(cost_micros), 0)
 FROM pool_key_billing_rows
@@ -143,4 +196,58 @@ func (q *Queries) UpsertBillingRow(ctx context.Context, arg UpsertBillingRowPara
 		arg.IngestedAt,
 	)
 	return err
+}
+
+const userHistoryProfile = `-- name: UserHistoryProfile :many
+SELECT
+    attributed_user_id              AS user_id,
+    COALESCE(SUM(cost_micros), 0)   AS total_spend_micros,
+    COUNT(DISTINCT pioneer_created_at / 86400) AS days_with_spend
+FROM pool_key_billing_rows
+WHERE is_duplicate = 0
+  AND attributed_user_id IS NOT NULL
+  AND pioneer_created_at >= ?
+  AND pioneer_created_at <  ?
+GROUP BY attributed_user_id
+`
+
+type UserHistoryProfileParams struct {
+	PioneerCreatedAt   int64 `json:"pioneer_created_at"`
+	PioneerCreatedAt_2 int64 `json:"pioneer_created_at_2"`
+}
+
+type UserHistoryProfileRow struct {
+	UserID           sql.NullString `json:"user_id"`
+	TotalSpendMicros interface{}    `json:"total_spend_micros"`
+	DaysWithSpend    int64          `json:"days_with_spend"`
+}
+
+// Per-user historical spend profile over a time window.
+// Returns one row per user, with total non-duplicate spend and the count
+// of distinct UTC days that had any spend. Used by smartAllocate for
+// demand prediction.
+//
+// ?1 = window start (unix seconds, inclusive)
+// ?2 = window end   (unix seconds, exclusive)
+func (q *Queries) UserHistoryProfile(ctx context.Context, arg UserHistoryProfileParams) ([]UserHistoryProfileRow, error) {
+	rows, err := q.db.QueryContext(ctx, userHistoryProfile, arg.PioneerCreatedAt, arg.PioneerCreatedAt_2)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []UserHistoryProfileRow{}
+	for rows.Next() {
+		var i UserHistoryProfileRow
+		if err := rows.Scan(&i.UserID, &i.TotalSpendMicros, &i.DaysWithSpend); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }

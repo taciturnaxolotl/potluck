@@ -204,6 +204,10 @@ type UserDailyAllowance struct {
 	SharedAllowanceMicros int64  `json:"shared_allowance_micros"`
 	SetAt                 int64  `json:"set_at"`
 	SetByUserID           string `json:"set_by_user_id"`
+	FloorMicros           int64  `json:"floor_micros"`
+	BonusMicros           int64  `json:"bonus_micros"`
+	PredictedTotalMicros  int64  `json:"predicted_total_micros"`
+	HistoryDaysUsed       int64  `json:"history_days_used"`
 }
 
 type UserDailySpend struct {

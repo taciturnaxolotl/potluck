@@ -1,8 +1,10 @@
 package web
 
 import (
+	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -14,27 +16,76 @@ func (s *Server) handleAllocations(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, s.buildAllocations(r))
 }
 
-// handleRecomputeAllocations recalculates per-user shared allowances.
-// Anyone can trigger. Allowances only ever grow (no claw-back).
+// handleRecomputeAllocations recalculates per-user shared allowances using
+// smartAllocate (history-aware fair share). Anyone can trigger.
 func (s *Server) handleRecomputeAllocations(w http.ResponseWriter, r *http.Request) {
 	u, _ := currentUser(r)
-	day := time.Now().UTC().Unix() / 86400
-	now := time.Now().Unix()
-
-	rows, err := s.Q.ListPoolAllocations(r.Context())
-	if err != nil {
+	if err := s.RunSmartAllocation(r.Context(), u.ID); err != nil {
 		writeErr(w, 500, "internal", err.Error())
 		return
 	}
+	writeJSON(w, 200, s.buildAllocations(r))
+}
 
-	spendRows, err := s.Q.ListUserDailySpendForDay(r.Context(), day)
+// historyWindowDays is how far back smartAllocate looks for prediction data.
+const historyWindowDays = 30
+
+// RunSmartAllocation executes the smart-allocation algorithm and writes a
+// fresh row per user into user_daily_allowances. Exported so the background
+// recompute goroutine and the manual handler can share one code path.
+//
+// setByUserID is the user id to record as the trigger; pass "system" for the
+// periodic recompute.
+func (s *Server) RunSmartAllocation(ctx context.Context, setByUserID string) error {
+	now := time.Now()
+	day := now.UTC().Unix() / 86400
+	dayStart := time.Date(now.UTC().Year(), now.UTC().Month(), now.UTC().Day(), 0, 0, 0, 0, time.UTC)
+	dayFraction := now.Sub(dayStart).Hours() / 24.0
+	windowStart := now.AddDate(0, 0, -historyWindowDays).Unix()
+	windowEnd := dayStart.Unix() // exclude today; we only want completed history
+
+	rows, err := s.Q.ListPoolAllocations(ctx)
 	if err != nil {
-		writeErr(w, 500, "internal", err.Error())
-		return
+		return fmt.Errorf("list pool allocations: %w", err)
+	}
+
+	spendRows, err := s.Q.ListUserDailySpendForDay(ctx, day)
+	if err != nil {
+		return fmt.Errorf("list daily spend: %w", err)
 	}
 	spentByUser := map[string]int64{}
 	for _, sp := range spendRows {
 		spentByUser[sp.UserID] = sp.SharedSpentMicros
+	}
+
+	// Historical profile per user.
+	histRows, err := s.Q.UserHistoryProfile(ctx, store.UserHistoryProfileParams{
+		PioneerCreatedAt:   windowStart,
+		PioneerCreatedAt_2: windowEnd,
+	})
+	if err != nil {
+		return fmt.Errorf("user history profile: %w", err)
+	}
+	historyByUser := map[string]UserHistory{}
+	for _, h := range histRows {
+		uid := ""
+		if h.UserID.Valid {
+			uid = h.UserID.String
+		}
+		if uid == "" {
+			continue
+		}
+		days := toInt64(h.DaysWithSpend)
+		total := toInt64(h.TotalSpendMicros)
+		var avg int64
+		if days > 0 {
+			avg = total / days
+		}
+		historyByUser[uid] = UserHistory{
+			AvgActiveDaySpend: avg,
+			ActivityRate:      float64(days) / float64(historyWindowDays),
+			DaysWithSpend:     days,
+		}
 	}
 
 	var totalShared int64
@@ -42,26 +93,35 @@ func (s *Server) handleRecomputeAllocations(w http.ResponseWriter, r *http.Reque
 		totalShared += toInt64(row.DailyLimitMicros)
 	}
 
-	// Build the user list with their spend, then run max-min fair share.
 	userIDs := make([]string, len(rows))
 	spends := make([]int64, len(rows))
+	histories := make([]UserHistory, len(rows))
 	for i, row := range rows {
 		userIDs[i] = row.UserID
 		spends[i] = spentByUser[row.UserID]
+		histories[i] = historyByUser[row.UserID] // zero value if absent
 	}
-	allowances := fairShareAllocate(totalShared, spends)
 
+	allocations := smartAllocate(totalShared, spends, histories, dayFraction)
+
+	nowUnix := now.Unix()
 	for i, id := range userIDs {
-		_ = s.Q.UpsertUserDailyAllowance(r.Context(), store.UpsertUserDailyAllowanceParams{
+		a := allocations[i]
+		if err := s.Q.UpsertUserDailyAllowance(ctx, store.UpsertUserDailyAllowanceParams{
 			UserID:                id,
 			Day:                   day,
-			SharedAllowanceMicros: allowances[i],
-			SetAt:                 now,
-			SetByUserID:           u.ID,
-		})
+			SharedAllowanceMicros: a.Allowance,
+			FloorMicros:           a.Floor,
+			BonusMicros:           a.Bonus,
+			PredictedTotalMicros:  a.PredictedTotal,
+			HistoryDaysUsed:       a.HistoryDays,
+			SetAt:                 nowUnix,
+			SetByUserID:           setByUserID,
+		}); err != nil {
+			return fmt.Errorf("upsert allowance for %s: %w", id, err)
+		}
 	}
-
-	writeJSON(w, 200, s.buildAllocations(r))
+	return nil
 }
 
 // fairShareAllocate distributes `pool` across users using max-min fair share
@@ -144,9 +204,9 @@ func (s *Server) buildAllocations(r *http.Request) map[string]any {
 	for _, sp := range spendRows {
 		spendByUser[sp.UserID] = struct{ shared, private int64 }{sp.SharedSpentMicros, sp.PrivateSpentMicros}
 	}
-	allowByUser := map[string]int64{}
+	allowByUser := map[string]store.UserDailyAllowance{}
 	for _, a := range allowRows {
-		allowByUser[a.UserID] = a.SharedAllowanceMicros
+		allowByUser[a.UserID] = a
 	}
 
 	var totalShared, spentTodayShared int64
@@ -162,27 +222,66 @@ func (s *Server) buildAllocations(r *http.Request) map[string]any {
 	}
 
 	type userEntry struct {
-		UserID                     string  `json:"user_id"`
-		DisplayName                string  `json:"display_name"`
-		Email                      string  `json:"email"`
-		KeyCount                   int64   `json:"key_count"`
-		SharedContributionMicros   int64   `json:"shared_contribution_micros"`
-		PrivateReservationMicros   int64   `json:"private_reservation_micros"`
-		SharedAllowanceTodayMicros int64   `json:"shared_allowance_today_micros"`
-		SharedSpentTodayMicros     int64   `json:"shared_spent_today_micros"`
-		PrivateSpentTodayMicros    int64   `json:"private_spent_today_micros"`
-		SharedRemainingTodayMicros int64   `json:"shared_remaining_today_micros"`
-		ShareFraction              float64 `json:"share_fraction"`
+		UserID                       string  `json:"user_id"`
+		DisplayName                  string  `json:"display_name"`
+		Email                        string  `json:"email"`
+		KeyCount                     int64   `json:"key_count"`
+		SharedContributionMicros     int64   `json:"shared_contribution_micros"`
+		PrivateReservationMicros     int64   `json:"private_reservation_micros"`
+		SharedAllowanceTodayMicros   int64   `json:"shared_allowance_today_micros"`
+		SharedAllowanceFloorMicros   int64   `json:"shared_allowance_floor_micros"`
+		SharedAllowanceBonusMicros   int64   `json:"shared_allowance_bonus_micros"`
+		PredictedTotalTodayMicros    int64   `json:"predicted_total_today_micros"`
+		HistoryDaysUsed              int64   `json:"history_days_used"`
+		IsDonating                   bool    `json:"is_donating"`
+		SharedSpentTodayMicros       int64   `json:"shared_spent_today_micros"`
+		PrivateSpentTodayMicros      int64   `json:"private_spent_today_micros"`
+		SharedRemainingTodayMicros   int64   `json:"shared_remaining_today_micros"`
+		ShareFraction                float64 `json:"share_fraction"`
 	}
 
-	// Live fair-share estimate for users with no stored allowance yet.
+	// Live smart-allocation estimate for users with no stored allowance yet.
 	// Same algorithm as the recompute, so the estimate matches what a
-	// recompute would produce.
+	// recompute would write.
+	now := time.Now()
+	dayStart := time.Date(now.UTC().Year(), now.UTC().Month(), now.UTC().Day(), 0, 0, 0, 0, time.UTC)
+	dayFraction := now.Sub(dayStart).Hours() / 24.0
+	windowStart := now.AddDate(0, 0, -historyWindowDays).Unix()
+	windowEnd := dayStart.Unix()
+
+	histRows, _ := s.Q.UserHistoryProfile(r.Context(), store.UserHistoryProfileParams{
+		PioneerCreatedAt:   windowStart,
+		PioneerCreatedAt_2: windowEnd,
+	})
+	historyByUser := map[string]UserHistory{}
+	for _, h := range histRows {
+		uid := ""
+		if h.UserID.Valid {
+			uid = h.UserID.String
+		}
+		if uid == "" {
+			continue
+		}
+		days := toInt64(h.DaysWithSpend)
+		total := toInt64(h.TotalSpendMicros)
+		var avg int64
+		if days > 0 {
+			avg = total / days
+		}
+		historyByUser[uid] = UserHistory{
+			AvgActiveDaySpend: avg,
+			ActivityRate:      float64(days) / float64(historyWindowDays),
+			DaysWithSpend:     days,
+		}
+	}
+
 	liveSpends := make([]int64, len(rows))
+	liveHistories := make([]UserHistory, len(rows))
 	for i, row := range rows {
 		liveSpends[i] = spendByUser[row.UserID].shared
+		liveHistories[i] = historyByUser[row.UserID]
 	}
-	liveAllowances := fairShareAllocate(totalShared, liveSpends)
+	liveAllocations := smartAllocate(totalShared, liveSpends, liveHistories, dayFraction)
 
 	out := make([]userEntry, 0, len(rows))
 	for i, row := range rows {
@@ -192,26 +291,49 @@ func (s *Server) buildAllocations(r *http.Request) map[string]any {
 		if totalShared > 0 {
 			frac = float64(shared) / float64(totalShared)
 		}
-		allowance, hasStored := allowByUser[row.UserID], false
-		if _, ok := allowByUser[row.UserID]; ok {
-			hasStored = true
+
+		stored, hasStored := allowByUser[row.UserID]
+		live := liveAllocations[i]
+
+		var (
+			allowance      int64
+			floor          int64
+			bonus          int64
+			predicted      int64
+			historyDays    int64
+		)
+		if hasStored {
+			allowance = stored.SharedAllowanceMicros
+			floor = stored.FloorMicros
+			bonus = stored.BonusMicros
+			predicted = stored.PredictedTotalMicros
+			historyDays = stored.HistoryDaysUsed
+		} else {
+			allowance = live.Allowance
+			floor = live.Floor
+			bonus = live.Bonus
+			predicted = live.PredictedTotal
+			historyDays = live.HistoryDays
 		}
-		if !hasStored {
-			allowance = liveAllowances[i]
-		}
+
 		spend := spendByUser[row.UserID]
 		out = append(out, userEntry{
-			UserID:                     row.UserID,
-			DisplayName:                row.DisplayName,
-			Email:                      row.Email,
-			KeyCount:                   toInt64(row.KeyCount),
-			SharedContributionMicros:   shared,
-			PrivateReservationMicros:   toInt64(row.PrivateReservationMicros),
-			SharedAllowanceTodayMicros: allowance,
-			SharedSpentTodayMicros:     spend.shared,
-			PrivateSpentTodayMicros:    spend.private,
-			SharedRemainingTodayMicros: allowance - spend.shared,
-			ShareFraction:              frac,
+			UserID:                       row.UserID,
+			DisplayName:                  row.DisplayName,
+			Email:                        row.Email,
+			KeyCount:                     toInt64(row.KeyCount),
+			SharedContributionMicros:     shared,
+			PrivateReservationMicros:     toInt64(row.PrivateReservationMicros),
+			SharedAllowanceTodayMicros:   allowance,
+			SharedAllowanceFloorMicros:   floor,
+			SharedAllowanceBonusMicros:   bonus,
+			PredictedTotalTodayMicros:    predicted,
+			HistoryDaysUsed:              historyDays,
+			IsDonating:                   live.IsDonating,
+			SharedSpentTodayMicros:       spend.shared,
+			PrivateSpentTodayMicros:      spend.private,
+			SharedRemainingTodayMicros:   allowance - spend.shared,
+			ShareFraction:                frac,
 		})
 	}
 
@@ -227,13 +349,20 @@ func (s *Server) buildAllocations(r *http.Request) map[string]any {
 		}
 	}
 
+	// Total redistribution surplus = sum of all bonuses (post-allocation).
+	var redistributionSurplus int64
+	for _, u := range out {
+		redistributionSurplus += u.SharedAllowanceBonusMicros
+	}
+
 	return map[string]any{
 		"pool": map[string]any{
-			"total_shared_micros":         totalShared,
-			"spent_today_shared_micros":   spentTodayShared,
-			"remaining_pool_today_micros": remaining,
-			"active_key_count":            activeKeyCount,
-			"active_team_count":           activeKeyCount, // TODO: dedupe by team_id
+			"total_shared_micros":            totalShared,
+			"spent_today_shared_micros":      spentTodayShared,
+			"remaining_pool_today_micros":    remaining,
+			"active_key_count":               activeKeyCount,
+			"active_team_count":              activeKeyCount, // TODO: dedupe by team_id
+			"redistribution_surplus_micros":  redistributionSurplus,
 		},
 		"users":          out,
 		"last_recompute": lastRecompute,

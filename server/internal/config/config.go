@@ -134,6 +134,11 @@ type SpendConfig struct {
 
 	// Maximum streams a single user can have in flight at once.
 	MaxConcurrentStreams int `env:"MAX_CONCURRENT_STREAMS" envDefault:"3"`
+
+	// Interval between automatic allocation recomputes. The recompute is
+	// cheap (one query + one upsert per user) so a tighter cadence catches
+	// spending pattern changes faster. Default 10 minutes.
+	RecomputeIntervalSeconds int `env:"RECOMPUTE_INTERVAL_SECONDS" envDefault:"600"`
 }
 
 // LitestreamConfig holds the Backblaze B2 replication target.

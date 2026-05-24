@@ -14,14 +14,21 @@ SELECT * FROM user_daily_spend WHERE user_id = ? AND day = ?;
 SELECT * FROM user_daily_spend WHERE day = ?;
 
 -- name: UpsertUserDailyAllowance :exec
--- Always overwrites; caller is responsible for passing MAX(fairShare, alreadySpent).
+-- Always overwrites with the computed breakdown.
+-- shared_allowance_micros should equal floor_micros + bonus_micros.
 INSERT INTO user_daily_allowances (
-    user_id, day, shared_allowance_micros, set_at, set_by_user_id
-) VALUES (?, ?, ?, ?, ?)
+    user_id, day, shared_allowance_micros,
+    floor_micros, bonus_micros, predicted_total_micros, history_days_used,
+    set_at, set_by_user_id
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(user_id, day) DO UPDATE SET
     shared_allowance_micros = excluded.shared_allowance_micros,
-    set_at         = excluded.set_at,
-    set_by_user_id = excluded.set_by_user_id;
+    floor_micros            = excluded.floor_micros,
+    bonus_micros            = excluded.bonus_micros,
+    predicted_total_micros  = excluded.predicted_total_micros,
+    history_days_used       = excluded.history_days_used,
+    set_at                  = excluded.set_at,
+    set_by_user_id          = excluded.set_by_user_id;
 
 -- name: GetUserDailyAllowance :one
 SELECT * FROM user_daily_allowances WHERE user_id = ? AND day = ?;

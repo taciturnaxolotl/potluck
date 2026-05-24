@@ -51,14 +51,18 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 
 // bufferedCompletion handles a non-streaming chat completion.
 func (s *Server) bufferedCompletion(w http.ResponseWriter, r *http.Request, body []byte, model string) {
-	sel, err := s.Pool.Pick(r.Context())
+	u, _ := apimw.UserFromContext(r.Context())
+	apiKey, _ := apimw.APIKeyFromContext(r.Context())
+
+	var userID string
+	if u != nil {
+		userID = u.ID
+	}
+	sel, err := s.Pool.PickForUser(r.Context(), userID)
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, "no_pool_keys", "no active pool keys available")
 		return
 	}
-
-	u, _ := apimw.UserFromContext(r.Context())
-	apiKey, _ := apimw.APIKeyFromContext(r.Context())
 
 	// Write request log row immediately.
 	reqID := uuid.NewString()
@@ -130,14 +134,18 @@ func (s *Server) bufferedCompletion(w http.ResponseWriter, r *http.Request, body
 
 // streamCompletion forwards an SSE chat completion straight through.
 func (s *Server) streamCompletion(w http.ResponseWriter, r *http.Request, body []byte, model string) {
-	sel, err := s.Pool.Pick(r.Context())
+	u, _ := apimw.UserFromContext(r.Context())
+	apiKey, _ := apimw.APIKeyFromContext(r.Context())
+
+	var userID string
+	if u != nil {
+		userID = u.ID
+	}
+	sel, err := s.Pool.PickForUser(r.Context(), userID)
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, "no_pool_keys", "no active pool keys available")
 		return
 	}
-
-	u, _ := apimw.UserFromContext(r.Context())
-	apiKey, _ := apimw.APIKeyFromContext(r.Context())
 
 	// Write request log row immediately.
 	reqID := uuid.NewString()
