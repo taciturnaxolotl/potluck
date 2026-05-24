@@ -1,5 +1,12 @@
 # accounting
 
+> **Status note (2026-05):** The `contributions`/`spends` ledger tables exist
+> but are empty in practice. Real spend tracking moved to `pool_key_billing_rows`
+> (one row per pioneer billing event) and `potluck_requests`. The pre-flight
+> balance checks still run against the ledger layer but pool capacity is the
+> real gate in production. This doc describes the intended ledger design;
+> see `design/pool-keys.md` for the live accounting path.
+
 Money lives in two tables: `contributions` (positive deposits) and `spends`
 (positive charges, one per stream). Balance is `sum(contributions) -
 sum(spends)`. We don't keep a denormalised running total — at ~10 users this
@@ -33,10 +40,10 @@ Settlement is idempotent on `streams.id`; `spends` has `UNIQUE(stream_id)`.
 
 ## Reconciliation
 
-A nightly job (cron, not yet built) reads `spends WHERE is_estimated = 1`,
-re-tokenises against the canonical tokenizer, and corrects `amount_micros`.
-Differences between estimate and truth show up as positive or negative
-adjustments to balance.
+The reconciler (`internal/pool/reconciler.go`) ingests pioneer billing rows
+into `pool_key_billing_rows` and attributes them to users. This is the live
+reconciliation path. The original nightly-cron design for `spends` is not
+yet built and may not be needed.
 
 ## Why no reservations
 

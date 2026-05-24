@@ -10,9 +10,9 @@ lives on top.
 
 ## Status
 
-Draft. Findings are empirical from probing api.pioneer.ai with two real
-keys on 2026-05-22. The plan section is the design being implemented next;
-treat it as the source of truth for the migration and the reconciler.
+Live. The reconciler, two-budget model, smart allocation, and billing
+ingestion are all implemented. The findings below are confirmed empirically;
+the plan sections have been executed. Outstanding items are noted inline.
 
 ## Background
 
@@ -123,17 +123,23 @@ key hit 100007 credits against a 100000 limit before going 401. Don't
 assume the gate is hard; budget 1-2% headroom when computing "will this
 key cover the next request."
 
-**Known plans so far:**
+**Known plans:**
 
 | plan | credit_limit | daily cap USD | has_payment_method |
 |---|---|---|---|
 | `partner` | 40000 | $400 | false |
 | `pro` | 100000 | $1000 | true |
 
-**We only accept `pro` plan keys.** `partner` and any unknown plan are
-rejected at add time with a clear error ("only pro-plan pioneer keys are
-supported"). This keeps the pool homogeneous and avoids surprises from
-plans we haven't characterized.
+`max_micros` on `pool_keys` is set to `credit_limit * 10000` at add time
+and kept in sync by the reconciler on every health tick via
+`SyncPoolKeyMaxFromCreditLimit`. Users control only `shared_micros` (how
+much of their ceiling to donate to the pool vs keep as private reservation).
+The add flow is two-stage: probe first (`POST /api/pool-keys/probe`), show
+plan/credit/spend to the user with a sharing slider, then confirm.
+
+**Accepted plans: `pro` and `partner`.** Both are paid tiers with daily
+resets. Unknown plans are rejected at add time. `AcceptedPlan()` in
+`internal/pool/reconciler.go` is the single source of truth for the allowlist.
 
 `total_usage` is safe to use as "spent today." `remaining_credits` is
 safe to use as "remaining today." Both reset at UTC midnight.

@@ -17,6 +17,9 @@ inactivity (the last_used_at column is bumped on every request).
  - Pioneer.ai inference credentials.
    - `PIONEER_API_KEY` - API key. Required; the server refuses to start without it in production.
    - `PIONEER_BASE_URL` (default: `https://api.pioneer.ai`) - Base URL — override for testing against the fake provider.
+ - `POTLUCK_POOL_KEY_SECRET` - Pool key encryption secret. 64-char hex (32 bytes) or base64 (44 chars).
+Generate with: openssl rand -hex 32
+Required to store keys securely; dev allows empty (plaintext fallback).
  - Hack Club Auth (HCA) — OAuth provider for "Sign in with Hack Club".
    - `HCA_CLIENT_ID` - OAuth client id from the Developer Apps page on identity.hackclub.com.
    - `HCA_CLIENT_SECRET` - OAuth client secret. Treat like a password.
@@ -29,6 +32,9 @@ In dev this is typically http://localhost:8080/auth/callback.
    - `POTLUCK_SPEND_MIN_BALANCE_MICROS` (default: `250000`) - Minimum balance (USD micros) below which new streams are rejected.
 Default = $0.25 in micros.
    - `POTLUCK_SPEND_MAX_CONCURRENT_STREAMS` (default: `3`) - Maximum streams a single user can have in flight at once.
+   - `POTLUCK_SPEND_RECOMPUTE_INTERVAL_SECONDS` (default: `600`) - Interval between automatic allocation recomputes. The recompute is
+cheap (one query + one upsert per user) so a tighter cadence catches
+spending pattern changes faster. Default 10 minutes.
  - Litestream replication.
    - `LITESTREAM_B2_BUCKET` - B2 bucket name.
    - `LITESTREAM_B2_KEY_ID` - B2 application key id.

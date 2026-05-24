@@ -15,9 +15,7 @@ for a small group of friends sharing access. It exposes two surfaces:
    can plug their personal API keys into Claude Code, Continue, scripts,
    whatever.
 
-Pooled funding model: friends contribute USD against a shared ledger; the
-backend enforces per-user balance and rate limits regardless of which surface
-a request comes through. A single upstream provider key handles all traffic.
+Pooled model: friends contribute their own pioneer.ai API keys to a shared pool. The backend picks a key per request, tracks per-key spend via pioneer's billing API, and enforces per-user daily allowances. Real spend data lives in `pool_key_billing_rows` and `potluck_requests`; the legacy `spends`/`contributions` tables exist but are unused for the main accounting path.
 
 Not a public product. Designed for ~10 users, single deployment, opinionated
 about correctness over scale.
@@ -143,7 +141,8 @@ Cycle order: **auto → dark → light → auto**. Don't change this.
 │   │   │   ├── web/         /api/* (cookie session, internal shape)
 │   │   │   └── v1/          /v1/* (bearer auth, OpenAI shape)
 │   │   ├── auth/            sessions, api keys, hashing
-│   │   ├── ledger/          balance, contributions, spend
+│   │   ├── ledger/          balance, contributions, spend (legacy)
+│   │   ├── pool/            pioneer key pool manager + reconciler
 │   │   ├── stream/          SSE tee + buffer (web/ only; v1/ does pass-through)
 │   │   ├── provider/        pioneer.ai client + compat checks
 │   │   ├── fakeprovider/    test double for the provider
@@ -158,7 +157,9 @@ Cycle order: **auto → dark → light → auto**. Don't change this.
 │   │   ├── lib/
 │   │   │   ├── styles/
 │   │   │   │   └── tokens.css      design tokens (palette + semantic + type)
+│   │   │   ├── auth.svelte.ts      shared reactive auth state ($state rune)
 │   │   │   ├── db.ts               Dexie schema + reactive queries
+│   │   │   ├── highlight.ts        shiki wrapper (css-variables theme)
 │   │   │   ├── stream.ts           SSE consumer with resume
 │   │   │   ├── theme.ts            theme switcher API
 │   │   │   └── api.ts              /api client
@@ -316,8 +317,7 @@ pot_cedar_••••••••••••••••••_9xK2m
   modal exactly once, never retrievable again.
 - Users name keys on creation. Rotation = create new, switch app, revoke old.
   No "primary key" concept.
-- Per-key `max_budget` is optional and bounded by the owner's available
-  balance — a key budget never lets the user exceed their pool share.
+- Per-key rate limits apply via the shared middleware stack.
 - Revocation is a soft delete (`revoked_at`). Keep the row for audit; the
   DB lookup just excludes revoked keys.
 
@@ -327,9 +327,18 @@ pot_cedar_••••••••••••••••••_9xK2m
   already in flight (`3` default).
 - In-flight streams always complete and settle, even if they push balance
   negative. The hard floor + concurrency cap bounds the exposure.
-- Settlement uses the provider's `usage` chunk when present; falls back to
-  local tokenization and marks the spend row `is_estimated = true` for the
-  nightly reconciliation job to fix.
+- Real spend tracking: `pool_key_billing_rows` (one row per pioneer billing
+  event, ingested by the reconciler) + `potluck_requests` (one row per
+  request we made). The reconciler attributes billing rows to users via
+  heuristic matching (model + timestamp + token count).
+- Smart allocation: `user_daily_allowances` holds per-user daily limits
+  (floor + bonus) computed by `RunSmartAllocation` in
+  `internal/api/web/allocations.go`. Runs on boot, every
+  `POTLUCK_SPEND_RECOMPUTE_INTERVAL_SECONDS` (default 600s), and
+  immediately after any pool key add/remove/limits change.
+- Display names come from cachet (Hack Club's Slack directory) via
+  `syncCachetName()` in `cmd/server/auth.go`, called after every HCA login.
+  A `custom_display_name` flag prevents syncs from clobbering manual renames.
 
 ### Errors
 - `errors.New` / `fmt.Errorf("...: %w", err)`. No third-party error libs.
@@ -394,6 +403,13 @@ doc proposing the change before writing code.
   duplicate the woff2s in the build.
 - **Don't add a second LLM provider** without also updating: `model_prices`,
   the `provider/` package, the compatibility-check probe, and this file.
+- **Don't let users set a pool key ceiling manually.** `max_micros` is always
+  derived from pioneer's `credit_limit_micros` — set at add time and kept in
+  sync by the reconciler. Users only control `shared_micros` (how much of
+  their ceiling to donate to the pool).
+- **Don't use the `spends`/`contributions` tables for real spend data.** They
+  exist for the legacy ledger layer but are empty in practice. Real spend is
+  in `pool_key_billing_rows`.
 - **Don't edit applied migrations.** Always write a new one.
 - **Don't store provider API keys in the DB.** Env vars only, loaded once at
   startup.
@@ -436,8 +452,11 @@ doc proposing the change before writing code.
   recording. Shared between both surfaces; changes affect everything.
 - `server/internal/auth/apikeys.go` — key generation, hashing, lookup,
   revocation.
-- `server/internal/ledger/balance.go` — contribution + spend math. Touched
-  by every request.
+- `server/internal/ledger/balance.go` — legacy contribution + spend math (pre-pool-key era). Still used for pre-flight balance checks.
+- `server/internal/pool/reconciler.go` — pioneer key health checks, billing row ingestion, spend attribution. Read before touching any pool_key_billing_rows logic.
+- `server/internal/api/web/allocations.go` — smart allocation algorithm. `RunSmartAllocation` is the entry point.
+- `server/internal/api/web/pool_keys.go` — pool key CRUD + probe endpoint. Two-stage add flow (probe → confirm).
+- `server/internal/pool/pool.go` — key picker. `PickOwnKeyWithPrivateBudget` tries user's own key first, falls back to `Pick()`.
 - `server/internal/provider/pioneer.go` — the only place that talks to
   pioneer.ai. Quirks documented here as discovered.
 - `server/db/migrations/` — append-only history of the schema.
@@ -455,17 +474,22 @@ doc proposing the change before writing code.
 OpenAI-compatible chat completions API. Specifics to verify and pin in
 `provider/pioneer.go`:
 
-- [ ] Does `stream_options.include_usage` emit usage in the final chunk?
-      If not, fall back to local tokenization for every request.
+- [x] `stream_options.include_usage` — emits usage in final chunk. Works.
+- [x] Billing confirmed: 1 pioneer credit = $0.01 = 10,000 potluck micros.
+- [x] Pioneer double-logs every request (two billing rows per call — one
+      `/v1/chat/completions`, one `openai_compat`). Take the `/v1/` row;
+      mark the other as duplicate. See `design/pool-keys.md`.
+- [x] 401 means key invalid OR daily limit hit — same error body, can't
+      distinguish. Soft-mark unhealthy, retry tomorrow.
+- [x] 503 means pioneer auth service down — don't mark unhealthy, just retry.
+- [x] Accepted plans: `pro` (100k credits/$1000/day) and `partner`
+      (40k credits/$400/day). Unknown plans rejected at add time.
+- [x] `max_micros` is set from pioneer's `credit_limit` at add time and
+      kept in sync by the reconciler on every health tick.
 - [ ] Tool-call delta format (full args per chunk vs accumulated string)
-- [ ] Reasoning content field name, if any (`reasoning_content`, inline,
-      none?)
-- [ ] Available models and per-token pricing → seed `model_prices`
-- [ ] Error format mid-stream (event named `error`, chunk with `error`
-      field, or silent EOS?)
+- [ ] Reasoning content field name, if any
 - [ ] Rate-limit headers and their meaning
-- [ ] Whether the tokenizer matches OpenAI's `cl100k_base`/`o200k_base` or
-      something custom
+- [ ] Tokenizer match vs OpenAI's cl100k_base/o200k_base
 
 Update this file (and add a fixture in `fakeprovider`) every time a new
 quirk is discovered.

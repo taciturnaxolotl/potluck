@@ -12,17 +12,21 @@ not "withstand state-level attacker."
 - HttpOnly, SameSite=Lax. Secure in production; the dev login does not
   set Secure to keep localhost workable.
 
-## Auth provider (TODO)
+## Auth provider
 
-The dev login (`POST /api/dev/login?email=...`) is a stand-in. The intended
-real flow is OAuth/OIDC against Hack Club Auth. When that lands, replace
-`/api/dev/login` with a real `/api/auth/{login,callback}` pair.
+OAuth/OIDC against Hack Club Auth (HCA). Flow:
+`GET /auth/login` → HCA authorize → `GET /auth/callback` → session cookie.
+Display names are synced from cachet (Hack Club's Slack directory) after
+each login via `syncCachetName()`. A `custom_display_name` flag on `users`
+prevents syncs from clobbering manually-set names.
 
 ## Provider key isolation
 
-`PIONEER_API_KEY` is loaded once in `config.Load` and held in process
-memory. It never enters the database, never leaves the backend, and is
-never logged. A leak of the SQLite file does not leak the key.
+Pioneer keys are contributed by users and stored AES-encrypted in
+`pool_keys.key_ciphertext`. The encryption key comes from
+`POTLUCK_POOL_KEY_ENCRYPTION_KEY` (env only). Plaintext keys are decrypted
+in-process only when making upstream calls and are never logged. A SQLite
+leak exposes ciphertext, not plaintext keys.
 
 ## Worker boundary
 
