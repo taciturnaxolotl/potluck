@@ -91,6 +91,7 @@ export const listConversations = () => api.get<Conversation[]>('/api/conversatio
 export const createConversation = (title: string) =>
   api.post<Conversation>('/api/conversations', { title });
 export const listMessages = (id: string) => api.get<Message[]>(`/api/conversations/${id}/messages`);
+export const deleteConversation = (id: string) => api.del<void>(`/api/conversations/${id}`);
 
 export type PoolStats = {
   balance_micros: number;

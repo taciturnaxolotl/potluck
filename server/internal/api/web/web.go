@@ -21,17 +21,20 @@ import (
 	"github.com/taciturnaxolotl/potluck/internal/auth"
 	"github.com/taciturnaxolotl/potluck/internal/ledger"
 	"github.com/taciturnaxolotl/potluck/internal/pool"
+	"github.com/taciturnaxolotl/potluck/internal/provider"
 	"github.com/taciturnaxolotl/potluck/internal/store"
 	"github.com/taciturnaxolotl/potluck/internal/stream"
 )
 
 // Server bundles the deps the web handlers need.
 type Server struct {
-	Q      *store.Queries
-	Auth   *auth.Service
-	Ledger *ledger.Service
-	Hub    *stream.Hub
-	Pool   *pool.Manager
+	Q            *store.Queries
+	Auth         *auth.Service
+	Ledger       *ledger.Service
+	Hub          *stream.Hub
+	Pool         *pool.Manager
+	Provider     *provider.Client // Pioneer upstream
+	FreeProvider *provider.Client // self-hosted free endpoint; nil if not configured
 }
 
 // Mount registers /api/* routes on r. The caller wraps with cookie-auth
@@ -52,6 +55,7 @@ func (s *Server) Mount(r chi.Router) {
 	r.Get("/conversations", s.handleListConversations)
 	r.Post("/conversations", s.handleCreateConversation)
 	r.Get("/conversations/{id}", s.handleGetConversation)
+	r.Delete("/conversations/{id}", s.handleDeleteConversation)
 	r.Get("/conversations/{id}/messages", s.handleListMessages)
 
 	r.Get("/keys", s.handleListKeys)
@@ -67,10 +71,9 @@ func (s *Server) Mount(r chi.Router) {
 	r.Post("/pool-keys/{id}/sync", s.handleSyncPoolKeySpend)
 	r.Delete("/pool-keys/{id}", s.handleDeletePoolKey)
 
-	r.Group(func(r chi.Router) {
-		r.Use(apimw.PoolGate(s.Q, s.Pool.HasHealthyKey, writeErr))
-		r.Post("/chat", s.handleChat)
-	})
+	// /chat has its own pool-gate check inside the handler so free/ models
+	// can bypass it without middleware running before the body is read.
+	r.Post("/chat", s.handleChat)
 	r.Get("/streams/{id}/events", s.handleStreamEvents)
 
 	s.mountAdmin(r)
@@ -280,6 +283,20 @@ func (s *Server) handleGetConversation(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, conv)
 }
 
+func (s *Server) handleDeleteConversation(w http.ResponseWriter, r *http.Request) {
+	u, _ := currentUser(r)
+	id := chi.URLParam(r, "id")
+	if err := s.Q.ArchiveConversation(r.Context(), store.ArchiveConversationParams{
+		ArchivedAt: sqlNullInt64(time.Now().Unix()),
+		ID:         id,
+		UserID:     u.ID,
+	}); err != nil {
+		writeErr(w, 500, "internal", err.Error())
+		return
+	}
+	w.WriteHeader(204)
+}
+
 func (s *Server) handleListMessages(w http.ResponseWriter, r *http.Request) {
 	u, _ := currentUser(r)
 	id := chi.URLParam(r, "id")
@@ -380,13 +397,6 @@ func (s *Server) handleRevokeKey(w http.ResponseWriter, r *http.Request) {
 }
 
 // ---- chat / streams ----------------------------------------------------
-
-// handleChat is a stub for the streaming endpoint. The full implementation
-// wires provider.Client → stream.Producer → DB and returns the stream id.
-// See design/streaming.md.
-func (s *Server) handleChat(w http.ResponseWriter, _ *http.Request) {
-	writeErr(w, 501, "not_implemented", "chat streaming pending wiring")
-}
 
 // handleStreamEvents serves SSE events for a given stream id, optionally
 // resuming from ?after_seq=N. Stub: replay from DB only.

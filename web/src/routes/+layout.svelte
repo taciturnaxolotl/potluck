@@ -8,8 +8,11 @@
 
   import { page } from '$app/state';
   import { cycleTheme, currentTheme, type Theme } from '$lib/theme';
-  import { me, balance, type User } from '$lib/api';
+  import { me, balance, deleteConversation, type User } from '$lib/api';
   import { auth } from '$lib/auth.svelte';
+  import { db, type DBConversation } from '$lib/db';
+  import { liveQuery } from 'dexie';
+  import { goto } from '$app/navigation';
   import type { Snippet } from 'svelte';
 
   let { children }: { children: Snippet } = $props();
@@ -17,6 +20,17 @@
   let theme = $state<Theme>('auto');
   let bal = $state<{ balance_usd: string } | null>(null);
   let authChecked = $state(false);
+
+  let chatConvs = $state<DBConversation[]>([]);
+  let onChat = $derived(page.url.pathname.startsWith('/chat'));
+
+  $effect(() => {
+    if (!onChat) return;
+    const sub = liveQuery(() =>
+      db.conversations.orderBy('updated_at').reverse().toArray()
+    ).subscribe({ next: (r) => (chatConvs = r), error: () => {} });
+    return () => sub.unsubscribe();
+  });
 
   $effect(() => {
     theme = currentTheme();
@@ -146,9 +160,7 @@
     { label: 'models', href: '/models', section: 'the pot' },
     { label: 'usage', href: '/usage', section: 'the pot' },
     { label: 'pool', href: '/pool', section: 'the pot' },
-    { label: 'docs', href: '/docs', section: 'the pot' },
-    { label: 'conversations', href: '/chat', section: 'yours' },
-    { label: 'settings', href: '/settings', section: 'yours' }
+    { label: 'docs', href: '/docs', section: 'the pot' }
   ];
 
   const adminNavItems: NavItem[] = [
@@ -171,6 +183,17 @@
 
   function isActive(href: string) {
     return page.url.pathname === href || page.url.pathname.startsWith(href + '/');
+  }
+
+  async function deleteThread(id: string, e: MouseEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    deleteConversation(id).catch(() => {}); // best-effort server sync
+    await db.conversations.delete(id);
+    await db.messages.where('conversation_id').equals(id).delete();
+    if (page.url.searchParams.get('c') === id) {
+      goto('/chat', { replaceState: true });
+    }
   }
 </script>
 
@@ -196,6 +219,36 @@
         {/each}
       {/each}
 
+      <!-- conversations section — always visible -->
+      <div class="nav-section">conversations</div>
+      <a
+        class="nav-item"
+        class:active={page.url.pathname === '/chat' && !page.url.searchParams.get('c')}
+        href="/chat"
+        data-sveltekit-preload-data="hover"
+      >converse</a>
+      {#if onChat}
+        {#each chatConvs as conv (conv.id)}
+          <div
+            class="nav-item nav-conv-row"
+            class:active={page.url.searchParams.get('c') === conv.id}
+          >
+            <a
+              class="nav-conv-link"
+              href="/chat?c={conv.id}"
+              title={conv.title}
+              data-sveltekit-preload-data="tap"
+            >{conv.title}</a>
+            <button
+              class="conv-del-btn"
+              onclick={(e) => deleteThread(conv.id, e)}
+              title="Delete thread"
+              aria-label="Delete thread"
+            >×</button>
+          </div>
+        {/each}
+      {/if}
+
       <div class="sidebar-foot">
         {#if auth.user}
           <a class="who" href="/settings">
@@ -217,7 +270,7 @@
       </div>
     </aside>
 
-    <main class="main">
+    <main class="main" class:chat-route={onChat}>
       {@render children()}
     </main>
   </div>
@@ -389,6 +442,70 @@
   .main {
     padding: 2rem 2.25rem;
     overflow-y: auto;
+  }
+  .main.chat-route {
+    padding: 0;
+    overflow: hidden;
+  }
+
+  /* ---- thread sub-items ------------------------------------------------ */
+  .nav-conv-row {
+    display: flex;
+    align-items: center;
+    padding: 0;
+    margin-bottom: 1px;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    opacity: 0.65;
+    transition: background 80ms ease, opacity 80ms ease;
+  }
+  .nav-conv-row:hover { opacity: 1; background: rgba(255, 217, 218, 0.04); }
+  .nav-conv-row.active {
+    background: var(--accent);
+    color: var(--text-on-accent);
+    font-weight: 500;
+    opacity: 1;
+  }
+  .nav-conv-link {
+    flex: 1;
+    min-width: 0;
+    padding: 5px 6px 5px 8px;
+    font-size: 12.5px;
+    color: inherit;
+    text-decoration: none;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .nav-conv-link:hover { text-decoration: none; }
+  .conv-del-btn {
+    flex-shrink: 0;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    margin-right: 3px;
+    background: none;
+    border: none;
+    border-radius: 3px;
+    color: inherit;
+    font-size: 13px;
+    line-height: 1;
+    cursor: pointer;
+    opacity: 0.6;
+    transition: opacity 60ms, background 60ms;
+  }
+  .nav-conv-row:hover .conv-del-btn { display: flex; }
+  .conv-del-btn:hover {
+    opacity: 1;
+    background: rgba(255,255,255,0.15);
+  }
+  .nav-conv-empty {
+    display: block;
+    font-size: 11.5px;
+    color: var(--text-faint);
+    padding: 4px 10px 4px 18px;
   }
 
   /* ---- splash shell --------------------------------------------------- */

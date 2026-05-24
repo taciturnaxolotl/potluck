@@ -25,6 +25,10 @@ export interface DBMessage {
   model: string | null;
   created_at: number;
   pending?: boolean; // optimistic; cleared on server upsert
+  // generation stats — only present on messages generated in this client
+  ttft?: number;   // ms to first token
+  tps?: number;    // completion tokens per second
+  tokens?: number; // completion token count
 }
 
 class PotluckDB extends Dexie {
