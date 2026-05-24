@@ -20,11 +20,12 @@ func publicStatsHandler(q *store.Queries) http.HandlerFunc {
 		now := time.Now()
 		startOfDay := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location()).Unix()
 
-		balance, err := q.PoolTotalBalance(ctx)
+		balanceRaw, err := q.PoolTotalBalance(ctx)
 		if err != nil {
 			statsFail(w, err)
 			return
 		}
+		balance := toInt64(balanceRaw)
 		spentTodayRaw, err := q.PoolSpentSince(ctx, startOfDay)
 		if err != nil {
 			statsFail(w, err)
@@ -58,7 +59,7 @@ func publicStatsHandler(q *store.Queries) http.HandlerFunc {
 		w.Header().Set("Cache-Control", "public, max-age=15")
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"balance_micros":     balance,
-			"balance_usd":        money.Micros(balance).USDString(),
+			"balance_usd":        money.Micros(money.Micros(balance)).USDString(),
 			"spent_today_micros": spentToday,
 			"spent_today_usd":    money.Micros(spentToday).USDString(),
 			"contributors":       contributors,

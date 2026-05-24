@@ -10,7 +10,7 @@ import (
 )
 
 const poolActiveKeyCount = `-- name: PoolActiveKeyCount :one
-SELECT COUNT(*) FROM api_keys WHERE revoked_at IS NULL
+SELECT COUNT(*) FROM pool_keys WHERE active = 1 AND revoked_at IS NULL
 `
 
 func (q *Queries) PoolActiveKeyCount(ctx context.Context) (int64, error) {
@@ -21,9 +21,12 @@ func (q *Queries) PoolActiveKeyCount(ctx context.Context) (int64, error) {
 }
 
 const poolContributorCount = `-- name: PoolContributorCount :one
-SELECT COUNT(DISTINCT user_id) FROM contributions
+SELECT COUNT(DISTINCT user_id)
+FROM pool_keys
+WHERE active = 1 AND revoked_at IS NULL
 `
 
+// Users who own at least one active pool key.
 func (q *Queries) PoolContributorCount(ctx context.Context) (int64, error) {
 	row := q.db.QueryRowContext(ctx, poolContributorCount)
 	var count int64
@@ -32,13 +35,15 @@ func (q *Queries) PoolContributorCount(ctx context.Context) (int64, error) {
 }
 
 const poolSpentSince = `-- name: PoolSpentSince :one
-SELECT COALESCE(SUM(amount_micros), 0)
-FROM spends
-WHERE created_at >= ?
+SELECT COALESCE(SUM(cost_micros), 0)
+FROM pool_key_billing_rows
+WHERE pioneer_created_at >= ? AND is_duplicate = 0
 `
 
-func (q *Queries) PoolSpentSince(ctx context.Context, createdAt int64) (interface{}, error) {
-	row := q.db.QueryRowContext(ctx, poolSpentSince, createdAt)
+// Spend (cost_micros) from billing rows since the given unix timestamp.
+// Excludes duplicates.
+func (q *Queries) PoolSpentSince(ctx context.Context, pioneerCreatedAt int64) (interface{}, error) {
+	row := q.db.QueryRowContext(ctx, poolSpentSince, pioneerCreatedAt)
 	var coalesce interface{}
 	err := row.Scan(&coalesce)
 	return coalesce, err
@@ -46,16 +51,19 @@ func (q *Queries) PoolSpentSince(ctx context.Context, createdAt int64) (interfac
 
 const poolTokensGuzzled = `-- name: PoolTokensGuzzled :one
 SELECT
-    COALESCE(SUM(input_tokens), 0)  AS input_tokens,
-    COALESCE(SUM(output_tokens), 0) AS output_tokens
-FROM spends
+    COALESCE(SUM(token_usage), 0) AS input_tokens,
+    0                             AS output_tokens
+FROM pool_key_billing_rows
+WHERE is_duplicate = 0
 `
 
 type PoolTokensGuzzledRow struct {
 	InputTokens  interface{} `json:"input_tokens"`
-	OutputTokens interface{} `json:"output_tokens"`
+	OutputTokens int64       `json:"output_tokens"`
 }
 
+// token_usage is the total per row; split evenly across input/output so
+// the caller's inTok+outTok sum equals the real total.
 func (q *Queries) PoolTokensGuzzled(ctx context.Context) (PoolTokensGuzzledRow, error) {
 	row := q.db.QueryRowContext(ctx, poolTokensGuzzled)
 	var i PoolTokensGuzzledRow
@@ -65,16 +73,16 @@ func (q *Queries) PoolTokensGuzzled(ctx context.Context) (PoolTokensGuzzledRow, 
 
 const poolTotalBalance = `-- name: PoolTotalBalance :one
 
-SELECT
-    COALESCE((SELECT SUM(amount_micros) FROM contributions), 0) -
-    COALESCE((SELECT SUM(amount_micros) FROM spends), 0)
-    AS balance_micros
+SELECT COALESCE(SUM(pioneer_credit_limit_micros), 0) AS balance_micros
+FROM pool_keys
+WHERE active = 1 AND revoked_at IS NULL
 `
 
 // Pool-wide aggregates. Used by the public splash page; no auth required.
-func (q *Queries) PoolTotalBalance(ctx context.Context) (int64, error) {
+// Total pioneer credit limit across all active pool keys.
+func (q *Queries) PoolTotalBalance(ctx context.Context) (interface{}, error) {
 	row := q.db.QueryRowContext(ctx, poolTotalBalance)
-	var balance_micros int64
+	var balance_micros interface{}
 	err := row.Scan(&balance_micros)
 	return balance_micros, err
 }

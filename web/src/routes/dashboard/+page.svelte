@@ -98,7 +98,7 @@
     <div class="stat-grid">
       <div class="stat">
         <div class="stat-label">Your allowance today</div>
-        <div class="stat-num">{fmtStat(myAlloc?.shared_allowance_today_micros ?? 0)}<span class="stat-unit">to spend shared</span></div>
+        <div class="stat-num">{fmtStat((myAlloc?.shared_allowance_today_micros ?? 0) + (myAlloc?.private_reservation_micros ?? 0))}<span class="stat-unit">total today</span></div>
       </div>
       <div class="stat">
         <div class="stat-label">Pool remaining</div>
@@ -181,9 +181,9 @@
                 <td class="num mono usage-cell" class:negative={u.shared_remaining_today_micros < 0}>
                   <div class="usage-wrap">
                     <div class="usage-numbers">
-                      <span class="usage-used">{trim(formatUSD(u.shared_spent_today_micros))}</span>
+                      <span class="usage-used">{trim(formatUSD(u.shared_spent_today_micros + u.private_spent_today_micros))}</span>
                       <span class="usage-sep">/</span>
-                      <span class="usage-total">{trim(formatUSD(u.shared_allowance_today_micros))}</span>
+                      <span class="usage-total">{trim(formatUSD(u.shared_allowance_today_micros + u.private_reservation_micros))}</span>
                     </div>
                     <div class="usage-bar" role="presentation">
                       <div class="seg seg-used" style="width:{_usedW}%"></div>

@@ -119,11 +119,17 @@ type Querier interface {
 	// Lowest today_micros wins; random tiebreak.
 	PickPoolKeyV2(ctx context.Context) (PoolKey, error)
 	PoolActiveKeyCount(ctx context.Context) (int64, error)
+	// Users who own at least one active pool key.
 	PoolContributorCount(ctx context.Context) (int64, error)
-	PoolSpentSince(ctx context.Context, createdAt int64) (interface{}, error)
+	// Spend (cost_micros) from billing rows since the given unix timestamp.
+	// Excludes duplicates.
+	PoolSpentSince(ctx context.Context, pioneerCreatedAt int64) (interface{}, error)
+	// token_usage is the total per row; split evenly across input/output so
+	// the caller's inTok+outTok sum equals the real total.
 	PoolTokensGuzzled(ctx context.Context) (PoolTokensGuzzledRow, error)
 	// Pool-wide aggregates. Used by the public splash page; no auth required.
-	PoolTotalBalance(ctx context.Context) (int64, error)
+	// Total pioneer credit limit across all active pool keys.
+	PoolTotalBalance(ctx context.Context) (interface{}, error)
 	PoolUserCount(ctx context.Context) (int64, error)
 	PutIdempotency(ctx context.Context, arg PutIdempotencyParams) error
 	// Called after a request settles. Resets daily counter if the day rolled over.
