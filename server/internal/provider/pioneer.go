@@ -23,10 +23,9 @@ type Client struct {
 	HTTP    *http.Client
 }
 
-func New(baseURL, apiKey string) *Client {
+func New(baseURL string) *Client {
 	return &Client{
 		BaseURL: strings.TrimRight(baseURL, "/"),
-		APIKey:  apiKey,
 		HTTP:    &http.Client{},
 	}
 }

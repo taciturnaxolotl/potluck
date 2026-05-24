@@ -95,13 +95,9 @@ func main() {
 		cfg.Spend.MaxConcurrentStreams,
 	)
 	hub := stream.NewHub(q)
-	pioneer := provider.New(cfg.Pioneer.BaseURL, cfg.Pioneer.APIKey)
+	pioneer := provider.New(cfg.Pioneer.BaseURL)
 
-	if !cfg.Pioneer.Valid() {
-		log.Warn("pioneer.ai not configured — /v1/* will refuse upstream calls")
-	}
-
-	keyPool, err := pool.New(q, cfg.PoolKeySecret, cfg.Pioneer.APIKey)
+	keyPool, err := pool.New(q, cfg.PoolKeySecret)
 	if err != nil {
 		log.Fatal("pool: init failed", "err", err)
 	}

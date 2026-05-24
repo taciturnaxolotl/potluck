@@ -6,8 +6,7 @@
 //
 // Keys are stored AES-256-GCM encrypted at rest. The 32-byte secret is loaded
 // from the POTLUCK_POOL_KEY_SECRET env var (hex or base64). If no secret is
-// configured the pool operates in "fallback" mode, using the single key from
-// PIONEER_API_KEY.
+// configured, keys are stored in plaintext — only safe for dev.
 package pool
 
 import (
@@ -41,9 +40,7 @@ type Manager struct {
 //   - q: store.Queries for DB access.
 //   - secretHex: 64-char hex string (32 bytes). Empty string disables
 //     encryption — only safe for dev without real keys in the DB.
-//   - fallbackKey: the static PIONEER_API_KEY; used when the pool has no
-//     active keys. Pass "" to disable fallback.
-func New(q *store.Queries, secretHex string, _ string) (*Manager, error) {
+func New(q *store.Queries, secretHex string) (*Manager, error) {
 	m := &Manager{q: q}
 	if secretHex != "" {
 		// Accept both hex (64 chars) and base64 (44 chars) for convenience.

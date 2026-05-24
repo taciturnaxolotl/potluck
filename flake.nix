@@ -1,5 +1,5 @@
 {
-  description = "potluck — dev shell";
+  description = "potluck — pooled chat frontend over pioneer.ai";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
@@ -15,7 +15,7 @@
           server = pkgs.buildGoModule {
             pname = "potluck";
             version = "0.0.1";
-            src = ../server;
+            src = ./server;
             vendorHash = "sha256-BYY9SBZREn0hTdX5aQZ8pc0czMzANF0iB+ckSQFmVFk=";
             subPackages = [ "cmd/server" ];
             ldflags = [ "-s" "-w" ];

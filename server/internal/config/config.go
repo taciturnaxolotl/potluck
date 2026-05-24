@@ -91,17 +91,11 @@ type Config struct {
 	WaitlistEnabled bool `env:"POTLUCK_WAITLIST_ENABLED" envDefault:"false"`
 }
 
-// Pioneer holds the upstream pioneer.ai inference credentials.
+// Pioneer holds upstream pioneer.ai connection settings.
 type Pioneer struct {
-	// API key. Required; the server refuses to start without it in production.
-	APIKey string `env:"API_KEY"`
-
 	// Base URL — override for testing against the fake provider.
 	BaseURL string `env:"BASE_URL" envDefault:"https://api.pioneer.ai"`
 }
-
-// Valid returns true if pioneer is configured.
-func (p Pioneer) Valid() bool { return p.APIKey != "" }
 
 // HCAConfig holds the Hack Club Auth OAuth credentials. Empty client_id
 // disables the integration entirely (the splash sign-in button still
@@ -177,9 +171,6 @@ func MustGet() Config {
 	var c Config
 	if err := env.Parse(&c); err != nil {
 		panic("config: " + err.Error())
-	}
-	if c.IsProduction() && !c.Pioneer.Valid() {
-		panic("config: PIONEER_API_KEY required in production")
 	}
 	if c.IsProduction() && c.SessionSecret == "dev-only-not-secret" {
 		panic("config: POTLUCK_SESSION_SECRET must be set in production")
