@@ -60,11 +60,6 @@ type Config struct {
 	// and email links once those land.
 	BaseURL string `env:"POTLUCK_BASE_URL" envDefault:"http://localhost:8080"`
 
-	// Session secret signing the cookie store. Generate with:
-	//   openssl rand -base64 32
-	// Required in production; dev has no default to nudge you to set one.
-	SessionSecret string `env:"POTLUCK_SESSION_SECRET" envDefault:"dev-only-not-secret"`
-
 	// Session cookie TTL. Idle sessions die after this many seconds of
 	// inactivity (the last_used_at column is bumped on every request).
 	SessionTTL int `env:"POTLUCK_SESSION_TTL" envDefault:"7776000"` // 90 days
@@ -171,9 +166,6 @@ func MustGet() Config {
 	var c Config
 	if err := env.Parse(&c); err != nil {
 		panic("config: " + err.Error())
-	}
-	if c.IsProduction() && c.SessionSecret == "dev-only-not-secret" {
-		panic("config: POTLUCK_SESSION_SECRET must be set in production")
 	}
 	return c
 }

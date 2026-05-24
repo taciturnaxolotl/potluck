@@ -9,13 +9,9 @@ Config wraps every server-level setting with sensible defaults.
  - `POTLUCK_ENVIRONMENT` (default: `local`) - Environment the app is running in. Options: local or production.
  - `POTLUCK_BASE_URL` (default: `http://localhost:8080`) - Public-facing base URL of the application. Used for OAuth redirects
 and email links once those land.
- - `POTLUCK_SESSION_SECRET` (default: `dev-only-not-secret`) - Session secret signing the cookie store. Generate with:
-  openssl rand -base64 32
-Required in production; dev has no default to nudge you to set one.
  - `POTLUCK_SESSION_TTL` (default: `7776000`) - Session cookie TTL. Idle sessions die after this many seconds of
 inactivity (the last_used_at column is bumped on every request).
  - Pioneer.ai inference credentials.
-   - `PIONEER_API_KEY` - API key. Required; the server refuses to start without it in production.
    - `PIONEER_BASE_URL` (default: `https://api.pioneer.ai`) - Base URL — override for testing against the fake provider.
  - `POTLUCK_POOL_KEY_SECRET` - Pool key encryption secret. 64-char hex (32 bytes) or base64 (44 chars).
 Generate with: openssl rand -hex 32
@@ -39,4 +35,6 @@ spending pattern changes faster. Default 10 minutes.
    - `LITESTREAM_B2_BUCKET` - B2 bucket name.
    - `LITESTREAM_B2_KEY_ID` - B2 application key id.
    - `LITESTREAM_B2_APPLICATION_KEY` - B2 application key.
+ - `POTLUCK_WAITLIST_ENABLED` (default: `false`) - WaitlistEnabled places new sign-ups in 'waitlisted' status instead of
+'active'. Existing users keep their current status.
 
