@@ -154,6 +154,8 @@
               {@const _bonus = u.shared_allowance_bonus_micros}
               {@const _private = u.private_reservation_micros}
               {@const _sharedCap = _floor + _bonus}
+              {@const _inCap = Math.min(_sharedUsed, _sharedCap) + (_private > 0 ? Math.min(_privateUsed, _private) : 0)}
+              {@const _ov = Math.max(0, _sharedUsed - _sharedCap) + Math.max(0, _privateUsed - _private)}
               {@const _total = Math.max(_sharedCap + _private, _sharedUsed + _privateUsed) || 1}
               {@const _usedW = (Math.min(_sharedUsed, _sharedCap) / _total) * 100}
               {@const _floorRemW = (Math.max(0, _floor - _sharedUsed) / _total) * 100}
@@ -199,41 +201,70 @@
                       {/if}
                     </div>
                     <div class="usage-tip" role="tooltip">
-                      <div class="tip-rows">
-                        <div class="tip-seg">
+                      <div class="tip-group">
+                        <div class="tip-row">
                           <span class="tip-dot dot-used"></span>
-                          <span class="tip-label">used</span>
-                          <span class="tip-val mono">{trim(formatUSD(u.shared_spent_today_micros + u.private_spent_today_micros))}</span>
-                          {#if u.private_spent_today_micros > 0}
-                            <span class="tip-sub">{trim(formatUSD(u.shared_spent_today_micros))} shared + {trim(formatUSD(u.private_spent_today_micros))} private</span>
-                          {/if}
+                          <span class="tip-label">usage</span>
+                          <span class="tip-val mono">{trim(formatUSD(_inCap))}</span>
                         </div>
-                        <div class="tip-seg">
+                        {#if _ov > 0}
+                          <div class="tip-row">
+                            <span class="tip-dot dot-over"></span>
+                            <span class="tip-label">overage</span>
+                            <span class="tip-val mono tip-over">+{trim(formatUSD(_ov))}</span>
+                          </div>
+                        {/if}
+                      </div>
+                      <div class="tip-sep"></div>
+                      <div class="tip-group">
+                        <div class="tip-row">
                           <span class="tip-dot dot-floor"></span>
                           <span class="tip-label">floor</span>
-                          <span class="tip-val mono">{trim(formatUSD(u.shared_allowance_floor_micros))}</span>
+                          <span class="tip-val mono">{trim(formatUSD(_floor))}</span>
                         </div>
-                        {#if u.shared_allowance_bonus_micros > 0}
-                        <div class="tip-seg">
-                          <span class="tip-dot dot-bonus"></span>
-                          <span class="tip-label">bonus</span>
-                          <span class="tip-val mono">+{trim(formatUSD(u.shared_allowance_bonus_micros))}</span>
-                        </div>
+                        {#if _bonus > 0}
+                          <div class="tip-row">
+                            <span class="tip-dot dot-bonus"></span>
+                            <span class="tip-label">bonus</span>
+                            <span class="tip-val mono">+{trim(formatUSD(_bonus))}</span>
+                          </div>
                         {/if}
-                        {#if u.private_reservation_micros > 0}
-                        <div class="tip-seg">
-                          <span class="tip-dot dot-private"></span>
-                          <span class="tip-label">private</span>
-                          <span class="tip-val mono">+{trim(formatUSD(u.private_reservation_micros))}</span>
-                        </div>
+                        {#if _private > 0}
+                          <div class="tip-row">
+                            <span class="tip-dot dot-private"></span>
+                            <span class="tip-label">private</span>
+                            <span class="tip-val mono">+{trim(formatUSD(_private))}</span>
+                          </div>
                         {/if}
-                        <div class="tip-seg tip-total">
+                        <div class="tip-row tip-total-row">
                           <span class="tip-dot"></span>
                           <span class="tip-label">total</span>
-                          <span class="tip-val mono">{trim(formatUSD(u.shared_allowance_today_micros + u.private_reservation_micros))}</span>
+                          <span class="tip-val mono">{trim(formatUSD(_sharedCap + _private))}</span>
                         </div>
                       </div>
-                      <div class="tip-meta">{#if u.history_days_used >= 3}~{trim(formatUSD(u.predicted_total_today_micros))} predicted · {u.history_days_used}/30 active days{u.is_donating ? ' · donating' : ''}{:else}no history ({u.history_days_used}/3 days){/if}</div>
+                      <div class="tip-sep"></div>
+                      <div class="tip-group">
+                        {#if u.history_days_used >= 3}
+                          <div class="tip-row">
+                            <span class="tip-dot dot-pred"></span>
+                            <span class="tip-label">predicted</span>
+                            <span class="tip-val mono">{trim(formatUSD(u.predicted_total_today_micros))}</span>
+                          </div>
+                        {/if}
+                        <div class="tip-row tip-status-row">
+                          <span class="tip-dot"></span>
+                          {#if u.is_donating}
+                            <span class="tip-status tip-donating" title="Your predicted spend is below your fair share — unused floor feeds the bonus pool for heavy users. Bonus shrinks as the day progresses.">donating slack → pool</span>
+                          {:else if _bonus > 0}
+                            <span class="tip-status tip-receiving" title="You're a historically heavy user — you receive redistributed slack from light users. Bonus decays toward end of day.">receiving from pool</span>
+                          {:else}
+                            <span class="tip-status">{u.history_days_used < 3 ? `${u.history_days_used}/3 days — building history` : 'neutral'}</span>
+                          {/if}
+                        </div>
+                        {#if u.history_days_used >= 3}
+                          <div class="tip-meta">{u.history_days_used}/30 active days · bonus decays through day</div>
+                        {/if}
+                      </div>
                     </div>
                   </div>
                 </td>
@@ -455,18 +486,41 @@ curl {typeof window !== 'undefined' ? window.location.origin : 'https://potluck.
     white-space: normal;
   }
   .usage-cell:hover .usage-tip { opacity: 1; }
-  .tip-rows { display: flex; flex-direction: column; gap: 0.2rem; margin-bottom: 0.5rem; }
-  .tip-seg { display: grid; grid-template-columns: 0.6rem 3rem 1fr; align-items: baseline; gap: 0.4rem; font-size: 0.75rem; }
-  .tip-seg.tip-total { margin-top: 0.25rem; padding-top: 0.25rem; border-top: 1px solid var(--border); }
+
+  .tip-group { display: flex; flex-direction: column; gap: 0.18rem; }
+  .tip-sep {
+    height: 1px;
+    background: var(--border);
+    margin: 0.4rem 0;
+  }
+  .tip-row {
+    display: grid;
+    grid-template-columns: 8px 3.2rem 1fr;
+    align-items: baseline;
+    gap: 0.35rem;
+    font-size: 0.75rem;
+  }
+  .tip-total-row {
+    margin-top: 0.25rem;
+    padding-top: 0.25rem;
+    border-top: 1px solid var(--border);
+  }
   .tip-dot { width: 6px; height: 6px; border-radius: 50%; margin-top: 2px; flex-shrink: 0; }
   .dot-used    { background: var(--accent); }
+  .dot-over    { background: light-dark(#c2410c, #ef4444); }
   .dot-floor   { background: light-dark(oklch(85% 0.05 350), oklch(40% 0.08 350)); }
   .dot-bonus   { background: light-dark(oklch(78% 0.13 90), oklch(55% 0.15 80)); }
   .dot-private { background: light-dark(oklch(60% 0.12 230), oklch(65% 0.12 230)); }
+  .dot-pred    { background: light-dark(oklch(65% 0.08 270), oklch(60% 0.1 270)); }
   .tip-label { color: var(--text-muted); }
-  .tip-val { color: var(--text); }
-  .tip-sub { grid-column: 3; font-size: 0.68rem; color: var(--text-muted); margin-top: -0.1rem; }
+  .tip-val   { color: var(--text); justify-self: end; font-feature-settings: "tnum" 1; }
+  .tip-over  { color: light-dark(#c2410c, #ef4444); }
+  .tip-status-row { grid-template-columns: 8px 1fr; }
+  .tip-status { color: var(--text-muted); font-size: 0.72rem; grid-column: 2; }
+  .tip-donating  { color: light-dark(oklch(55% 0.14 80), oklch(72% 0.16 80)); }
+  .tip-receiving { color: var(--accent); }
   .tip-meta {
+    margin-top: 0.4rem;
     padding-top: 0.4rem;
     border-top: 1px solid var(--border);
     font-size: 0.68rem;

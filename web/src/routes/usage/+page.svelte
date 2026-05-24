@@ -37,10 +37,17 @@
   let spendDays = $derived.by(() => {
     const map  = new Map(daily.map(d => [d.day, d]));
     const now  = Math.floor(Date.now() / 1000);
-    const out: { day: number; usd: number }[] = [];
+    const out: { day: number; usd: number; micros: number; inputTok: number; outputTok: number }[] = [];
     for (let i = 0; i < 30; i++) {
       const d = (Math.floor((now - 29 * 86400) / 86400) + i) * 86400;
-      out.push({ day: d, usd: (map.get(d)?.amount_micros ?? 0) / 1_000_000 });
+      const row = map.get(d);
+      out.push({
+        day: d,
+        usd: (row?.amount_micros ?? 0) / 1_000_000,
+        micros: row?.amount_micros ?? 0,
+        inputTok: row?.input_tokens ?? 0,
+        outputTok: row?.output_tokens ?? 0,
+      });
     }
     return out;
   });
@@ -83,18 +90,29 @@
     return m;
   });
 
-  type Seg = { model: string; micros: number; modelIdx: number; y: number; h: number };
+  let byModelIdx = $derived(new Map(byModel.map(r => [`${r.day}:${r.model}`, r])));
+
+  type Seg = { model: string; micros: number; inputTok: number; outputTok: number; modelIdx: number; y: number; h: number };
   let stackBars = $derived.by(() =>
     stackData.days.map(d => {
       const dm = stackData.lookup.get(d);
       const segs: Seg[] = [];
       let stackY = PAD.top + CH;
       for (let mi = 0; mi < stackData.models.length; mi++) {
+        const row = byModelIdx.get(`${d}:${stackData.models[mi]}`);
         const micros = dm?.get(stackData.models[mi]) ?? 0;
         if (!micros) continue;
         const h = Math.max(1, (micros / maxStack) * CH);
         stackY -= h;
-        segs.push({ model: stackData.models[mi], micros, modelIdx: mi, y: stackY, h });
+        segs.push({
+          model: stackData.models[mi],
+          micros,
+          inputTok: row?.input_tokens ?? 0,
+          outputTok: row?.output_tokens ?? 0,
+          modelIdx: mi,
+          y: stackY,
+          h,
+        });
       }
       return { day: d, segs };
     })
@@ -108,15 +126,22 @@
   function stackBarW()           { return (CW / 7) * 0.8; }
 
   // ── tooltip ───────────────────────────────────────────────────────────────
-  type Tip = { x: number; y: number; lines: string[] } | null;
-  let spendTip = $state<Tip>(null);
-  let stackTip = $state<Tip>(null);
+  const TIP_W  = 158; // spend tooltip width
+  const TIP_WS = 170; // stack tooltip width (room for model name)
+  const TIP_Y  = PAD.top + 2;
 
-  function showSpendTip(event: MouseEvent, lines: string[], anchorX: number) {
-    spendTip = { x: Math.min(anchorX, W - 120), y: PAD.top - 4, lines };
+  type SpendTip = { x: number; day: string; inputTok: number; outputTok: number; totalMicros: number } | null;
+  type StackTip = { x: number; day: string; model: string; inputTok: number; outputTok: number; micros: number } | null;
+  let spendTip = $state<SpendTip>(null);
+  let stackTip = $state<StackTip>(null);
+
+  function showSpendTip(_e: MouseEvent, d: typeof spendDays[0], anchorX: number) {
+    const x = Math.min(Math.max(anchorX - TIP_W / 2, PAD.left), W - TIP_W - PAD.right);
+    spendTip = { x, day: fmtDay(d.day), inputTok: d.inputTok, outputTok: d.outputTok, totalMicros: d.micros };
   }
-  function showStackTip(event: MouseEvent, lines: string[], anchorX: number) {
-    stackTip = { x: Math.min(anchorX, W - 140), y: PAD.top - 4, lines };
+  function showStackTip(_e: MouseEvent, day: number, seg: Seg, anchorX: number) {
+    const x = Math.min(Math.max(anchorX - TIP_WS / 2, PAD.left), W - TIP_WS - PAD.right);
+    stackTip = { x, day: fmtDay(day), model: shortModel(seg.model), inputTok: seg.inputTok, outputTok: seg.outputTok, micros: seg.micros };
   }
   function hideSpendTip() { spendTip = null; }
   function hideStackTip() { stackTip = null; }
@@ -199,7 +224,7 @@
               x={bx} y={by_} width={bw} height={bh}
               class="bar"
               rx="2"
-              onmouseenter={(e) => showSpendTip(e, [fmtDay(d.day), fmtUSD(d.usd)], bx + bw / 2)}
+              onmouseenter={(e) => showSpendTip(e, d, bx + bw / 2)}
               onmouseleave={hideSpendTip}
               role="img"
               aria-label="{fmtDay(d.day)}: {fmtUSD(d.usd)}"
@@ -216,15 +241,19 @@
           {/each}
           <!-- tooltip -->
           {#if spendTip}
+            {@const tx = spendTip.x}
+            {@const ty = TIP_Y}
             <g class="tooltip-group">
-              <rect
-                x={spendTip.x - 4} y={spendTip.y - 14}
-                width={100} height={spendTip.lines.length * 16 + 10}
-                class="tip-bg" rx="3"
-              />
-              {#each spendTip.lines as line, li}
-                <text x={spendTip.x} y={spendTip.y + li * 16} class="tip-text {li === 0 ? 'tip-title' : 'tip-val'}">{line}</text>
-              {/each}
+              <rect x={tx} y={ty} width={TIP_W} height={77} class="tip-bg" rx="4"/>
+              <text x={tx + 8}         y={ty + 13} class="tip-text tip-title">{spendTip.day}</text>
+              <line x1={tx + 5} y1={ty + 19} x2={tx + TIP_W - 5} y2={ty + 19} class="tip-divider"/>
+              <text x={tx + 8}         y={ty + 32} class="tip-text tip-label">in</text>
+              <text x={tx + TIP_W - 8} y={ty + 32} class="tip-text tip-model" text-anchor="end">{fmtTokens(spendTip.inputTok)}</text>
+              <text x={tx + 8}         y={ty + 46} class="tip-text tip-label">out</text>
+              <text x={tx + TIP_W - 8} y={ty + 46} class="tip-text tip-model" text-anchor="end">{fmtTokens(spendTip.outputTok)}</text>
+              <line x1={tx + 5} y1={ty + 52} x2={tx + TIP_W - 5} y2={ty + 52} class="tip-divider"/>
+              <text x={tx + 8}         y={ty + 65} class="tip-text tip-label">spend</text>
+              <text x={tx + TIP_W - 8} y={ty + 65} class="tip-text tip-val"   text-anchor="end">{fmtMicros(spendTip.totalMicros)}</text>
             </g>
           {/if}
         </svg>
@@ -253,7 +282,7 @@
                   style="fill:{PALETTE[seg.modelIdx % PALETTE.length]}"
                   class="bar stacked"
                   rx="2"
-                  onmouseenter={(e) => showStackTip(e, [fmtDay(bar.day), shortModel(seg.model), fmtMicros(seg.micros)], bx + bw / 2)}
+                  onmouseenter={(e) => showStackTip(e, bar.day, seg, bx + bw / 2)}
                   onmouseleave={hideStackTip}
                   role="img"
                   aria-label="{fmtDay(bar.day)} {seg.model}: {fmtMicros(seg.micros)}"
@@ -262,15 +291,20 @@
               <text x={bx + bw / 2} y={H - 6} class="tick" text-anchor="middle">{fmtDay(bar.day)}</text>
             {/each}
             {#if stackTip}
+              {@const tx = stackTip.x}
+              {@const ty = TIP_Y}
               <g class="tooltip-group">
-                <rect
-                  x={stackTip.x - 4} y={stackTip.y - 14}
-                  width={130} height={stackTip.lines.length * 16 + 10}
-                  class="tip-bg" rx="3"
-                />
-                {#each stackTip.lines as line, li}
-                  <text x={stackTip.x} y={stackTip.y + li * 16} class="tip-text {li === 0 ? 'tip-title' : li === stackTip.lines.length - 1 ? 'tip-val' : 'tip-model'}">{line}</text>
-                {/each}
+                <rect x={tx} y={ty} width={TIP_WS} height={91} class="tip-bg" rx="4"/>
+                <text x={tx + 8}          y={ty + 13} class="tip-text tip-title">{stackTip.day}</text>
+                <text x={tx + 8}          y={ty + 25} class="tip-text tip-model">{stackTip.model}</text>
+                <line x1={tx + 5} y1={ty + 31} x2={tx + TIP_WS - 5} y2={ty + 31} class="tip-divider"/>
+                <text x={tx + 8}          y={ty + 44} class="tip-text tip-label">in</text>
+                <text x={tx + TIP_WS - 8} y={ty + 44} class="tip-text tip-model" text-anchor="end">{fmtTokens(stackTip.inputTok)}</text>
+                <text x={tx + 8}          y={ty + 58} class="tip-text tip-label">out</text>
+                <text x={tx + TIP_WS - 8} y={ty + 58} class="tip-text tip-model" text-anchor="end">{fmtTokens(stackTip.outputTok)}</text>
+                <line x1={tx + 5} y1={ty + 64} x2={tx + TIP_WS - 5} y2={ty + 64} class="tip-divider"/>
+                <text x={tx + 8}          y={ty + 77} class="tip-text tip-label">spend</text>
+                <text x={tx + TIP_WS - 8} y={ty + 77} class="tip-text tip-val"   text-anchor="end">{fmtMicros(stackTip.micros)}</text>
               </g>
             {/if}
           </svg>
@@ -346,9 +380,12 @@
     font-size: 9px;
     pointer-events: none;
   }
-  .tip-title { fill: var(--text-muted); }
-  .tip-model { fill: var(--text); }
-  .tip-val   { fill: var(--accent); }
+  .tip-title   { fill: var(--text-muted); }
+  .tip-label   { fill: var(--text-muted); }
+  .tip-model   { fill: var(--text); }
+  .tip-val     { fill: var(--accent); font-weight: 500; }
+  .tip-divider { stroke: var(--border); stroke-width: 0.75; }
+  .tooltip-group { pointer-events: none; }
 
   /* legend */
   .legend {
