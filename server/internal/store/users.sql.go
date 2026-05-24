@@ -10,10 +10,21 @@ import (
 	"database/sql"
 )
 
+const countAdmins = `-- name: CountAdmins :one
+SELECT COUNT(*) FROM users WHERE is_admin = 1
+`
+
+func (q *Queries) CountAdmins(ctx context.Context) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countAdmins)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createUser = `-- name: CreateUser :one
 INSERT INTO users (id, email, display_name, created_at)
 VALUES (?, ?, ?, ?)
-RETURNING id, email, display_name, created_at, last_seen_at, hca_id, slack_id, verification_status, custom_display_name
+RETURNING id, email, display_name, created_at, last_seen_at, hca_id, slack_id, verification_status, custom_display_name, is_admin, status
 `
 
 type CreateUserParams struct {
@@ -41,12 +52,23 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 		&i.SlackID,
 		&i.VerificationStatus,
 		&i.CustomDisplayName,
+		&i.IsAdmin,
+		&i.Status,
 	)
 	return i, err
 }
 
+const deleteUserByID = `-- name: DeleteUserByID :exec
+DELETE FROM users WHERE id = ?
+`
+
+func (q *Queries) DeleteUserByID(ctx context.Context, id string) error {
+	_, err := q.db.ExecContext(ctx, deleteUserByID, id)
+	return err
+}
+
 const getUserByEmail = `-- name: GetUserByEmail :one
-SELECT id, email, display_name, created_at, last_seen_at, hca_id, slack_id, verification_status, custom_display_name FROM users WHERE email = ?
+SELECT id, email, display_name, created_at, last_seen_at, hca_id, slack_id, verification_status, custom_display_name, is_admin, status FROM users WHERE email = ?
 `
 
 func (q *Queries) GetUserByEmail(ctx context.Context, email string) (User, error) {
@@ -62,12 +84,14 @@ func (q *Queries) GetUserByEmail(ctx context.Context, email string) (User, error
 		&i.SlackID,
 		&i.VerificationStatus,
 		&i.CustomDisplayName,
+		&i.IsAdmin,
+		&i.Status,
 	)
 	return i, err
 }
 
 const getUserByHCAID = `-- name: GetUserByHCAID :one
-SELECT id, email, display_name, created_at, last_seen_at, hca_id, slack_id, verification_status, custom_display_name FROM users WHERE hca_id = ?
+SELECT id, email, display_name, created_at, last_seen_at, hca_id, slack_id, verification_status, custom_display_name, is_admin, status FROM users WHERE hca_id = ?
 `
 
 func (q *Queries) GetUserByHCAID(ctx context.Context, hcaID sql.NullString) (User, error) {
@@ -83,12 +107,14 @@ func (q *Queries) GetUserByHCAID(ctx context.Context, hcaID sql.NullString) (Use
 		&i.SlackID,
 		&i.VerificationStatus,
 		&i.CustomDisplayName,
+		&i.IsAdmin,
+		&i.Status,
 	)
 	return i, err
 }
 
 const getUserByID = `-- name: GetUserByID :one
-SELECT id, email, display_name, created_at, last_seen_at, hca_id, slack_id, verification_status, custom_display_name FROM users WHERE id = ?
+SELECT id, email, display_name, created_at, last_seen_at, hca_id, slack_id, verification_status, custom_display_name, is_admin, status FROM users WHERE id = ?
 `
 
 func (q *Queries) GetUserByID(ctx context.Context, id string) (User, error) {
@@ -104,8 +130,77 @@ func (q *Queries) GetUserByID(ctx context.Context, id string) (User, error) {
 		&i.SlackID,
 		&i.VerificationStatus,
 		&i.CustomDisplayName,
+		&i.IsAdmin,
+		&i.Status,
 	)
 	return i, err
+}
+
+const listAllUsers = `-- name: ListAllUsers :many
+SELECT id, email, display_name, created_at, last_seen_at, hca_id, slack_id, verification_status, custom_display_name, is_admin, status FROM users ORDER BY created_at DESC
+`
+
+func (q *Queries) ListAllUsers(ctx context.Context) ([]User, error) {
+	rows, err := q.db.QueryContext(ctx, listAllUsers)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []User{}
+	for rows.Next() {
+		var i User
+		if err := rows.Scan(
+			&i.ID,
+			&i.Email,
+			&i.DisplayName,
+			&i.CreatedAt,
+			&i.LastSeenAt,
+			&i.HcaID,
+			&i.SlackID,
+			&i.VerificationStatus,
+			&i.CustomDisplayName,
+			&i.IsAdmin,
+			&i.Status,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const setUserAdmin = `-- name: SetUserAdmin :exec
+UPDATE users SET is_admin = ? WHERE id = ?
+`
+
+type SetUserAdminParams struct {
+	IsAdmin int64  `json:"is_admin"`
+	ID      string `json:"id"`
+}
+
+func (q *Queries) SetUserAdmin(ctx context.Context, arg SetUserAdminParams) error {
+	_, err := q.db.ExecContext(ctx, setUserAdmin, arg.IsAdmin, arg.ID)
+	return err
+}
+
+const setUserStatus = `-- name: SetUserStatus :exec
+UPDATE users SET status = ? WHERE id = ?
+`
+
+type SetUserStatusParams struct {
+	Status string `json:"status"`
+	ID     string `json:"id"`
+}
+
+func (q *Queries) SetUserStatus(ctx context.Context, arg SetUserStatusParams) error {
+	_, err := q.db.ExecContext(ctx, setUserStatus, arg.Status, arg.ID)
+	return err
 }
 
 const syncDisplayName = `-- name: SyncDisplayName :exec
@@ -154,13 +249,13 @@ func (q *Queries) UpdateDisplayName(ctx context.Context, arg UpdateDisplayNamePa
 
 const upsertUserByHCAID = `-- name: UpsertUserByHCAID :one
 INSERT INTO users (
-    id, email, display_name, hca_id, slack_id, verification_status, created_at
-) VALUES (?, ?, ?, ?, ?, ?, ?)
+    id, email, display_name, hca_id, slack_id, verification_status, created_at, status
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(hca_id) DO UPDATE SET
     email = excluded.email,
     slack_id = excluded.slack_id,
     verification_status = excluded.verification_status
-RETURNING id, email, display_name, created_at, last_seen_at, hca_id, slack_id, verification_status, custom_display_name
+RETURNING id, email, display_name, created_at, last_seen_at, hca_id, slack_id, verification_status, custom_display_name, is_admin, status
 `
 
 type UpsertUserByHCAIDParams struct {
@@ -171,11 +266,14 @@ type UpsertUserByHCAIDParams struct {
 	SlackID            sql.NullString `json:"slack_id"`
 	VerificationStatus sql.NullString `json:"verification_status"`
 	CreatedAt          int64          `json:"created_at"`
+	Status             string         `json:"status"`
 }
 
 // Find-or-create by HCA id. Email and slack_id are refreshed on every login.
 // display_name is never set from HCA - cachet is the sole source of truth
 // and syncCachetName updates it immediately after upsert.
+// status and is_admin are intentionally NOT updated on conflict so a banned
+// user can't reset their own status by logging in again.
 func (q *Queries) UpsertUserByHCAID(ctx context.Context, arg UpsertUserByHCAIDParams) (User, error) {
 	row := q.db.QueryRowContext(ctx, upsertUserByHCAID,
 		arg.ID,
@@ -185,6 +283,7 @@ func (q *Queries) UpsertUserByHCAID(ctx context.Context, arg UpsertUserByHCAIDPa
 		arg.SlackID,
 		arg.VerificationStatus,
 		arg.CreatedAt,
+		arg.Status,
 	)
 	var i User
 	err := row.Scan(
@@ -197,6 +296,8 @@ func (q *Queries) UpsertUserByHCAID(ctx context.Context, arg UpsertUserByHCAIDPa
 		&i.SlackID,
 		&i.VerificationStatus,
 		&i.CustomDisplayName,
+		&i.IsAdmin,
+		&i.Status,
 	)
 	return i, err
 }

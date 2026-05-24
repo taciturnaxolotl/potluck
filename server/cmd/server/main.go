@@ -147,7 +147,7 @@ func main() {
 	// Hack Club Auth: standard OAuth authorization-code flow.
 	sessionTTL := time.Duration(cfg.SessionTTL) * time.Second
 	r.Get("/auth/login", hcaLoginHandler(hcaClient, cfg.IsProduction()))
-	r.Get("/auth/callback", hcaCallbackHandler(hcaClient, q, authSvc, sessionTTL, cfg.IsProduction()))
+	r.Get("/auth/callback", hcaCallbackHandler(hcaClient, q, authSvc, sessionTTL, cfg.IsProduction(), cfg.WaitlistEnabled))
 	r.Post("/auth/logout", hcaLogoutHandler(authSvc, cfg.IsProduction()))
 
 	apiSrv := &web.Server{
@@ -169,6 +169,7 @@ func main() {
 	r.Route("/api", func(r chi.Router) {
 		r.Use(authSvc.Middleware)
 		r.Use(auth.Require)
+		r.Use(middleware.RequireActive(web.WriteErr))
 		r.Use(middleware.RateLimit(20, 40, web.WriteErr))
 		apiSrv.Mount(r)
 	})

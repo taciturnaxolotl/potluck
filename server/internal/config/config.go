@@ -85,6 +85,10 @@ type Config struct {
 
 	// Litestream replication.
 	Litestream LitestreamConfig `envPrefix:"LITESTREAM_"`
+
+	// WaitlistEnabled places new sign-ups in 'waitlisted' status instead of
+	// 'active'. Existing users keep their current status.
+	WaitlistEnabled bool `env:"POTLUCK_WAITLIST_ENABLED" envDefault:"false"`
 }
 
 // Pioneer holds the upstream pioneer.ai inference credentials.

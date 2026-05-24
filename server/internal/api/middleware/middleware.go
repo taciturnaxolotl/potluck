@@ -144,6 +144,30 @@ func Require(errResp ErrorResponder) func(http.Handler) http.Handler {
 	}
 }
 
+// ---- active user gate --------------------------------------------------
+
+// RequireActive blocks banned and waitlisted users. Mount after Require so
+// the user is already in context.
+func RequireActive(errResp ErrorResponder) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			u, ok := UserFromContext(r.Context())
+			if !ok {
+				next.ServeHTTP(w, r)
+				return
+			}
+			switch u.Status {
+			case "banned":
+				errResp(w, http.StatusForbidden, "banned", "your account has been banned")
+			case "waitlisted":
+				errResp(w, http.StatusForbidden, "waitlisted", "your account is pending approval")
+			default:
+				next.ServeHTTP(w, r)
+			}
+		})
+	}
+}
+
 // ---- pool gate ---------------------------------------------------------
 
 // PoolGate replaces BalanceGate. Checks pool health and per-user budget.

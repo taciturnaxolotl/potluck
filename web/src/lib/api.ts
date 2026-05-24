@@ -60,6 +60,8 @@ export type User = {
   slack_id: { String: string; Valid: boolean } | null;
   created_at: number;
   last_seen_at: number | null;
+  is_admin: number;
+  status: string;
 };
 
 export type Conversation = {
@@ -279,3 +281,23 @@ export const recomputeAllocations = () =>
 export async function logout(): Promise<void> {
   await fetch('/auth/logout', { method: 'POST', credentials: 'include' });
 }
+
+// Admin helpers ------------------------------------------------------------
+
+export type AdminUser = {
+  id: string;
+  email: string;
+  display_name: string;
+  slack_id: { String: string; Valid: boolean } | null;
+  status: 'active' | 'waitlisted' | 'banned';
+  is_admin: boolean;
+  created_at: number;
+  last_seen_at: number;
+};
+
+export const adminListUsers = () => api.get<AdminUser[]>('/api/admin/users');
+export const adminSetUserStatus = (id: string, status: 'active' | 'waitlisted' | 'banned') =>
+  api.patch<void>(`/api/admin/users/${id}/status`, { status });
+export const adminSetUserAdmin = (id: string, is_admin: boolean) =>
+  api.patch<void>(`/api/admin/users/${id}/admin`, { is_admin });
+export const adminDeleteUser = (id: string) => api.del<void>(`/api/admin/users/${id}`);

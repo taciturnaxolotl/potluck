@@ -69,7 +69,11 @@
     user_upsert_failed:
       "Database upsert on `users` failed after auth. Server-side, not yours; retry, then yell at Kieran.",
     session_failed:
-      "Session token mint failed after a successful HCA auth. You're authenticated upstream but we couldn't issue a cookie; retry."
+      "Session token mint failed after a successful HCA auth. You're authenticated upstream but we couldn't issue a cookie; retry.",
+    banned:
+      'Your account has been banned. If you think this is a mistake, reach out to an admin.',
+    waitlisted:
+      "Your account is on the waitlist. Hang tight — an admin will approve you soon."
   };
   const authError = $derived(page.url.searchParams.get('auth_error'));
   const authMessageRaw = $derived(
@@ -136,7 +140,8 @@
   // Active nav item is derived from the current route. Each entry's `match`
   // returns true when its href is the active page.
   type NavItem = { label: string; href: string; section: string };
-  const navItems: NavItem[] = [
+
+  const baseNavItems: NavItem[] = [
     { label: 'dashboard', href: '/dashboard', section: 'the pot' },
     { label: 'models', href: '/models', section: 'the pot' },
     { label: 'usage', href: '/usage', section: 'the pot' },
@@ -145,6 +150,15 @@
     { label: 'conversations', href: '/chat', section: 'yours' },
     { label: 'settings', href: '/settings', section: 'yours' }
   ];
+
+  const adminNavItems: NavItem[] = [
+    { label: 'users', href: '/admin/users', section: 'admin' },
+    { label: 'waitlist', href: '/admin/waitlist', section: 'admin' }
+  ];
+
+  let navItems = $derived(
+    auth.user?.is_admin === 1 ? [...baseNavItems, ...adminNavItems] : baseNavItems
+  );
 
   let sections = $derived.by(() => {
     const grouped = new Map<string, NavItem[]>();

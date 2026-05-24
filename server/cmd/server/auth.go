@@ -61,7 +61,7 @@ func hcaLoginHandler(client *hca.Client, secure bool) http.HandlerFunc {
 //
 // Failures redirect back to /?auth_error=<code> so the splash can show a
 // friendly hint without leaking detail.
-func hcaCallbackHandler(client *hca.Client, q *store.Queries, authSvc *auth.Service, sessionTTL time.Duration, secure bool) http.HandlerFunc {
+func hcaCallbackHandler(client *hca.Client, q *store.Queries, authSvc *auth.Service, sessionTTL time.Duration, secure bool, waitlistMode bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if client == nil {
 			http.Error(w, "Hack Club Auth is not configured.", http.StatusServiceUnavailable)
@@ -120,6 +120,10 @@ func hcaCallbackHandler(client *hca.Client, q *store.Queries, authSvc *auth.Serv
 
 		// 4. Upsert + session.
 		now := time.Now().Unix()
+		newStatus := "active"
+		if waitlistMode {
+			newStatus = "waitlisted"
+		}
 		user, err := q.UpsertUserByHCAID(r.Context(), store.UpsertUserByHCAIDParams{
 			ID:                 uuid.NewString(),
 			Email:              ident.Email,
@@ -128,10 +132,31 @@ func hcaCallbackHandler(client *hca.Client, q *store.Queries, authSvc *auth.Serv
 			SlackID:            nullStr(ident.SlackID),
 			VerificationStatus: nullStr(ident.VerificationStatus),
 			CreatedAt:          now,
+			Status:             newStatus,
 		})
 		if err != nil {
 			log.Error("hca: upsert user", "err", err, "hca_id", ident.ID)
 			loginRedirect(w, r, "user_upsert_failed")
+			return
+		}
+
+		// Bootstrap: if no admin exists yet, promote the first user to sign in.
+		if user.IsAdmin == 0 {
+			if n, err := q.CountAdmins(r.Context()); err == nil && toInt64(n) == 0 {
+				if err := q.SetUserAdmin(r.Context(), store.SetUserAdminParams{IsAdmin: 1, ID: user.ID}); err == nil {
+					user.IsAdmin = 1
+					log.Info("hca: bootstrap admin", "user_id", user.ID)
+				}
+			}
+		}
+
+		// Block access for non-active accounts before issuing a session.
+		switch user.Status {
+		case "banned":
+			loginRedirect(w, r, "banned")
+			return
+		case "waitlisted":
+			loginRedirect(w, r, "waitlisted")
 			return
 		}
 

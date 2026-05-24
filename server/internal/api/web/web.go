@@ -72,6 +72,8 @@ func (s *Server) Mount(r chi.Router) {
 		r.Post("/chat", s.handleChat)
 	})
 	r.Get("/streams/{id}/events", s.handleStreamEvents)
+
+	s.mountAdmin(r)
 }
 
 // ---- helpers ------------------------------------------------------------

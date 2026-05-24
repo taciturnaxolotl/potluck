@@ -19,6 +19,7 @@ type Querier interface {
 	ArchiveConversation(ctx context.Context, arg ArchiveConversationParams) error
 	CancelPotluckRequest(ctx context.Context, arg CancelPotluckRequestParams) error
 	CountActiveStreamsForUser(ctx context.Context, userID string) (int64, error)
+	CountAdmins(ctx context.Context) (int64, error)
 	CreateAPIKey(ctx context.Context, arg CreateAPIKeyParams) (ApiKey, error)
 	CreateContribution(ctx context.Context, arg CreateContributionParams) (Contribution, error)
 	CreateConversation(ctx context.Context, arg CreateConversationParams) (Conversation, error)
@@ -34,11 +35,13 @@ type Querier interface {
 	CreateSession(ctx context.Context, arg CreateSessionParams) (Session, error)
 	CreateStream(ctx context.Context, arg CreateStreamParams) (Stream, error)
 	CreateUser(ctx context.Context, arg CreateUserParams) (User, error)
+	DeleteAllSessionsForUser(ctx context.Context, userID string) error
 	DeleteExpiredIdempotency(ctx context.Context, expiresAt int64) error
 	DeleteExpiredSessions(ctx context.Context, expiresAt int64) error
 	DeletePoolKey(ctx context.Context, arg DeletePoolKeyParams) error
 	DeleteSession(ctx context.Context, id string) error
 	DeleteSessionForUser(ctx context.Context, arg DeleteSessionForUserParams) error
+	DeleteUserByID(ctx context.Context, id string) error
 	FinishPotluckRequest(ctx context.Context, arg FinishPotluckRequestParams) error
 	GetAPIKeyByHash(ctx context.Context, keyHash string) (ApiKey, error)
 	GetConversation(ctx context.Context, arg GetConversationParams) (Conversation, error)
@@ -69,6 +72,7 @@ type Querier interface {
 	// sqlc's sqlite parser rejecting bare COALESCE(MAX(...), 0).
 	LatestBillingRowTime(ctx context.Context, poolKeyID string) (interface{}, error)
 	ListAPIKeysForUser(ctx context.Context, userID string) ([]ApiKey, error)
+	ListAllUsers(ctx context.Context) ([]User, error)
 	// Live spend for ALL users since dayStart, grouped by user.
 	// Used by RunSmartAllocation so it doesn't depend on the stale
 	// user_daily_spend cache.
@@ -149,6 +153,8 @@ type Querier interface {
 	RevokeAPIKey(ctx context.Context, arg RevokeAPIKeyParams) error
 	SetPoolKeyActive(ctx context.Context, arg SetPoolKeyActiveParams) error
 	SetStreamStatus(ctx context.Context, arg SetStreamStatusParams) error
+	SetUserAdmin(ctx context.Context, arg SetUserAdminParams) error
+	SetUserStatus(ctx context.Context, arg SetUserStatusParams) error
 	// Daily spend for a user over the last N days, from billing rows.
 	// Only potluck-routed rows (matched_request_id IS NOT NULL) are included.
 	SpendByDay(ctx context.Context, arg SpendByDayParams) ([]SpendByDayRow, error)
@@ -207,6 +213,8 @@ type Querier interface {
 	// Find-or-create by HCA id. Email and slack_id are refreshed on every login.
 	// display_name is never set from HCA - cachet is the sole source of truth
 	// and syncCachetName updates it immediately after upsert.
+	// status and is_admin are intentionally NOT updated on conflict so a banned
+	// user can't reset their own status by logging in again.
 	UpsertUserByHCAID(ctx context.Context, arg UpsertUserByHCAIDParams) (User, error)
 	// Always overwrites with the computed breakdown.
 	// shared_allowance_micros should equal floor_micros + bonus_micros.
