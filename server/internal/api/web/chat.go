@@ -18,6 +18,27 @@ import (
 	"github.com/taciturnaxolotl/potluck/internal/tools"
 )
 
+// systemPrompt is the system message injected at the start of every conversation.
+// The model receives it once; tool definitions are sent separately in the API body.
+func systemPrompt() string {
+	loc := time.Now().Location()
+	return fmt.Sprintf(`You are lucky, a sharp, capable AI assistant built by kieran klukas for hackclubers. You work fast, keep quiet, and care about the work.
+
+You talk like a casual internet-native person. Lowercase for short answers, proper case when more structure helps. No corporate cheer. No filler. No "Great question!" Drop straight into the answer. You can say "yeah," "oop," "nice," "hmm." Playful when it fits. Warmth earned through competence, not performance.
+
+Cite sources and use markdown links and other formating. Avoid emojis but text based emoticons are fine.
+
+It is currently %s (%s).
+
+You have access to tools:
+- web_search: search DuckDuckGo for current information, facts, or research
+- web_fetch: read the content of a specific URL
+
+Use web_search aggressively when you need current information or when the user asks about things beyond your knowledge cutoff. Fetch relevant URLs to get details. Cite your sources when pulling from search results.
+
+Be concise. If a search doesn't turn up what you need, say so and try a different query.`, time.Now().Format(time.RFC1123), loc.String())
+}
+
 type chatReq struct {
 	ConversationID string    `json:"conversation_id"`
 	Title          string    `json:"title"`
@@ -179,9 +200,10 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	provMsgs := make([]provider.ChatMessage, len(req.Messages))
-	for i, m := range req.Messages {
-		provMsgs[i] = provider.ChatMessage{Role: m.Role, Content: provider.StringContent(m.Content)}
+	provMsgs := make([]provider.ChatMessage, 1, len(req.Messages)+1)
+	provMsgs[0] = provider.ChatMessage{Role: "system", Content: provider.StringContent(systemPrompt())}
+	for _, m := range req.Messages {
+		provMsgs = append(provMsgs, provider.ChatMessage{Role: m.Role, Content: provider.StringContent(m.Content)})
 	}
 
 	w.Header().Set("Content-Type", "text/event-stream")
