@@ -93,5 +93,6 @@ SELECT
     COALESCE(SUM(pk.request_count), 0)                                                       AS request_count
 FROM users u
 LEFT JOIN pool_keys pk ON pk.user_id = u.id AND pk.revoked_at IS NULL
+WHERE u.status = 'active'
 GROUP BY u.id, u.display_name, u.email
 ORDER BY daily_limit_micros DESC, u.display_name ASC;

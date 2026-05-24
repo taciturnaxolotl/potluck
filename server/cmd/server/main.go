@@ -173,6 +173,7 @@ func main() {
 	// /v1/* — bearer-authenticated, OpenAI-compatible public surface.
 	r.Route("/v1", func(r chi.Router) {
 		r.Use(middleware.BearerAuth(q, v1.WriteError))
+		r.Use(middleware.RequireActive(v1.WriteError))
 		r.Use(middleware.RateLimit(10, 20, v1.WriteError))
 		v1Srv.Mount(r)
 	})
