@@ -2,6 +2,8 @@
   import {
     listPoolKeys,
     addPoolKey,
+    probePoolKey,
+    type PoolKeyProbe,
     setPoolKeyActive,
     updatePoolKeyLabel,
     updatePoolKeyLimits,
@@ -15,17 +17,19 @@
   let loading = $state(true);
   let err = $state<string | null>(null);
 
-  // Add-key form
+  // Add-key form — two stages: 'input' → 'confirm'
+  type AddStage = 'input' | 'confirm';
+  let showAddForm = $state(false);
+  let addStage = $state<AddStage>('input');
   let newLabel = $state('');
   let newAPIKey = $state('');
-  let newMaxDollars = $state(1000);    // key ceiling, $100–$1000
-  let newSharedDollars = $state(1000); // amount shared to pool (≤ max)
+  let probeResult = $state<PoolKeyProbe | null>(null);
+  let probeSharedDollars = $state(0); // shared split chosen by user in confirm stage
+  let probing = $state(false);
   let adding = $state(false);
-  let validating = $state(false);
   let addErr = $state<string | null>(null);
-  let addPending = $state(false);      // key accepted but pending validation
+  let addPending = $state(false);
   let addPendingReason = $state('');
-  let showAddForm = $state(false);
 
   // Inline label editing
   let editingId = $state<string | null>(null);
@@ -60,23 +64,53 @@
     }
   }
 
-  async function handleAdd(e: SubmitEvent) {
+  function resetAddForm() {
+    addStage = 'input';
+    newLabel = '';
+    newAPIKey = '';
+    probeResult = null;
+    probeSharedDollars = 0;
+    addErr = null;
+    addPending = false;
+    addPendingReason = '';
+  }
+
+  async function handleProbe(e: SubmitEvent) {
     e.preventDefault();
     if (!newAPIKey.trim()) return;
-    validating = true;
-    adding = false;
+    probing = true;
+    addErr = null;
+    try {
+      const result = await probePoolKey(newAPIKey.trim());
+      probeResult = result;
+      probeSharedDollars = Math.round(result.credit_limit_micros / 1_000_000); // default 100% shared
+      addStage = 'confirm';
+    } catch (e: unknown) {
+      addErr = e instanceof Error ? e.message : 'probe failed';
+    } finally {
+      probing = false;
+    }
+  }
+
+  async function handleAdd(e: SubmitEvent) {
+    e.preventDefault();
+    if (!probeResult) return;
+    adding = true;
     addErr = null;
     addPending = false;
     try {
-      const maxMicros = newMaxDollars * 1_000_000;
-      const sharedMicros = Math.min(newSharedDollars, newMaxDollars) * 1_000_000;
-      const result = await addPoolKey(newLabel.trim() || 'unnamed key', newAPIKey.trim(), maxMicros, sharedMicros);
+      const creditLimitMicros = probeResult.credit_limit_micros;
+      const sharedMicros = Math.max(0, Math.min(probeSharedDollars * 1_000_000, creditLimitMicros));
+      const result = await addPoolKey(
+        newLabel.trim() || 'unnamed key',
+        newAPIKey.trim(),
+        sharedMicros < creditLimitMicros ? sharedMicros : undefined
+      );
       if (result.pending_validation) {
         addPending = true;
         addPendingReason = result.pending_reason ?? 'will retry automatically';
       } else {
-        newLabel = '';
-        newAPIKey = '';
+        resetAddForm();
         showAddForm = false;
       }
       await reload();
@@ -84,11 +118,8 @@
       const msg = e instanceof Error ? e.message : 'failed to add key';
       addErr = (e as { code?: string }).code === 'duplicate_key'
         ? 'that key is already in the pool'
-        : (e as { code?: string }).code === 'invalid_plan'
-        ? 'only pro-plan pioneer keys are supported'
         : msg;
     } finally {
-      validating = false;
       adding = false;
     }
   }
@@ -120,16 +151,20 @@
 
   function startEditLimits(key: PoolKey) {
     editingLimitsId = key.id;
+    // ceiling comes from pioneer; use max_micros (kept in sync by reconciler)
     editMaxDollars = Math.round(key.max_micros / 1_000_000);
     editSharedDollars = Math.round(key.shared_micros / 1_000_000);
   }
 
   async function saveLimits(id: string) {
-    const max = Math.max(100, Math.min(1000, editMaxDollars));
-    const shared = Math.max(0, Math.min(max, editSharedDollars));
+    const key = keys.find(k => k.id === id);
+    if (!key) return;
+    // ceiling is always max_micros (set from pioneer credit limit, not user input)
+    const max = key.max_micros;
+    const shared = Math.max(0, Math.min(editSharedDollars * 1_000_000, max));
     editingLimitsId = null;
     try {
-      await updatePoolKeyLimits(id, max * 1_000_000, shared * 1_000_000);
+      await updatePoolKeyLimits(id, max, shared);
       await reload();
     } catch {
       // silent
@@ -217,7 +252,7 @@
   let totalTodayMicros = $derived(keys.filter(k => k.active).reduce((s, k) => s + k.today_micros, 0));
   let totalRequests = $derived(keys.reduce((s, k) => s + k.request_count, 0));
   // clamp shared slider to max
-  $effect(() => { if (newSharedDollars > newMaxDollars) newSharedDollars = newMaxDollars; });
+
   $effect(() => { if (editSharedDollars > editMaxDollars) editSharedDollars = editMaxDollars; });
 </script>
 
@@ -254,57 +289,72 @@
     <div class="card">
       <div class="card-head">
         <div class="card-title">pool keys</div>
-        <button class="btn-add" onclick={() => (showAddForm = !showAddForm)}>
+        <button class="btn-add" onclick={() => { showAddForm = !showAddForm; if (!showAddForm) resetAddForm(); }}>
           {showAddForm ? 'cancel' : '+ add key'}
         </button>
       </div>
 
       {#if showAddForm}
-        <form class="add-form" onsubmit={handleAdd}>
-          <div class="form-row">
-            <label class="form-label" for="new-label">label</label>
-            <input id="new-label" class="form-input" type="text" placeholder="my pioneer key"
-              bind:value={newLabel} maxlength={64} />
-          </div>
-          <div class="form-row">
-            <label class="form-label" for="new-key">api key</label>
-            <input id="new-key" class="form-input mono" type="password" placeholder="pio_sk_…"
-              bind:value={newAPIKey} required autocomplete="off" />
-          </div>
-          <div class="form-row">
-            <label class="form-label" for="new-max">daily ceiling</label>
-            <div class="max-wrap">
-              <span class="max-prefix">$</span>
-              <input id="new-max" class="form-input max-input mono" type="number"
-                min="100" max="1000" step="50" bind:value={newMaxDollars} />
-              <span class="max-suffix mono">/day</span>
+        {#if addStage === 'input'}
+          <form class="add-form" onsubmit={handleProbe}>
+            <div class="form-row">
+              <label class="form-label" for="new-label">label</label>
+              <input id="new-label" class="form-input" type="text" placeholder="my pioneer key"
+                bind:value={newLabel} maxlength={64} />
             </div>
-          </div>
-          <div class="form-row slider-row">
-            <label class="form-label" for="new-share">shared with pool</label>
-            <div class="slider-wrap">
-              <input id="new-share" class="slider" type="range"
-                min="0" max={newMaxDollars} step="50" bind:value={newSharedDollars} />
-              <span class="slider-val mono">${newSharedDollars}</span>
+            <div class="form-row">
+              <label class="form-label" for="new-key">api key</label>
+              <input id="new-key" class="form-input mono" type="password" placeholder="pio_sk_…"
+                bind:value={newAPIKey} required autocomplete="off" />
             </div>
-          </div>
-          <div class="budget-preview mono">
-            <span class="preview-shared">${newSharedDollars} shared</span>
-            <span class="preview-sep"> · </span>
-            <span class="preview-private">${newMaxDollars - newSharedDollars} reserved for you</span>
-          </div>
-          {#if addPending}
-            <div class="form-warn mono">✓ key added as pending — {addPendingReason}</div>
-          {:else if addErr}
-            <div class="form-err mono">{addErr}</div>
-          {/if}
-          <div class="form-actions">
-            <button class="btn-primary" type="submit" disabled={validating || adding || !newAPIKey.trim()}>
-              {validating ? 'validating key…' : adding ? 'adding…' : 'add to pool'}
-            </button>
-            <div class="form-hint">pro-plan keys only · encrypted at rest · resets at midnight UTC</div>
-          </div>
-        </form>
+            {#if addErr}
+              <div class="form-err mono">{addErr}</div>
+            {/if}
+            <div class="form-actions">
+              <button class="btn-primary" type="submit" disabled={probing || !newAPIKey.trim()}>
+                {probing ? 'checking key…' : 'check key'}
+              </button>
+              <div class="form-hint">pro/partner plan keys · encrypted at rest</div>
+            </div>
+          </form>
+        {:else if addStage === 'confirm' && probeResult}
+          <form class="add-form" onsubmit={handleAdd}>
+            <div class="probe-summary mono">
+              <span class="probe-plan">{probeResult.payment_plan}</span>
+              <span class="probe-sep"> · </span>
+              <span>${Math.round(probeResult.credit_limit_micros / 1_000_000)} credit limit</span>
+              <span class="probe-sep"> · </span>
+              <span class="probe-spent">${(probeResult.today_micros / 1_000_000).toFixed(2)} spent today</span>
+            </div>
+            <div class="form-row slider-row">
+              <label class="form-label" for="probe-share">share with pool</label>
+              <div class="slider-wrap">
+                <input id="probe-share" class="slider" type="range"
+                  min="0" max={Math.round(probeResult.credit_limit_micros / 1_000_000)}
+                  step="1" bind:value={probeSharedDollars} />
+                <span class="slider-val mono">${probeSharedDollars}</span>
+              </div>
+            </div>
+            <div class="budget-preview mono">
+              <span class="preview-shared">${probeSharedDollars} shared</span>
+              <span class="preview-sep"> · </span>
+              <span class="preview-private">${Math.round(probeResult.credit_limit_micros / 1_000_000) - probeSharedDollars} reserved for you</span>
+            </div>
+            {#if addPending}
+              <div class="form-warn mono">✓ key added as pending — {addPendingReason}</div>
+            {:else if addErr}
+              <div class="form-err mono">{addErr}</div>
+            {/if}
+            <div class="form-actions">
+              <button class="btn-primary" type="submit" disabled={adding}>
+                {adding ? 'adding…' : 'add to pool'}
+              </button>
+              <button class="btn-secondary" type="button" onclick={() => { addStage = 'input'; addErr = null; }}>
+                back
+              </button>
+            </div>
+          </form>
+        {/if}
       {/if}
 
       {#if keys.length === 0}
@@ -351,16 +401,13 @@
                   {#if key.mine && editingLimitsId === key.id}
                     <div class="limits-popover" role="dialog">
                       <div class="limits-row">
-                        <label class="limits-label" for="limits-max-{key.id}">ceiling</label>
-                        <div class="max-wrap">
-                          <span class="max-prefix">$</span>
-                          <input id="limits-max-{key.id}" class="limits-input mono" type="number" min="100" max="1000" step="50" bind:value={editMaxDollars} />
-                        </div>
+                        <span class="limits-label">ceiling</span>
+                        <span class="limits-readonly mono">${editMaxDollars} <span class="limits-hint">(from pioneer)</span></span>
                       </div>
                       <div class="limits-row">
                         <label class="limits-label" for="limits-shared-{key.id}">shared</label>
                         <div class="slider-wrap">
-                          <input id="limits-shared-{key.id}" class="slider slider-sm" type="range" min="0" max={editMaxDollars} step="50" bind:value={editSharedDollars} />
+                          <input id="limits-shared-{key.id}" class="slider slider-sm" type="range" min="0" max={editMaxDollars} step="1" bind:value={editSharedDollars} />
                           <span class="slider-val mono">${editSharedDollars}</span>
                         </div>
                       </div>
@@ -613,6 +660,30 @@
     opacity: 0.5;
     cursor: default;
   }
+  .btn-secondary {
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 0.82rem;
+    font-family: var(--font-mono);
+    padding: 0.45rem 1rem;
+    transition: border-color 0.15s, color 0.15s;
+  }
+  .btn-secondary:hover { border-color: var(--text-muted); color: var(--text); }
+
+  .probe-summary {
+    font-size: 0.8rem;
+    color: var(--text);
+    padding: 0.4rem 0 0.6rem;
+  }
+  .probe-plan {
+    color: var(--accent);
+    font-weight: 500;
+  }
+  .probe-sep { color: var(--text-muted); }
+  .probe-spent { color: var(--text-muted); }
 
   .form-hint {
     font-size: 0.72rem;
@@ -915,6 +986,21 @@
     outline: none;
   }
   .limits-input:focus { border-color: var(--accent); }
+
+  .limits-readonly {
+    font-size: 0.8rem;
+    color: var(--text);
+  }
+  .limits-hint {
+    font-size: 0.7rem;
+    color: var(--text-muted);
+  }
+
+  .form-hint-inline {
+    font-size: 0.72rem;
+    color: var(--text-muted);
+    padding: 0.1rem 0;
+  }
 
   .limits-preview {
     font-size: 0.72rem;

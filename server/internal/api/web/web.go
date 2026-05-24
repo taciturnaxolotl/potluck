@@ -59,6 +59,7 @@ func (s *Server) Mount(r chi.Router) {
 	r.Delete("/keys/{id}", s.handleRevokeKey)
 
 	r.Get("/pool-keys", s.handleListPoolKeys)
+	r.Post("/pool-keys/probe", s.handleProbePoolKey)
 	r.Post("/pool-keys", s.handleAddPoolKey)
 	r.Patch("/pool-keys/{id}/active", s.handleSetPoolKeyActive)
 	r.Patch("/pool-keys/{id}/label", s.handleUpdatePoolKeyLabel)

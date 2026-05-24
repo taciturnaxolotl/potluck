@@ -48,10 +48,18 @@ const (
 
 	// ReconcileInterval is how often the reconciler wakes.
 	ReconcileInterval = 10 * time.Minute
-
-	// Only accept pro-plan pioneer keys.
-	RequiredPaymentPlan = "pro"
 )
+
+// AcceptedPlan reports whether a pioneer payment plan is allowed in the pool.
+// Both "pro" and "partner" are paid tiers; free plans are rejected.
+func AcceptedPlan(plan string) bool {
+	switch plan {
+	case "pro", "partner":
+		return true
+	default:
+		return false
+	}
+}
 
 // PlanInfo is the subset of /billing/plan-info we care about.
 type PlanInfo struct {
@@ -272,8 +280,8 @@ func (r *Reconciler) probeKey(ctx context.Context, key store.PoolKey) {
 	}
 
 	// Successful probe — validate plan and update.
-	if result.plan.PaymentPlan != RequiredPaymentPlan {
-		r.log.Warn("reconciler: non-pro key, marking unauthorized",
+	if !AcceptedPlan(result.plan.PaymentPlan) {
+		r.log.Warn("reconciler: unsupported plan, marking unauthorized",
 			"key_id", key.ID, "label", key.Label,
 			"plan", result.plan.PaymentPlan)
 		_ = r.q.UpdatePoolKeyHealth(ctx, store.UpdatePoolKeyHealthParams{
@@ -308,6 +316,23 @@ func (r *Reconciler) probeKey(ctx context.Context, key store.PoolKey) {
 		LastBillingSyncAt:        sql.NullInt64{Int64: now, Valid: true},
 		ID:                       key.ID,
 	})
+
+	// Keep max_micros in sync with pioneer's credit limit so the pool always
+	// knows the real ceiling. shared_micros is clamped to the new max if it
+	// would otherwise exceed it.
+	if result.creditLimitMicros > 0 && result.creditLimitMicros != key.PioneerCreditLimitMicros.Int64 {
+		_ = r.q.SyncPoolKeyMaxFromCreditLimit(ctx, store.SyncPoolKeyMaxFromCreditLimitParams{
+			MaxMicros:      result.creditLimitMicros,
+			SharedMicros:   result.creditLimitMicros,
+			SharedMicros_2: result.creditLimitMicros,
+			ID:             key.ID,
+		})
+		r.log.Info("reconciler: credit limit changed, updated max_micros",
+			"key_id", key.ID, "label", key.Label,
+			"old_micros", key.PioneerCreditLimitMicros.Int64,
+			"new_micros", result.creditLimitMicros,
+		)
+	}
 
 	r.log.Info("reconciler: key synced",
 		"key_id", key.ID,

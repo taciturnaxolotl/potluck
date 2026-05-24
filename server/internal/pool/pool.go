@@ -107,11 +107,13 @@ func (m *Manager) PickForUser(ctx context.Context, userID string) (*Selection, e
 	if userID == "" {
 		return m.Pick(ctx)
 	}
-	key, err := m.q.PickPoolKeyForUser(ctx, userID)
+	// Try the user's own key with private budget first.
+	key, err := m.q.PickOwnKeyWithPrivateBudget(ctx, userID)
+	if errors.Is(err, sql.ErrNoRows) {
+		// No eligible own-key; fall back to standard pool ordering.
+		return m.Pick(ctx)
+	}
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, ErrNoKeys
-		}
 		return nil, fmt.Errorf("pool: pick key for user %s: %w", userID, err)
 	}
 	plaintext, err := m.Decrypt(key.KeyCiphertext)

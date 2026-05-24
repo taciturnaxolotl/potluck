@@ -102,20 +102,15 @@ type Querier interface {
 	ListUserDailySpendForDay(ctx context.Context, day int64) ([]UserDailySpend, error)
 	MarkPoolKeyRevoked(ctx context.Context, arg MarkPoolKeyRevokedParams) error
 	MaxStreamChunkSeq(ctx context.Context, streamID string) (interface{}, error)
+	// First leg of user-aware picking: try to find the user's own key that
+	// still has private reservation room (max_micros > shared_micros).
+	// If this returns no rows, fall back to PickPoolKeyV2.
+	PickOwnKeyWithPrivateBudget(ctx context.Context, userID string) (PoolKey, error)
 	// Select the best key to use for a request: active, under daily cap,
 	// least spend today. Resets stale today_* counters are handled in Go
 	// (compare today_date to current UTC day and update if stale).
 	// ?1 = current UTC day (unix / 86400)
 	PickPoolKey(ctx context.Context, todayDate int64) (PoolKey, error)
-	// User-aware picker for private-budget routing.
-	// Prefers a key OWNED BY THE REQUESTING USER that still has private
-	// reservation room (max_micros > shared_micros AND today's spend hasn't
-	// filled the key yet). Falls back to the standard v2 ordering when the
-	// user has no eligible own-key.
-	//
-	// The CASE expression buckets eligible keys: 0 = user's own-with-private,
-	// 1 = anything else. Within each bucket, lowest today_micros wins.
-	PickPoolKeyForUser(ctx context.Context, userID string) (PickPoolKeyForUserRow, error)
 	// Best active healthy key for a request:
 	//   active=1, not revoked, not pending validation
 	//   pioneer_health=1 (healthy)
@@ -150,6 +145,10 @@ type Querier interface {
 	SumSpends(ctx context.Context, userID string) (interface{}, error)
 	// Updates display name from cachet only if the user hasn't set a custom name.
 	SyncDisplayName(ctx context.Context, arg SyncDisplayNameParams) error
+	// Called by the reconciler to keep max_micros in sync with pioneer's reported
+	// credit_limit. Clamps shared_micros to the new max so it never exceeds it.
+	// Does NOT require user_id; reconciler owns this path.
+	SyncPoolKeyMaxFromCreditLimit(ctx context.Context, arg SyncPoolKeyMaxFromCreditLimitParams) error
 	// Called after fetching real spend from pioneer's billing API.
 	// Overwrites today_micros with the authoritative value.
 	// If the key is over its daily limit, also marks it inactive.

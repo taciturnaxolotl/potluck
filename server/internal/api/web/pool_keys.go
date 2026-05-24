@@ -58,9 +58,9 @@ func (s *Server) handleListPoolKeys(w http.ResponseWriter, r *http.Request) {
 }
 
 type addPoolKeyReq struct {
-	Label            string `json:"label"`
-	APIKey           string `json:"api_key"`
-	DailyLimitMicros *int64 `json:"daily_limit_micros,omitempty"`
+	Label        string `json:"label"`
+	APIKey       string `json:"api_key"`
+	SharedMicros *int64 `json:"shared_micros,omitempty"` // how much to donate to pool; defaults to full credit limit
 }
 
 const pioneerBillingTimeseriesURL = "https://api.pioneer.ai/billing/usage/timeseries"
@@ -159,6 +159,45 @@ func probePioneerBilling(ctx context.Context, apiKey string) (pioneerBillingResu
 	}, nil
 }
 
+// handleProbePoolKey probes a pioneer key's billing info without storing it.
+// Used by the two-stage add flow: probe first, show plan/credit/spend to the
+// user, then let them confirm with shared_micros before calling handleAddPoolKey.
+func (s *Server) handleProbePoolKey(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		APIKey string `json:"api_key"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.APIKey == "" {
+		writeErr(w, 400, "invalid_request", "api_key is required")
+		return
+	}
+
+	billing, err := probePioneerBilling(r.Context(), req.APIKey)
+	if err != nil {
+		writeErr(w, 422, "probe_failed", err.Error())
+		return
+	}
+	if billing.HTTP401 {
+		writeErr(w, 422, "unauthorized", "pioneer returned 401 — key may be exhausted or not yet active")
+		return
+	}
+	if billing.HTTP503 {
+		writeErr(w, 503, "provider_down", "pioneer auth service is temporarily down; try again shortly")
+		return
+	}
+	if billing.PaymentPlan != "" && !pool.AcceptedPlan(billing.PaymentPlan) {
+		writeErr(w, 422, "invalid_plan",
+			fmt.Sprintf("unsupported pioneer plan %q (accepted: pro, partner)", billing.PaymentPlan))
+		return
+	}
+
+	writeJSON(w, 200, map[string]any{
+		"payment_plan":        billing.PaymentPlan,
+		"credit_limit_micros": billing.CreditLimitMicros,
+		"remaining_micros":    billing.RemainingMicros,
+		"today_micros":        billing.TodayMicros,
+	})
+}
+
 // handleAddPoolKey validates a key against pioneer, then encrypts and stores it.
 // If pioneer returns 401 (key exhausted or not yet active), we save it as
 // pending_validation and let the reconciler activate it when it comes back.
@@ -188,9 +227,9 @@ func (s *Server) handleAddPoolKey(w http.ResponseWriter, r *http.Request) {
 	case billing.HTTP503:
 		pendingValidation = 1
 		pendingReason = "pioneer auth service is temporarily down; we'll retry automatically"
-	case billing.PaymentPlan != "" && billing.PaymentPlan != pool.RequiredPaymentPlan:
+	case billing.PaymentPlan != "" && !pool.AcceptedPlan(billing.PaymentPlan):
 		writeErr(w, 422, "invalid_plan",
-			fmt.Sprintf("only pro-plan pioneer keys are supported (got %q)", billing.PaymentPlan))
+			fmt.Sprintf("unsupported pioneer plan %q (accepted: pro, partner)", billing.PaymentPlan))
 		return
 	}
 
@@ -201,11 +240,17 @@ func (s *Server) handleAddPoolKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	maxMicros := int64(1_000_000_000) // $1000 default
-	sharedMicros := int64(1_000_000_000)
-	if req.DailyLimitMicros != nil && *req.DailyLimitMicros > 0 {
-		maxMicros = *req.DailyLimitMicros
-		sharedMicros = *req.DailyLimitMicros
+	// max_micros is always the pioneer credit limit — the user doesn't set it.
+	// Fall back to $1000 if the probe didn't return a limit (pending-validation path).
+	maxMicros := int64(1_000_000_000) // $1000 fallback
+	if billing.CreditLimitMicros > 0 {
+		maxMicros = billing.CreditLimitMicros
+	}
+	// shared_micros defaults to the full ceiling (fully donated).
+	// The user can set it lower at add-time or adjust it later.
+	sharedMicros := maxMicros
+	if req.SharedMicros != nil && *req.SharedMicros >= 0 && *req.SharedMicros <= maxMicros {
+		sharedMicros = *req.SharedMicros
 	}
 
 	now := time.Now().Unix()
@@ -282,6 +327,7 @@ func (s *Server) handleAddPoolKey(w http.ResponseWriter, r *http.Request) {
 		resp["pending_reason"] = pendingReason
 	}
 	writeJSON(w, 201, resp)
+	go func() { _ = s.RunSmartAllocation(context.Background(), u.ID) }()
 }
 
 // handleSetPoolKeyActive toggles the active state of a pool key.
@@ -324,6 +370,7 @@ func (s *Server) handleDeletePoolKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(204)
+	go func() { _ = s.RunSmartAllocation(context.Background(), u.ID) }()
 }
 
 // handleUpdatePoolKeyLabel renames a key.
@@ -385,6 +432,7 @@ func (s *Server) handleUpdatePoolKeyLimits(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	w.WriteHeader(204)
+	go func() { _ = s.RunSmartAllocation(context.Background(), u.ID) }()
 }
 
 // isUniqueConstraintErr returns true when err is a SQLite UNIQUE violation.

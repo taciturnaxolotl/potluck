@@ -249,11 +249,20 @@ export type PoolKey = {
 };
 
 export const listPoolKeys = () => api.get<PoolKey[]>('/api/pool-keys');
-export const addPoolKey = (label: string, apiKey: string, maxMicros?: number, sharedMicros?: number) =>
+export interface PoolKeyProbe {
+  payment_plan: string;
+  credit_limit_micros: number;
+  remaining_micros: number;
+  today_micros: number;
+}
+export const probePoolKey = (apiKey: string) =>
+  api.post<PoolKeyProbe>('/api/pool-keys/probe', { api_key: apiKey });
+
+export const addPoolKey = (label: string, apiKey: string, sharedMicros?: number) =>
   api.post<PoolKey & { pending_validation?: boolean; pending_reason?: string }>('/api/pool-keys', {
     label,
     api_key: apiKey,
-    ...(maxMicros != null ? { daily_limit_micros: maxMicros } : {})
+    ...(sharedMicros != null ? { shared_micros: sharedMicros } : {})
   });
 export const setPoolKeyActive = (id: string, active: boolean) =>
   api.patch<void>(`/api/pool-keys/${id}/active`, { active });
