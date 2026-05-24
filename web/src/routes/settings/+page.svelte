@@ -4,6 +4,8 @@
     me,
     updateMe,
     balance,
+    getMemory,
+    updateMemory,
     listKeys,
     createKey,
     revokeKey,
@@ -12,7 +14,8 @@
     logout,
     type User,
     type APIKey,
-    type Session
+    type Session,
+    type MemoryRow
   } from '$lib/api';
   import { cycleTheme, currentTheme, type Theme } from '$lib/theme';
   import { auth } from '$lib/auth.svelte';
@@ -28,6 +31,11 @@
   let sessions = $state<Session[]>([]);
   let loading = $state(true);
   let err = $state<string | null>(null);
+
+  // Memory settings
+  let memoryRows = $state<MemoryRow[]>([]);
+  let memorySaving = $state(false);
+  let memoryErr = $state<string | null>(null);
 
   // New key form
   let newKeyName = $state('');
@@ -74,7 +82,9 @@
 
   onMount(async () => {
     try {
+      const memory = await getMemory();
       [user, bal, keys, sessions] = await Promise.all([me(), balance(), listKeys(), listSessions()]);
+      memoryRows = memory.rows;
     } catch (e: unknown) {
       err = e instanceof Error ? e.message : 'failed to load';
     } finally {
@@ -219,6 +229,30 @@
 
   let activeKeys = $derived(keys.filter((k) => !k.revoked));
   let revokedKeys = $derived(keys.filter((k) => k.revoked));
+
+  function addMemoryRow() {
+    memoryRows = [...memoryRows, { key: '', value: '' }];
+  }
+
+  function removeMemoryRow(idx: number) {
+    memoryRows = memoryRows.filter((_, i) => i !== idx);
+  }
+
+  async function saveMemory() {
+    memorySaving = true;
+    memoryErr = null;
+    try {
+      const cleaned = memoryRows
+        .map((r) => ({ key: r.key.trim(), value: r.value }))
+        .filter((r) => r.key.length > 0);
+      await updateMemory(cleaned);
+      memoryRows = cleaned;
+    } catch (e: unknown) {
+      memoryErr = e instanceof Error ? e.message : 'failed to save memory';
+    } finally {
+      memorySaving = false;
+    }
+  }
 </script>
 
 <article>
@@ -378,6 +412,48 @@
         </ul>
       {:else}
         <p class="muted small">no active sessions.</p>
+      {/if}
+    </section>
+
+    <!-- ── memory ─────────────────────────────────────────────── -->
+    <section class="card">
+      <div class="card-head">
+        <div class="card-title">memory context</div>
+        <div class="card-sub muted">persisted across chats</div>
+      </div>
+      <p class="muted small memory-help">
+        the model can read and write these via tools. good for stable preferences,
+        profile info, and recurring constraints.
+      </p>
+      <div class="memory-list">
+        {#each memoryRows as row, idx}
+          <div class="memory-row">
+            <input
+              class="memory-key"
+              type="text"
+              maxlength={64}
+              placeholder="key (e.g. preferred_name)"
+              bind:value={row.key}
+            />
+            <textarea
+              class="memory-value"
+              maxlength={2048}
+              rows={2}
+              placeholder="value"
+              bind:value={row.value}
+            ></textarea>
+            <button class="memory-del" onclick={() => removeMemoryRow(idx)}>remove</button>
+          </div>
+        {/each}
+      </div>
+      <div class="memory-actions">
+        <button class="memory-add" onclick={addMemoryRow}>add row</button>
+        <button class="memory-save" onclick={saveMemory} disabled={memorySaving}>
+          {memorySaving ? 'saving…' : 'save memory'}
+        </button>
+      </div>
+      {#if memoryErr}
+        <p class="error small">{memoryErr}</p>
       {/if}
     </section>
 
@@ -721,6 +797,91 @@
   }
   .revoked-details summary::-webkit-details-marker {
     display: none;
+  }
+
+  .memory-help {
+    margin: 0 0 0.6rem 0;
+  }
+  .memory-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.65rem;
+  }
+  .memory-row {
+    display: grid;
+    grid-template-columns: 180px 1fr auto;
+    gap: 0.55rem;
+    align-items: start;
+  }
+  .memory-key,
+  .memory-value {
+    border: 1px solid var(--border);
+    border-radius: 0.55rem;
+    background: var(--bg-surface);
+    color: var(--text);
+    font-size: 0.82rem;
+    font-family: var(--font-sans);
+    padding: 0.45rem 0.55rem;
+  }
+  .memory-value {
+    resize: vertical;
+    min-height: 2.2rem;
+  }
+  .memory-del {
+    align-self: center;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text-muted);
+    font-size: 0.78rem;
+    border-radius: var(--radius-sm);
+    padding: 0.25rem 0.6rem;
+    cursor: pointer;
+  }
+  .memory-del:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+
+  .memory-actions {
+    margin-top: 0.7rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.6rem;
+  }
+  .memory-add {
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text-muted);
+    border-radius: var(--radius-sm);
+    padding: 0.35rem 0.7rem;
+    font: inherit;
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    cursor: pointer;
+  }
+  .memory-add:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+  .memory-save {
+    background: var(--accent);
+    color: var(--text-on-accent);
+    border: none;
+    border-radius: var(--radius-sm);
+    padding: 0.42rem 0.95rem;
+    font: inherit;
+    font-size: 0.88rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: filter 80ms ease;
+  }
+  .memory-save:hover:not(:disabled) {
+    filter: brightness(1.08);
+  }
+  .memory-save:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
   }
 
   .theme-row {

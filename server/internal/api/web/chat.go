@@ -20,8 +20,18 @@ import (
 
 // systemPrompt is the system message injected at the start of every conversation.
 // The model receives it once; tool definitions are sent separately in the API body.
-func systemPrompt() string {
+func systemPrompt(memoryRows []store.UserMemory) string {
 	loc := time.Now().Location()
+	var memoryBlock strings.Builder
+	if len(memoryRows) > 0 {
+		memoryBlock.WriteString("Stored memory context (persistent user facts/preferences):\n")
+		for _, row := range memoryRows {
+			fmt.Fprintf(&memoryBlock, "- %s: %s\n", row.Key, row.Value)
+		}
+	} else {
+		memoryBlock.WriteString("Stored memory context: none\n")
+	}
+
 	return fmt.Sprintf(`You are lucky, a sharp, capable AI assistant built by kieran klukas for hackclubers. You work fast, keep quiet, and care about the work.
 
 You talk like a casual internet-native person. Lowercase for short answers, proper case when more structure helps. No corporate cheer. No filler. No "Great question!" Drop straight into the answer. You can say "yeah," "oop," "nice," "hmm." Playful when it fits. Warmth earned through competence, not performance.
@@ -30,13 +40,22 @@ Cite sources and use markdown links and other formating. Avoid emojis but text b
 
 It is currently %s (%s).
 
+%s
+
 You have access to tools:
 - web_search: search DuckDuckGo for current information, facts, or research
 - web_fetch: read the content of a specific URL
+- set_memory: store a persistent memory key-value pair for this user
+- get_memory: retrieve persistent memory values for this user
 
 Use web_search aggressively when you need current information or when the user asks about things beyond your knowledge cutoff. Fetch relevant URLs to get details. Cite your sources when pulling from search results.
 
-Be concise. If a search doesn't turn up what you need, say so and try a different query.`, time.Now().Format(time.RFC1123), loc.String())
+Use memory tools carefully:
+- save stable, reusable preferences/facts (name preferences, timezone, writing style, recurring constraints)
+- do not save ephemeral chat state or sensitive secrets unless explicitly requested
+- if memory context conflicts with the user's current instruction, follow the current instruction
+
+Be concise. If a search doesn't turn up what you need, say so and try a different query.`, time.Now().Format(time.RFC1123), loc.String(), strings.TrimSpace(memoryBlock.String()))
 }
 
 type chatReq struct {
@@ -200,8 +219,14 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
+	memoryRows, err := s.Q.GetUserMemory(r.Context(), u.ID)
+	if err != nil {
+		writeErr(w, 500, "internal", err.Error())
+		return
+	}
+
 	provMsgs := make([]provider.ChatMessage, 1, len(req.Messages)+1)
-	provMsgs[0] = provider.ChatMessage{Role: "system", Content: provider.StringContent(systemPrompt())}
+	provMsgs[0] = provider.ChatMessage{Role: "system", Content: provider.StringContent(systemPrompt(memoryRows))}
 	for _, m := range req.Messages {
 		provMsgs = append(provMsgs, provider.ChatMessage{Role: m.Role, Content: provider.StringContent(m.Content)})
 	}
@@ -327,7 +352,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 
 			// Execute each tool and append a tool-role message with the result.
 			for _, tc := range toolCalls {
-				result, toolErr := tools.Execute(r.Context(), tc.Function.Name, tc.Function.Arguments)
+				result, toolErr := tools.Execute(r.Context(), s.Q, u.ID, tc.Function.Name, tc.Function.Arguments)
 				if toolErr != nil {
 					result = fmt.Sprintf("error: %v", toolErr)
 				}

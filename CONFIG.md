@@ -13,6 +13,12 @@ and email links once those land.
 inactivity (the last_used_at column is bumped on every request).
  - Pioneer.ai inference credentials.
    - `PIONEER_BASE_URL` (default: `https://api.pioneer.ai`) - Base URL — override for testing against the fake provider.
+ - Self-hosted free inference endpoint (optional).
+Set FREE_PROVIDER_BASE_URL to enable; requests to models available on
+that endpoint are free for all users and skip the shared pool gate.
+   - `FREE_PROVIDER_BASE_URL` - Base URL of a self-hosted OpenAI-compatible inference endpoint.
+Requests to models served by this endpoint are free for all users and
+bypass the shared pool gate entirely.
  - `POTLUCK_POOL_KEY_SECRET` - Pool key encryption secret. 64-char hex (32 bytes) or base64 (44 chars).
 Generate with: openssl rand -hex 32
 Required to store keys securely; dev allows empty (plaintext fallback).

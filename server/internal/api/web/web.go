@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -43,6 +44,8 @@ func (s *Server) Mount(r chi.Router) {
 	r.Get("/me", s.handleMe)
 	r.Patch("/me", s.handleUpdateMe)
 	r.Get("/balance", s.handleBalance)
+	r.Get("/memory", s.handleGetMemory)
+	r.Patch("/memory", s.handleUpdateMemory)
 	r.Post("/contributions", s.handleContribute)
 	r.Get("/allocations", s.handleAllocations)
 	r.Post("/allocations/recompute", s.handleRecomputeAllocations)
@@ -145,6 +148,89 @@ func (s *Server) handleBalance(w http.ResponseWriter, r *http.Request) {
 		"balance_micros": int64(bal),
 		"balance_usd":    bal.USDString(),
 	})
+}
+
+type memoryRow struct {
+	Key   string `json:"key"`
+	Value string `json:"value"`
+}
+
+type updateMemoryReq struct {
+	Rows []memoryRow `json:"rows"`
+}
+
+func (s *Server) handleGetMemory(w http.ResponseWriter, r *http.Request) {
+	u, _ := currentUser(r)
+	rows, err := s.Q.GetUserMemory(r.Context(), u.ID)
+	if err != nil {
+		writeErr(w, 500, "internal", err.Error())
+		return
+	}
+	out := make([]memoryRow, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, memoryRow{Key: row.Key, Value: row.Value})
+	}
+	writeJSON(w, 200, map[string]any{"rows": out})
+}
+
+func (s *Server) handleUpdateMemory(w http.ResponseWriter, r *http.Request) {
+	u, _ := currentUser(r)
+	var req updateMemoryReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, 400, "invalid_request", err.Error())
+		return
+	}
+	if len(req.Rows) > 128 {
+		writeErr(w, 400, "invalid_request", "too many memory rows")
+		return
+	}
+
+	seen := map[string]struct{}{}
+	for _, row := range req.Rows {
+		key := strings.TrimSpace(row.Key)
+		if key == "" || len(key) > 64 {
+			writeErr(w, 400, "invalid_request", "memory key must be 1-64 chars")
+			return
+		}
+		if len(row.Value) > 2048 {
+			writeErr(w, 400, "invalid_request", "memory value must be <= 2048 chars")
+			return
+		}
+		if _, exists := seen[key]; exists {
+			writeErr(w, 400, "invalid_request", "duplicate memory key")
+			return
+		}
+		seen[key] = struct{}{}
+	}
+
+	existing, err := s.Q.GetUserMemory(r.Context(), u.ID)
+	if err != nil {
+		writeErr(w, 500, "internal", err.Error())
+		return
+	}
+	keep := map[string]struct{}{}
+	for _, row := range req.Rows {
+		key := strings.TrimSpace(row.Key)
+		keep[key] = struct{}{}
+		if err := s.Q.UpsertUserMemory(r.Context(), store.UpsertUserMemoryParams{
+			UserID: u.ID,
+			Key:    key,
+			Value:  row.Value,
+		}); err != nil {
+			writeErr(w, 500, "internal", err.Error())
+			return
+		}
+	}
+	for _, row := range existing {
+		if _, ok := keep[row.Key]; ok {
+			continue
+		}
+		if err := s.Q.DeleteUserMemoryKey(r.Context(), store.DeleteUserMemoryKeyParams{UserID: u.ID, Key: row.Key}); err != nil {
+			writeErr(w, 500, "internal", err.Error())
+			return
+		}
+	}
+	writeJSON(w, 200, map[string]any{"ok": true})
 }
 
 type contributeReq struct {

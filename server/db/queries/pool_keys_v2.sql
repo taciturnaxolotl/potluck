@@ -59,7 +59,7 @@ WHERE id = ?;
 -- Excludes permanently revoked keys.
 SELECT * FROM pool_keys
 WHERE revoked_at IS NULL
-ORDER BY last_billing_sync_at ASC NULLS FIRST;
+ORDER BY (last_billing_sync_at IS NOT NULL) ASC, last_billing_sync_at ASC;
 
 -- name: ListUnhealthyKeysOlderThan :many
 -- Keys that have been unauthorized (pioneer_health=2) since before cutoff.
@@ -94,8 +94,8 @@ LIMIT 1;
 --
 -- Orders by remaining private budget (most remaining first) so that when a
 -- user has multiple keys with private reserves we pick the one with the most
--- headroom — this avoids over-draining a single key from shared pool traffic.
--- RANDOM() tiebreak ensures cycling when keys have equal private remaining.
+-- headroom; this avoids over-draining a single key from shared pool traffic.
+-- RANDOM() tie-break ensures cycling when keys have equal private remaining.
 SELECT * FROM pool_keys
 WHERE user_id = ?
   AND active = 1
@@ -105,5 +105,5 @@ WHERE user_id = ?
   AND (pioneer_remaining_micros IS NULL OR pioneer_remaining_micros > 10000000)
   AND today_micros < max_micros
   AND max_micros > shared_micros
-ORDER BY (max_micros - CASE WHEN today_micros > shared_micros THEN today_micros ELSE shared_micros END) DESC, RANDOM()
+ORDER BY (max_micros - max(today_micros, shared_micros)) DESC, RANDOM()
 LIMIT 1;

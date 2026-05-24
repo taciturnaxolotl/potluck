@@ -87,6 +87,10 @@ export const me = () => api.get<User>('/api/me');
 export const updateMe = (display_name: string) => api.patch<User>('/api/me', { display_name });
 export const balance = () =>
   api.get<{ balance_micros: number; balance_usd: string }>('/api/balance');
+
+export type MemoryRow = { key: string; value: string };
+export const getMemory = () => api.get<{ rows: MemoryRow[] }>('/api/memory');
+export const updateMemory = (rows: MemoryRow[]) => api.patch<{ ok: boolean }>('/api/memory', { rows });
 export const listConversations = () => api.get<Conversation[]>('/api/conversations');
 export const createConversation = (title: string) =>
   api.post<Conversation>('/api/conversations', { title });
