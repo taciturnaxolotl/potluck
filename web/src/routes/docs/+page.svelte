@@ -21,7 +21,7 @@
   });
 
   let activeKey = $derived(keys.find(k => !k.revoked) ?? null);
-  let keyExample = $derived(activeKey?.masked ?? 'pot_cedar_\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022_9xK2m');
+  let keyExample = $derived(activeKey?.masked ?? 'pot_mist_\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022_0jgPu');
   let firstModel = $derived(models[0]?.id ?? 'claude-haiku-4-5');
 
   // ---- copy-button state ------------------------------------------------
@@ -68,14 +68,7 @@
   type Snippet = { lang: Lang; code: () => string };
 
   const snippets: Record<string, Snippet> = {
-    keyAnatomy: {
-      lang: 'text',
-      code: () =>
-`pot_cedar_KJ3mN8pQwR5vX2yZ4b_9xK2m
-     |     |                    +-- 5-char checksum
-     |     +----------------------- 18 chars, 107 bits of entropy
-     +----------------------------- mnemonic word`
-    },
+
     authHeader: {
       lang: 'http',
       code: () => `Authorization: Bearer ${keyExample}`
@@ -287,11 +280,33 @@ x-potluck-balance-cents: 142`
   <section>
     <h2>Authentication</h2>
     <p>Every request to <code>/v1/*</code> needs a bearer token. Create keys on the <a href="/settings">settings page</a>. Keys look like:</p>
-    {#await highlighted.keyAnatomy then html}
-      <div class="codeblock-wrap">
-        <pre class="codeblock">{@html html}</pre>
-      </div>
-    {/await}
+    <div class="key-anatomy">
+      <svg width="100%" viewBox="0 0 680 148" role="img" aria-label="API key structure" xmlns="http://www.w3.org/2000/svg">
+        <rect x="76" y="8" width="56" height="52" rx="8" stroke-width="0.5" class="seg-rect-muted"/>
+        <text x="104" y="34" text-anchor="middle" dominant-baseline="central" class="key-text seg-text-muted">pot</text>
+        <text x="144" y="34" text-anchor="middle" dominant-baseline="central" class="key-sep">_</text>
+        <rect x="156" y="8" width="84" height="52" rx="8" stroke-width="0.5" class="seg-rect-word"/>
+        <text x="198" y="34" text-anchor="middle" dominant-baseline="central" class="key-text seg-text-word">mist</text>
+        <text x="252" y="34" text-anchor="middle" dominant-baseline="central" class="key-sep">_</text>
+        <rect x="264" y="8" width="232" height="52" rx="8" stroke-width="0.5" class="seg-rect-entropy"/>
+        <text x="380" y="34" text-anchor="middle" dominant-baseline="central" class="key-text seg-text-entropy">KJ3mN8pQwR5vX2yZ4b</text>
+        <text x="508" y="34" text-anchor="middle" dominant-baseline="central" class="key-sep">_</text>
+        <rect x="520" y="8" width="84" height="52" rx="8" stroke-width="0.5" class="seg-rect-check"/>
+        <text x="562" y="34" text-anchor="middle" dominant-baseline="central" class="key-text seg-text-check">0jgPu</text>
+        <line x1="104" y1="60" x2="104" y2="86" class="label-line"/>
+        <text x="104" y="102" text-anchor="middle" class="label-title">prefix</text>
+        <text x="104" y="119" text-anchor="middle" class="label-sub">service tag</text>
+        <line x1="198" y1="60" x2="198" y2="86" class="label-line"/>
+        <text x="198" y="102" text-anchor="middle" class="label-title">mnemonic</text>
+        <text x="198" y="119" text-anchor="middle" class="label-sub">memorable</text>
+        <line x1="380" y1="60" x2="380" y2="86" class="label-line"/>
+        <text x="380" y="102" text-anchor="middle" class="label-title">entropy</text>
+        <text x="380" y="119" text-anchor="middle" class="label-sub">18 chars · 107 bits</text>
+        <line x1="562" y1="60" x2="562" y2="86" class="label-line"/>
+        <text x="562" y="102" text-anchor="middle" class="label-title">checksum</text>
+        <text x="562" y="119" text-anchor="middle" class="label-sub">5 chars</text>
+      </svg>
+    </div>
     <p>Pass it as a standard bearer header:</p>
     {#await highlighted.authHeader then html}
       <div class="codeblock-wrap">
@@ -551,6 +566,60 @@ x-potluck-balance-cents: 142`
 
   .mono { font-family: var(--font-mono); }
 
+  /* ---- key anatomy SVG ------------------------------------------------ */
+  .key-anatomy {
+    margin: 0 0 0.75rem;
+    padding: 0.5rem 0;
+  }
+  .key-anatomy :global(.seg-rect-muted) {
+    fill: light-dark(oklch(90% 0.005 270), oklch(28% 0.01 270));
+    stroke: light-dark(oklch(75% 0.01 270), oklch(45% 0.01 270));
+  }
+  .key-anatomy :global(.seg-rect-word) {
+    fill: light-dark(oklch(92% 0.04 350), oklch(22% 0.09 350));
+    stroke: light-dark(var(--dark-raspberry), var(--blush-rose));
+  }
+  .key-anatomy :global(.seg-rect-entropy) {
+    fill: light-dark(oklch(92% 0.03 350), oklch(18% 0.07 350));
+    stroke: light-dark(oklch(55% 0.2 350), oklch(60% 0.18 350));
+  }
+  .key-anatomy :global(.seg-rect-check) {
+    fill: light-dark(oklch(92% 0.04 350), oklch(22% 0.09 350));
+    stroke: light-dark(var(--dark-raspberry), var(--blush-rose));
+  }
+  .key-anatomy :global(.key-text) {
+    font-family: var(--font-mono);
+    font-size: 19px;
+    font-weight: 500;
+    fill: var(--text);
+  }
+  .key-anatomy :global(.seg-text-muted)   { fill: var(--text-muted); }
+  .key-anatomy :global(.seg-text-word)    { fill: light-dark(var(--dark-raspberry), var(--blush-rose)); }
+  .key-anatomy :global(.seg-text-entropy) { fill: light-dark(oklch(42% 0.2 350), var(--blush-rose)); }
+  .key-anatomy :global(.seg-text-check)   { fill: light-dark(var(--dark-raspberry), var(--blush-rose)); }
+  .key-anatomy :global(.key-sep) {
+    font-family: var(--font-mono);
+    font-size: 19px;
+    fill: var(--text-muted);
+    opacity: 0.4;
+  }
+  .key-anatomy :global(.label-line) {
+    stroke: var(--border);
+    stroke-width: 0.5;
+    stroke-dasharray: 4 3;
+  }
+  .key-anatomy :global(.label-title) {
+    font-family: var(--font-sans);
+    font-size: 13px;
+    font-weight: 500;
+    fill: var(--text);
+  }
+  .key-anatomy :global(.label-sub) {
+    font-family: var(--font-sans);
+    font-size: 11px;
+    fill: var(--text-muted);
+  }
+
   .endpoint {
     display: flex;
     align-items: center;
@@ -691,8 +760,6 @@ x-potluck-balance-cents: 142`
 
   .tab-pane { display: none; }
   .tab-desc { font-size: 0.85rem; color: var(--text-muted); margin: 0 0 0.6rem; line-height: 1.6; }
-  .tab-hint { font-size: 0.78rem; font-family: var(--font-mono); color: var(--text-muted); margin-top: 0.5rem; }
-  .tab-hint code { color: var(--text); background: light-dark(oklch(94% 0.005 270), oklch(25% 0.01 270)); padding: 0.1em 0.35em; border-radius: 4px; }
   .loading-note { font-size: 0.78rem; color: var(--text-muted); }
 
   /* SDK tabs */

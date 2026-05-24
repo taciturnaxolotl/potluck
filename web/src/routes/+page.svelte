@@ -11,7 +11,7 @@
   let theme = $state<Theme>('auto');
   let shellTab = $state<'bash' | 'powershell'>('bash');
 
-  const KEY = 'pot_cedar_\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022_9xK2m';
+  const KEY = 'pot_mist_\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022_0jgPu';
 
   const bashSnippet = `curl https://potluck.dunkirk.sh/v1/chat/completions \\
   -H "Authorization: Bearer ${KEY}" \\

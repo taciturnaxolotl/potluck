@@ -225,7 +225,7 @@
       <div class="snippet-label">From the command line</div>
       <pre><span class="cm"># your key, the pool's budget</span>
 curl {typeof window !== 'undefined' ? window.location.origin : 'https://potluck.dunkirk.sh'}/v1/chat/completions \
-  -H <span class="st">"Authorization: Bearer {keys[0]?.masked ?? 'pot_cedar_••••••••••••••••••_9xK2m'}"</span> \
+  -H <span class="st">"Authorization: Bearer {keys[0]?.masked ?? 'pot_mist_••••••••••••••••••_0jgPu'}"</span> \
   -H <span class="st">"Content-Type: application/json"</span> \
   -d <span class="st">'&lbrace;"model": "claude-haiku-4-5", "messages": [&lbrace;"role":"user","content":"hello"&rbrace;]&rbrace;'</span></pre>
     </div>
