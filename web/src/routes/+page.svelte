@@ -1,6 +1,7 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
   import { me, poolStats, type PoolStats } from '$lib/api';
+  import { highlight } from '$lib/highlight';
   import { cycleTheme, currentTheme, type Theme } from '$lib/theme';
   import { onMount } from 'svelte';
 
@@ -8,6 +9,24 @@
   let err = $state<string | null>(null);
   let checking = $state(true);
   let theme = $state<Theme>('auto');
+  let shellTab = $state<'bash' | 'powershell'>('bash');
+
+  const KEY = 'pot_cedar_\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022_9xK2m';
+
+  const bashSnippet = `curl https://potluck.dunkirk.sh/v1/chat/completions \\
+  -H "Authorization: Bearer ${KEY}" \\
+  -H "Content-Type: application/json" \\
+  -d '{"model": "claude-haiku-4-5", "messages": [{"role":"user","content":"hello"}]}'`;
+
+  const psSnippet = `Invoke-RestMethod https://potluck.dunkirk.sh/v1/chat/completions \`
+  -Method Post \`
+  -Headers @{ "Authorization" = "Bearer ${KEY}"; "Content-Type" = "application/json" } \`
+  -Body '{"model": "claude-haiku-4-5", "messages": [{"role":"user","content":"hello"}]}'`;
+
+  let highlighted = $derived({
+    bash: highlight(bashSnippet, 'bash'),
+    ps: highlight(psSnippet, 'powershell')
+  });
 
   // Auth probe + stats fetch run in parallel; we redirect signed-in users
   // straight to the dashboard so they don't see the splash for a frame.
@@ -116,12 +135,18 @@
   </section>
 
   <section class="snippet" aria-label="curl example">
-    <div class="snippet-label">From the command line</div>
-    <pre><span class="cm"># your key, the pool's budget</span>
-curl https://potluck.dunkirk.sh/v1/chat/completions \
-  -H <span class="st">"Authorization: Bearer pot_cedar_KJ3mN8pQwR5vX2yZ4b_9xK2m"</span> \
-  -H <span class="st">"Content-Type: application/json"</span> \
-  -d <span class="st">'&lbrace;"model": "claude-haiku-4-5", "messages": [&lbrace;"role":"user","content":"hello"&rbrace;]&rbrace;'</span></pre>
+    <div class="snippet-header">
+      <div class="snippet-label">From the command line</div>
+      <div class="shell-tabs">
+        <button class="shell-tab" class:active={shellTab === 'bash'} onclick={() => shellTab = 'bash'}>bash</button>
+        <button class="shell-tab" class:active={shellTab === 'powershell'} onclick={() => shellTab = 'powershell'}>powershell</button>
+      </div>
+    </div>
+    {#if shellTab === 'bash'}
+      {#await highlighted.bash then h}<pre class="snippet-pre">{@html h}</pre>{/await}
+    {:else}
+      {#await highlighted.ps then h}<pre class="snippet-pre">{@html h}</pre>{/await}
+    {/if}
   </section>
 
   <section class="body">
@@ -177,6 +202,50 @@ curl https://potluck.dunkirk.sh/v1/chat/completions \
   }
   .body p {
     margin: 0;
+  }
+
+  .snippet-pre {
+    margin: 0;
+    padding: 0;
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+    line-height: 1.65;
+    overflow-x: auto;
+    background: none !important;
+  }
+  .snippet-pre :global(code) {
+    background: none !important;
+    display: block;
+  }
+
+  .snippet-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.6rem;
+  }
+  .snippet-header .snippet-label {
+    margin-bottom: 0;
+  }
+  .shell-tabs {
+    display: flex;
+    gap: 0.15rem;
+  }
+  .shell-tab {
+    background: none;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    padding: 0.15rem 0.5rem;
+    transition: color 0.15s, border-color 0.15s;
+  }
+  .shell-tab:hover { color: var(--text); }
+  .shell-tab.active {
+    color: var(--accent);
+    border-color: var(--border);
   }
 
   .stats {
