@@ -11,10 +11,11 @@
 
 export interface StreamEvent {
   seq: number;
-  type: 'delta' | 'usage' | 'error' | 'done';
+  type: 'delta' | 'usage' | 'error' | 'done' | 'tool_call' | 'tool_result' | 'start';
   content?: string;
   usage?: { input_tokens: number; output_tokens: number };
   error?: { code: string; message: string };
+  [extra: string]: any;
 }
 
 export interface StreamHandlers {
@@ -22,15 +23,15 @@ export interface StreamHandlers {
   onClose?(reason: 'done' | 'error' | 'aborted'): void;
 }
 
-export function consume(streamID: string, handlers: StreamHandlers): () => void {
+export function consume(streamID: string, handlers: StreamHandlers, initialAfterSeq = 0): () => void {
   let aborted = false;
-  let lastSeq = 0;
+  let lastSeq = initialAfterSeq;
   let controller = new AbortController();
 
   const loop = async () => {
     while (!aborted) {
       try {
-        const res = await fetch(`/api/streams/${streamID}/events?after_seq=${lastSeq}`, {
+        const res = await fetch(`/api/streams/${streamID}/events?after_seq=${Math.max(0, lastSeq)}`, {
           credentials: 'include',
           signal: controller.signal
         });

@@ -186,6 +186,17 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		CreatedAt:      now + 1,
 	})
 
+	streamID := uuid.NewString()
+	_, _ = s.Q.CreateStream(r.Context(), store.CreateStreamParams{
+		ID:                 streamID,
+		ConversationID:     convID,
+		UserID:             u.ID,
+		AssistantMessageID: sql.NullString{String: assistantMsgID, Valid: true},
+		IdempotencyKey:     uuid.NewString(),
+		Model:              req.Model,
+		StartedAt:          now,
+	})
+
 	// Pick provider and upstream model name.
 	upstreamModel := req.Model
 	var pc *provider.Client
@@ -237,27 +248,54 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(200)
 	flusher, _ := w.(http.Flusher)
 
-	emit := func(v any) {
-		b, _ := json.Marshal(v)
+	var full strings.Builder
+	var usage *provider.Usage
+
+	_ = s.Q.SetStreamStatus(r.Context(), store.SetStreamStatusParams{
+		Status:       "running",
+		FinishedAt:   sql.NullInt64{},
+		ErrorCode:    sql.NullString{},
+		ErrorMessage: sql.NullString{},
+		ID:           streamID,
+	})
+
+	seq := int64(0)
+	clientGone := false
+	ctxDone := r.Context().Done()
+	genCtx := context.Background()
+
+	emit := func(event string, payload map[string]any) {
+		seq++
+		payload["seq"] = seq
+		b, _ := json.Marshal(payload)
+		_ = s.Q.AppendStreamChunk(genCtx, store.AppendStreamChunkParams{
+			StreamID:  streamID,
+			Seq:       seq,
+			Event:     event,
+			Data:      string(b),
+			CreatedAt: time.Now().Unix(),
+		})
+		if clientGone {
+			return
+		}
 		_, _ = fmt.Fprintf(w, "data: %s\n\n", b)
 		if flusher != nil {
 			flusher.Flush()
 		}
 	}
 
-	emit(map[string]any{
+	startPayload := map[string]any{
 		"type":                 "start",
 		"conversation_id":      convID,
 		"user_message_id":      userMsgID,
 		"assistant_message_id": assistantMsgID,
-	})
-
-	var full strings.Builder
-	var usage *provider.Usage
+		"stream_id":            streamID,
+	}
+	emit("start", startPayload)
 
 	const maxIter = 5
 	for iter := 0; iter < maxIter; iter++ {
-		chunks, errs, err := pc.StreamChat(r.Context(), provider.ChatRequest{
+		chunks, errs, err := pc.StreamChat(genCtx, provider.ChatRequest{
 			Model:    upstreamModel,
 			Messages: provMsgs,
 			Tools:    tools.Definitions(),
@@ -276,11 +314,10 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		streamDone := false
 		for !streamDone {
 			select {
-			case <-r.Context().Done():
-				if !isFree && reqID != "" {
-					go finishWebReq(s.Q, reqID, 0, 0, 0, "canceled")
-				}
-				return
+			case <-ctxDone:
+				clientGone = true
+				ctxDone = nil
+				continue
 			case ch, ok := <-chunks:
 				if ch.Usage != nil {
 					usage = ch.Usage
@@ -291,7 +328,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 				}
 				if ch.Delta != "" {
 					full.WriteString(ch.Delta)
-					emit(map[string]any{"type": "delta", "content": ch.Delta})
+					emit("delta", map[string]any{"type": "delta", "content": ch.Delta})
 				}
 				for _, tcd := range ch.ToolCalls {
 					if tcd.Index < 0 {
@@ -319,7 +356,14 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 				}
 			case e := <-errs:
 				if e != nil {
-					emit(map[string]any{"type": "error", "message": e.Error()})
+					emit("error", map[string]any{"type": "error", "message": e.Error()})
+					_ = s.Q.SetStreamStatus(genCtx, store.SetStreamStatusParams{
+						Status:       "error",
+						FinishedAt:   sql.NullInt64{Int64: time.Now().Unix(), Valid: true},
+						ErrorCode:    sql.NullString{String: "provider_down", Valid: true},
+						ErrorMessage: sql.NullString{String: e.Error(), Valid: true},
+						ID:           streamID,
+					})
 					if !isFree && reqID != "" {
 						go finishWebReq(s.Q, reqID, 0, 0, 0, "error")
 					}
@@ -331,7 +375,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		// Tool invocation: execute tools, emit events, extend messages, re-stream.
 		if finishReason == "tool_calls" && len(toolCalls) > 0 {
 			for _, tc := range toolCalls {
-				emit(map[string]any{
+				emit("tool_call", map[string]any{
 					"type":      "tool_call",
 					"id":        tc.ID,
 					"name":      tc.Function.Name,
@@ -352,11 +396,11 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 
 			// Execute each tool and append a tool-role message with the result.
 			for _, tc := range toolCalls {
-				result, toolErr := tools.Execute(r.Context(), s.Q, u.ID, tc.Function.Name, tc.Function.Arguments)
+				result, toolErr := tools.Execute(genCtx, s.Q, u.ID, tc.Function.Name, tc.Function.Arguments)
 				if toolErr != nil {
 					result = fmt.Sprintf("error: %v", toolErr)
 				}
-				emit(map[string]any{
+				emit("tool_result", map[string]any{
 					"type":         "tool_result",
 					"tool_call_id": tc.ID,
 					"content":      result,
@@ -379,7 +423,14 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 				"total_tokens":      usage.TotalTokens,
 			}
 		}
-		emit(payload)
+		emit("done", payload)
+		_ = s.Q.SetStreamStatus(genCtx, store.SetStreamStatusParams{
+			Status:       "done",
+			FinishedAt:   sql.NullInt64{Int64: time.Now().Unix(), Valid: true},
+			ErrorCode:    sql.NullString{},
+			ErrorMessage: sql.NullString{},
+			ID:           streamID,
+		})
 		go s.finalizeChatMsg(convID, assistantMsgID, full.String(), isFree, sel, reqID, usage)
 		return
 	}
@@ -393,7 +444,14 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 			"total_tokens":      usage.TotalTokens,
 		}
 	}
-	emit(payload)
+	emit("done", payload)
+	_ = s.Q.SetStreamStatus(genCtx, store.SetStreamStatusParams{
+		Status:       "done",
+		FinishedAt:   sql.NullInt64{Int64: time.Now().Unix(), Valid: true},
+		ErrorCode:    sql.NullString{},
+		ErrorMessage: sql.NullString{},
+		ID:           streamID,
+	})
 	go s.finalizeChatMsg(convID, assistantMsgID, full.String(), isFree, sel, reqID, usage)
 }
 

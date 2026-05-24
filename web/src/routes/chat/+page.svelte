@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
   import { liveQuery } from 'dexie';
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
@@ -7,6 +7,7 @@
   import { db, type DBMessage } from '$lib/db';
   import { listConversations, listMessages, listModels, type Model } from '$lib/api';
   import { renderMarkdown, renderStreamingMarkdown } from '$lib/markdown';
+  import { consume, type StreamEvent } from '$lib/stream';
 
   // ── state ─────────────────────────────────────────────────────────────────
 
@@ -14,6 +15,9 @@
   let input = $state('');
   let streaming = $state(false);
   let streamingMsgId = $state<string | null>(null);
+  let activeStreamId = $state<string | null>(null);
+  let activeAfterSeq = $state(0);
+  let stopActiveConsumer: (() => void) | null = null;
 
   let models = $state<Model[]>([]);
   let selectedModel = $state('');
@@ -156,6 +160,10 @@
 
   onMount(async () => {
     const saved = localStorage.getItem('chat:model');
+    const resumeStreamId = localStorage.getItem('chat:active_stream_id');
+    const resumeConvId = localStorage.getItem('chat:active_stream_conv_id');
+    const resumeAssistantId = localStorage.getItem('chat:active_stream_assistant_id');
+    const resumeAfterSeq = Number(localStorage.getItem('chat:active_stream_after_seq') || '0');
     if (saved) selectedModel = saved;
 
     try {
@@ -170,6 +178,23 @@
 
     // Sync conversations so the layout sidebar has data.
     syncConversations();
+
+    // Resume in-flight stream after reload.
+    if (resumeStreamId && resumeConvId && resumeAssistantId) {
+      activeConvId = resumeConvId;
+      streaming = true;
+      activeStreamId = resumeStreamId;
+      streamingMsgId = resumeAssistantId;
+      activeAfterSeq = Number.isFinite(resumeAfterSeq) ? resumeAfterSeq : 0;
+      attachStreamConsumer(resumeStreamId, resumeConvId, resumeAssistantId, Math.floor(Date.now() / 1000), resumeAfterSeq);
+    }
+  });
+
+  onDestroy(() => {
+    if (stopActiveConsumer) {
+      stopActiveConsumer();
+      stopActiveConsumer = null;
+    }
   });
 
   // ── model selection ───────────────────────────────────────────────────────
@@ -226,6 +251,109 @@
   });
 
   // ── send / stream ─────────────────────────────────────────────────────────
+
+  function clearActiveStreamStorage() {
+    localStorage.removeItem('chat:active_stream_id');
+    localStorage.removeItem('chat:active_stream_conv_id');
+    localStorage.removeItem('chat:active_stream_assistant_id');
+    localStorage.removeItem('chat:active_stream_after_seq');
+  }
+
+  function attachStreamConsumer(streamId: string, convId: string, assistantId: string, now: number, initialAfterSeq = 0) {
+    if (stopActiveConsumer) {
+      stopActiveConsumer();
+      stopActiveConsumer = null;
+    }
+
+    stopActiveConsumer = consume(streamId, {
+      onEvent: async (ev: StreamEvent) => {
+        if (ev.seq > activeAfterSeq) {
+          activeAfterSeq = ev.seq;
+          localStorage.setItem('chat:active_stream_after_seq', String(activeAfterSeq));
+        }
+
+        if (ev.type === 'delta' && ev.content) {
+          if (!streamFirstTokenMs) streamFirstTokenMs = Date.now();
+          const msg = await db.messages.get(assistantId);
+          const current = msg?.content ?? '';
+          await db.messages.put({
+            id: assistantId,
+            conversation_id: convId,
+            client_id: null,
+            role: 'assistant',
+            content: current + ev.content,
+            model: selectedModel,
+            created_at: now + 1,
+            pending: true
+          });
+        }
+
+        if (ev.type === 'tool_call') {
+          if (!toolMsgId) toolMsgId = assistantId;
+          const tcId = (ev as any).id as string || uuid();
+          toolCalls.set(tcId, {
+            name: ((ev as any).name as string) || 'tool',
+            args: ((ev as any).arguments as string) || '',
+            result: '',
+            done: false
+          });
+          toolCalls = new Map(toolCalls);
+        }
+
+        if (ev.type === 'tool_result') {
+          const tcId = ((ev as any).tool_call_id as string) || '';
+          const existing = tcId ? toolCalls.get(tcId) : null;
+          if (existing) {
+            toolCalls.set(tcId, { ...existing, result: ((ev as any).content as string) || '', done: true });
+          } else {
+            for (const [id, tc] of toolCalls) {
+              if (!tc.done) {
+                toolCalls.set(id, { ...tc, result: ((ev as any).content as string) || '', done: true });
+                break;
+              }
+            }
+          }
+          toolCalls = new Map(toolCalls);
+        }
+
+        if (ev.type === 'done' || ev.type === 'error') {
+          const doneMs = Date.now();
+          const completionTokens = ev.usage?.output_tokens;
+          const ttft = streamFirstTokenMs ? streamFirstTokenMs - streamStartMs : undefined;
+          const tps =
+            completionTokens && streamFirstTokenMs
+              ? completionTokens / ((doneMs - streamFirstTokenMs) / 1000)
+              : undefined;
+
+          await db.messages.where({ id: assistantId }).modify({
+            pending: false,
+            ttft,
+            tps,
+            tokens: completionTokens
+          });
+          await db.conversations.where({ id: convId }).modify({ updated_at: Math.floor(doneMs / 1000) });
+
+          streaming = false;
+          streamingMsgId = null;
+          activeStreamId = null;
+          activeAfterSeq = 0;
+          clearActiveStreamStorage();
+
+          if (stopActiveConsumer) {
+            stopActiveConsumer();
+            stopActiveConsumer = null;
+          }
+
+          if (ev.type === 'error') {
+            errorMsg = ev.error?.message || (ev as any).message || 'stream error';
+          }
+        }
+      },
+      onClose: (reason) => {
+        if (reason === 'aborted') return;
+      }
+    }, initialAfterSeq);
+  }
 
   async function sendMessage() {
     const content = input.trim();
@@ -302,6 +430,7 @@
     let resolvedUserId = tmpUserId;
     let resolvedAssistantId = tmpAssistantId;
     let accContent = '';
+    let handedOffToStreamConsumer = false;
 
     try {
       const res = await fetch('/api/chat', {
@@ -353,6 +482,7 @@
               const serverConvId: string = ev.conversation_id;
               const serverUserId: string = ev.user_message_id;
               const serverAssistantId: string = ev.assistant_message_id;
+              const serverStreamId: string | undefined = ev.stream_id;
 
               const outerConvId: string = convId!;
 
@@ -404,6 +534,17 @@
                 goto(`/chat?c=${serverConvId}`, { replaceState: true, noScroll: true, keepFocus: true });
               }
 
+              if (serverStreamId) {
+                activeStreamId = serverStreamId;
+                localStorage.setItem('chat:active_stream_id', serverStreamId);
+                localStorage.setItem('chat:active_stream_conv_id', convId);
+                localStorage.setItem('chat:active_stream_assistant_id', resolvedAssistantId);
+                localStorage.setItem('chat:active_stream_after_seq', String(activeAfterSeq));
+                attachStreamConsumer(serverStreamId, convId, resolvedAssistantId, now, activeAfterSeq);
+                handedOffToStreamConsumer = true;
+                break outer;
+              }
+
               break;
             }
 
@@ -440,12 +581,18 @@
                 tokens: completionTokens
               });
               await db.conversations.where({ id: convId }).modify({ updated_at: Math.floor(doneMs / 1000) });
+              activeStreamId = null;
+              activeAfterSeq = 0;
+              clearActiveStreamStorage();
               break outer;
             }
 
             case 'error': {
               await db.messages.delete(resolvedAssistantId);
               errorMsg = ev.message as string;
+              activeStreamId = null;
+              activeAfterSeq = 0;
+              clearActiveStreamStorage();
               break outer;
             }
 
@@ -493,8 +640,10 @@
       await db.messages.delete(resolvedAssistantId);
       errorMsg = err instanceof Error ? err.message : 'Something went wrong';
     } finally {
-      streaming = false;
-      streamingMsgId = null;
+      if (!handedOffToStreamConsumer) {
+        streaming = false;
+        streamingMsgId = null;
+      }
     }
   }
 

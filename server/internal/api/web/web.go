@@ -10,8 +10,8 @@ package web
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -485,27 +485,78 @@ func (s *Server) handleRevokeKey(w http.ResponseWriter, r *http.Request) {
 // ---- chat / streams ----------------------------------------------------
 
 // handleStreamEvents serves SSE events for a given stream id, optionally
-// resuming from ?after_seq=N. Stub: replay from DB only.
+// resuming from ?after_seq=N. It replays durable chunks from DB first, then
+// attaches to the in-memory bus for live events.
 func (s *Server) handleStreamEvents(w http.ResponseWriter, r *http.Request) {
 	streamID := chi.URLParam(r, "id")
+	afterSeq := int64(0)
+	if v := r.URL.Query().Get("after_seq"); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n >= 0 {
+			afterSeq = n
+		}
+	}
+
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 	w.WriteHeader(200)
 	flusher, _ := w.(http.Flusher)
 
-	events, err := stream.Replay(r.Context(), s.Q, streamID, 0)
-	if err != nil && !errors.Is(err, http.ErrAbortHandler) {
-		// fall through; partial replay is fine
-		_ = err
-	}
-	for _, ev := range events {
+	emit := func(ev stream.Event) {
 		b, _ := json.Marshal(ev)
 		_, _ = w.Write([]byte("data: "))
 		_, _ = w.Write(b)
 		_, _ = w.Write([]byte("\n\n"))
 		if flusher != nil {
 			flusher.Flush()
+		}
+	}
+
+	// 1) Replay durable chunks after the requested seq.
+	events, err := stream.Replay(r.Context(), s.Q, streamID, afterSeq)
+	if err == nil {
+		for _, ev := range events {
+			emit(ev)
+			afterSeq = ev.Seq
+			if ev.Type == "done" || ev.Type == "error" {
+				return
+			}
+		}
+	}
+
+	// 2) Attach to live bus for tailing events.
+	bus := s.Hub.Subscriber(streamID)
+	ch, done, doneEv := bus.Subscribe(64)
+	if done {
+		if doneEv.Seq > afterSeq {
+			emit(doneEv)
+		}
+		return
+	}
+
+	heartbeat := time.NewTicker(15 * time.Second)
+	defer heartbeat.Stop()
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case <-heartbeat.C:
+			_, _ = w.Write([]byte(": ping\n\n"))
+			if flusher != nil {
+				flusher.Flush()
+			}
+		case ev, ok := <-ch:
+			if !ok {
+				return
+			}
+			if ev.Seq <= afterSeq {
+				continue
+			}
+			emit(ev)
+			afterSeq = ev.Seq
+			if ev.Type == "done" || ev.Type == "error" {
+				return
+			}
 		}
 	}
 }
