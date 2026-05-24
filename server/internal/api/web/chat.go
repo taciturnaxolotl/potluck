@@ -15,6 +15,7 @@ import (
 	"github.com/taciturnaxolotl/potluck/internal/pool"
 	"github.com/taciturnaxolotl/potluck/internal/provider"
 	"github.com/taciturnaxolotl/potluck/internal/store"
+	"github.com/taciturnaxolotl/potluck/internal/tools"
 )
 
 type chatReq struct {
@@ -36,8 +37,13 @@ type chatMsg struct {
 //
 //	{"type":"start","conversation_id":"...","user_message_id":"...","assistant_message_id":"..."}
 //	{"type":"delta","content":"..."}
+//	{"type":"tool_call","id":"...","name":"...","arguments":"..."}
+//	{"type":"tool_result","tool_call_id":"...","content":"..."}
 //	{"type":"done"}
 //	{"type":"error","message":"..."}
+//
+// When the model invokes tools, the server executes them and re-prompts in a
+// loop (up to 5 iterations) until finish_reason is "stop" or content-only.
 //
 // Models prefixed "free/" bypass the pool gate; all others go through the
 // shared pool and incur normal spend tracking.
@@ -175,19 +181,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 
 	provMsgs := make([]provider.ChatMessage, len(req.Messages))
 	for i, m := range req.Messages {
-		provMsgs[i] = provider.ChatMessage{Role: m.Role, Content: m.Content}
-	}
-
-	chunks, errs, err := pc.StreamChat(r.Context(), provider.ChatRequest{
-		Model:    upstreamModel,
-		Messages: provMsgs,
-	})
-	if err != nil {
-		writeErr(w, 502, "provider_down", err.Error())
-		if !isFree && reqID != "" {
-			go finishWebReq(s.Q, reqID, 0, 0, 0, "error")
-		}
-		return
+		provMsgs[i] = provider.ChatMessage{Role: m.Role, Content: provider.StringContent(m.Content)}
 	}
 
 	w.Header().Set("Content-Type", "text/event-stream")
@@ -214,44 +208,146 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	var full strings.Builder
 	var usage *provider.Usage
 
-	for {
-		select {
-		case <-r.Context().Done():
+	const maxIter = 5
+	for iter := 0; iter < maxIter; iter++ {
+		chunks, errs, err := pc.StreamChat(r.Context(), provider.ChatRequest{
+			Model:    upstreamModel,
+			Messages: provMsgs,
+			Tools:    tools.Definitions(),
+		})
+		if err != nil {
+			writeErr(w, 502, "provider_down", err.Error())
 			if !isFree && reqID != "" {
-				go finishWebReq(s.Q, reqID, 0, 0, 0, "canceled")
+				go finishWebReq(s.Q, reqID, 0, 0, 0, "error")
 			}
 			return
-		case ch, ok := <-chunks:
-			if ch.Usage != nil {
-				usage = ch.Usage
-			}
-			if !ok || ch.Done {
-				payload := map[string]any{"type": "done"}
-				if usage != nil {
-					payload["usage"] = map[string]any{
-						"prompt_tokens":     usage.PromptTokens,
-						"completion_tokens": usage.CompletionTokens,
-						"total_tokens":      usage.TotalTokens,
-					}
-				}
-				emit(payload)
-				go s.finalizeChatMsg(convID, assistantMsgID, full.String(), isFree, sel, reqID, usage)
-				return
-			}
-			if ch.Delta != "" {
-				full.WriteString(ch.Delta)
-				emit(map[string]any{"type": "delta", "content": ch.Delta})
-			}
-		case e := <-errs:
-			if e != nil {
-				emit(map[string]any{"type": "error", "message": e.Error()})
+		}
+
+		toolCalls := make(map[int]*provider.ToolCall)
+		var finishReason string
+
+		streamDone := false
+		for !streamDone {
+			select {
+			case <-r.Context().Done():
 				if !isFree && reqID != "" {
-					go finishWebReq(s.Q, reqID, 0, 0, 0, "error")
+					go finishWebReq(s.Q, reqID, 0, 0, 0, "canceled")
 				}
 				return
+			case ch, ok := <-chunks:
+				if ch.Usage != nil {
+					usage = ch.Usage
+				}
+				if !ok || ch.Done {
+					streamDone = true
+					continue
+				}
+				if ch.Delta != "" {
+					full.WriteString(ch.Delta)
+					emit(map[string]any{"type": "delta", "content": ch.Delta})
+				}
+				for _, tcd := range ch.ToolCalls {
+					if tcd.Index < 0 {
+						continue
+					}
+					tc, exists := toolCalls[tcd.Index]
+					if !exists {
+						tc = &provider.ToolCall{
+							ID:   tcd.ID,
+							Type: tcd.Type,
+						}
+						toolCalls[tcd.Index] = tc
+					}
+					if tcd.ID != "" {
+						tc.ID = tcd.ID
+					}
+					if tc.Type == "" && tcd.Type != "" {
+						tc.Type = tcd.Type
+					}
+					tc.Function.Name += tcd.Function.Name
+					tc.Function.Arguments += tcd.Function.Arguments
+				}
+				if ch.FinishReason != "" {
+					finishReason = ch.FinishReason
+				}
+			case e := <-errs:
+				if e != nil {
+					emit(map[string]any{"type": "error", "message": e.Error()})
+					if !isFree && reqID != "" {
+						go finishWebReq(s.Q, reqID, 0, 0, 0, "error")
+					}
+					return
+				}
 			}
 		}
+
+		// Tool invocation: execute tools, emit events, extend messages, re-stream.
+		if finishReason == "tool_calls" && len(toolCalls) > 0 {
+			for _, tc := range toolCalls {
+				emit(map[string]any{
+					"type":      "tool_call",
+					"id":        tc.ID,
+					"name":      tc.Function.Name,
+					"arguments": tc.Function.Arguments,
+				})
+			}
+
+			// Append the assistant message with tool calls to the growing history.
+			assistantTCs := make([]provider.ToolCall, 0, len(toolCalls))
+			for _, tc := range toolCalls {
+				assistantTCs = append(assistantTCs, *tc)
+			}
+			provMsgs = append(provMsgs, provider.ChatMessage{
+				Role:      "assistant",
+				Content:   nil,
+				ToolCalls: assistantTCs,
+			})
+
+			// Execute each tool and append a tool-role message with the result.
+			for _, tc := range toolCalls {
+				result, toolErr := tools.Execute(r.Context(), tc.Function.Name, tc.Function.Arguments)
+				if toolErr != nil {
+					result = fmt.Sprintf("error: %v", toolErr)
+				}
+				emit(map[string]any{
+					"type":         "tool_result",
+					"tool_call_id": tc.ID,
+					"content":      result,
+				})
+				provMsgs = append(provMsgs, provider.ChatMessage{
+					Role:       "tool",
+					ToolCallID: tc.ID,
+					Content:    provider.StringContent(result),
+				})
+			}
+			continue
+		}
+
+		// No tool call or final iteration — done.
+		payload := map[string]any{"type": "done"}
+		if usage != nil {
+			payload["usage"] = map[string]any{
+				"prompt_tokens":     usage.PromptTokens,
+				"completion_tokens": usage.CompletionTokens,
+				"total_tokens":      usage.TotalTokens,
+			}
+		}
+		emit(payload)
+		go s.finalizeChatMsg(convID, assistantMsgID, full.String(), isFree, sel, reqID, usage)
+		return
 	}
+
+	// Max iterations reached without content finish.
+	payload := map[string]any{"type": "done"}
+	if usage != nil {
+		payload["usage"] = map[string]any{
+			"prompt_tokens":     usage.PromptTokens,
+			"completion_tokens": usage.CompletionTokens,
+			"total_tokens":      usage.TotalTokens,
+		}
+	}
+	emit(payload)
+	go s.finalizeChatMsg(convID, assistantMsgID, full.String(), isFree, sel, reqID, usage)
 }
 
 func (s *Server) finalizeChatMsg(convID, aID, content string, isFree bool, sel *pool.Selection, reqID string, usage *provider.Usage) {

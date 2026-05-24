@@ -32,28 +32,87 @@ func New(baseURL string) *Client {
 
 // ChatRequest is the subset of the OpenAI chat-completions body we send.
 type ChatRequest struct {
-	Model         string        `json:"model"`
-	Messages      []ChatMessage `json:"messages"`
-	Stream        bool          `json:"stream"`
-	StreamOptions *StreamOpts   `json:"stream_options,omitempty"`
+	Model    string          `json:"model"`
+	Messages []ChatMessage   `json:"messages"`
+	Tools    []ToolDef       `json:"tools,omitempty"`
+	Stream   bool            `json:"stream"`
+	StreamOptions *StreamOpts `json:"stream_options,omitempty"`
 }
 
 type StreamOpts struct {
 	IncludeUsage bool `json:"include_usage"`
 }
 
+// ChatMessage models a single message in the chat array.
+// Content can be a string or nil (for tool calls without text content).
+// ToolCalls is populated on assistant messages that invoke tools.
+// ToolCallID is populated on tool-role messages that carry results.
 type ChatMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role       string     `json:"role"`
+	Content    *string    `json:"content"`
+	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
+	ToolCallID string     `json:"tool_call_id,omitempty"`
+	Name       string     `json:"name,omitempty"`
+}
+
+// StringContent is a helper to create a ChatMessage with string content.
+func StringContent(s string) *string { return &s }
+
+// ToolDef is an OpenAI-shaped function tool definition.
+type ToolDef struct {
+	Type     string   `json:"type"`
+	Function Function `json:"function"`
+}
+
+// Function describes a tool function.
+type Function struct {
+	Name        string         `json:"name"`
+	Description string         `json:"description"`
+	Parameters  map[string]any `json:"parameters"`
+}
+
+// ToolCall is a single tool invocation from an assistant message.
+type ToolCall struct {
+	ID       string       `json:"id"`
+	Type     string       `json:"type"`
+	Function FunctionCall `json:"function"`
+}
+
+// FunctionCall holds the function name and arguments string for a tool call.
+type FunctionCall struct {
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"`
+}
+
+// ToolResult is a tool-role message carrying the result of a tool call.
+type ToolResult struct {
+	ToolCallID string
+	Content    string
 }
 
 // Chunk is one decoded SSE event from the provider.
 type Chunk struct {
-	Raw   []byte         // the verbatim JSON for re-emission to clients
-	Delta string         // assistant content delta, if any
-	Usage *Usage         // populated on the final chunk when include_usage is on
-	Done  bool           // true once we see "[DONE]"
-	Extra map[string]any // anything else we care to inspect later
+	Raw       []byte         // the verbatim JSON for re-emission to clients
+	Delta     string         // assistant content delta, if any
+	ToolCalls []ToolCallDelta // tool call deltas, if any
+	FinishReason string      // "stop", "tool_calls", etc.
+	Usage     *Usage         // populated on the final chunk when include_usage is on
+	Done      bool           // true once we see "[DONE]"
+	Extra     map[string]any // anything else we care to inspect later
+}
+
+// ToolCallDelta represents an incremental tool call from a streaming response.
+type ToolCallDelta struct {
+	Index    int              `json:"index"`
+	ID       string           `json:"id,omitempty"`
+	Type     string           `json:"type,omitempty"`
+	Function FunctionCallDelta `json:"function,omitempty"`
+}
+
+// FunctionCallDelta holds incremental function name/arguments.
+type FunctionCallDelta struct {
+	Name      string `json:"name,omitempty"`
+	Arguments string `json:"arguments,omitempty"`
 }
 
 type Usage struct {
@@ -151,7 +210,8 @@ func (c *Client) StreamChatRaw(ctx context.Context, body []byte) (<-chan Chunk, 
 type rawChunk struct {
 	Choices []struct {
 		Delta struct {
-			Content string `json:"content"`
+			Content   string           `json:"content"`
+			ToolCalls []ToolCallDelta  `json:"tool_calls,omitempty"`
 		} `json:"delta"`
 		FinishReason *string `json:"finish_reason,omitempty"`
 	} `json:"choices"`
@@ -176,6 +236,12 @@ func decodeChunk(payload []byte) (Chunk, error) {
 	c := Chunk{Raw: append([]byte(nil), payload...), Usage: rc.Usage}
 	if len(rc.Choices) > 0 {
 		c.Delta = rc.Choices[0].Delta.Content
+		if len(rc.Choices[0].Delta.ToolCalls) > 0 {
+			c.ToolCalls = rc.Choices[0].Delta.ToolCalls
+		}
+		if rc.Choices[0].FinishReason != nil {
+			c.FinishReason = *rc.Choices[0].FinishReason
+		}
 	}
 	return c, nil
 }

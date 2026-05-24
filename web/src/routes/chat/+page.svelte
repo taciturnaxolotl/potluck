@@ -27,6 +27,13 @@
   let atBottom = true;
   let errorMsg = $state<string | null>(null);
 
+  // Tool call tracking during streaming — keyed by tool_call_id.
+  // Persists past streaming=false so the expandable widget renders on the
+  // finished assistant message.
+  let toolCalls = $state<Map<string, { name: string; args: string; result: string; done: boolean }>>(new Map());
+  let toolMsgId = $state<string | null>(null);
+  let toolExpanded = $state(false);
+
   // ── spin cursor (crush-style cycling glyphs) ──────────────────────────────
 
   const GLYPHS = '0123456789abcdefABCDEF~!@#$£€%^&*()+=_';
@@ -36,16 +43,13 @@
 
   $effect(() => {
     if (streaming) {
-      let step = 0;
+      spinChars = Array.from({ length: SPIN_LEN }, () =>
+        GLYPHS[Math.floor(Math.random() * GLYPHS.length)]
+      ).join('');
       spinInterval = setInterval(() => {
-        step++;
-        if (step <= 3) {
-          spinChars = '.'.repeat(Math.min(step, 3));
-        } else {
-          spinChars = Array.from({ length: SPIN_LEN }, () =>
-            GLYPHS[Math.floor(Math.random() * GLYPHS.length)]
-          ).join('');
-        }
+        spinChars = Array.from({ length: SPIN_LEN }, () =>
+          GLYPHS[Math.floor(Math.random() * GLYPHS.length)]
+        ).join('');
       }, 50) as unknown as number;
     } else {
       clearInterval(spinInterval);
@@ -232,6 +236,9 @@
     streaming = true;
     atBottom = true;
     errorMsg = null;
+    toolCalls = new Map();
+    toolMsgId = null;
+    toolExpanded = false;
     streamStartMs = Date.now();
     streamFirstTokenMs = 0;
     streamElapsedMs = 0;
@@ -347,43 +354,56 @@
               const serverUserId: string = ev.user_message_id;
               const serverAssistantId: string = ev.assistant_message_id;
 
-              if (isNewConv && serverConvId && serverConvId !== convId) {
-                const tmpConv = await db.conversations.get(convId);
-                if (tmpConv) {
-                  await db.conversations.delete(convId);
-                  await db.conversations.put({ ...tmpConv, id: serverConvId });
-                  const affected = await db.messages
-                    .where('conversation_id')
-                    .equals(convId)
-                    .toArray();
-                  await db.messages.bulkPut(affected.map((m) => ({ ...m, conversation_id: serverConvId })));
-                  await db.messages.where('conversation_id').equals(convId).delete();
+              const outerConvId: string = convId!;
+
+              // Resolve all ID swaps in a single transaction so the live query
+              // sees exactly one consistent snapshot.
+              await db.transaction('rw', db.conversations, db.messages, async () => {
+                // New conversation ID swap.
+                if (isNewConv && serverConvId && serverConvId !== outerConvId) {
+                  const tmpConv = await db.conversations.get(outerConvId);
+                  if (tmpConv) {
+                    await db.conversations.delete(outerConvId);
+                    await db.conversations.put({ ...tmpConv, id: serverConvId });
+                    const affected = await db.messages
+                      .where('conversation_id')
+                      .equals(outerConvId)
+                      .toArray();
+                    await db.messages.bulkPut(affected.map((m) => ({ ...m, conversation_id: serverConvId })));
+                    await db.messages.where('conversation_id').equals(outerConvId).delete();
+                  }
                 }
+
+                // User message ID swap.
+                if (serverUserId && serverUserId !== tmpUserId) {
+                  const old = await db.messages.get(tmpUserId);
+                  if (old) {
+                    await db.messages.delete(tmpUserId);
+                    await db.messages.put({ ...old, id: serverUserId, pending: false });
+                    resolvedUserId = serverUserId;
+                  }
+                } else {
+                  await db.messages.where({ id: resolvedUserId }).modify({ pending: false });
+                }
+
+                // Assistant message ID swap.
+                if (serverAssistantId && serverAssistantId !== tmpAssistantId) {
+                  const old = await db.messages.get(tmpAssistantId);
+                  if (old) {
+                    await db.messages.delete(tmpAssistantId);
+                    await db.messages.put({ ...old, id: serverAssistantId });
+                    resolvedAssistantId = serverAssistantId;
+                    streamingMsgId = serverAssistantId;
+                  }
+                }
+              });
+
+              if (isNewConv && serverConvId && serverConvId !== outerConvId) {
                 convId = serverConvId;
                 activeConvId = serverConvId;
                 goto(`/chat?c=${serverConvId}`, { replaceState: true, noScroll: true, keepFocus: true });
               }
 
-              if (serverUserId && serverUserId !== tmpUserId) {
-                const old = await db.messages.get(tmpUserId);
-                if (old) {
-                  await db.messages.delete(tmpUserId);
-                  await db.messages.put({ ...old, id: serverUserId, pending: false });
-                  resolvedUserId = serverUserId;
-                }
-              } else {
-                await db.messages.where({ id: resolvedUserId }).modify({ pending: false });
-              }
-
-              if (serverAssistantId && serverAssistantId !== tmpAssistantId) {
-                const old = await db.messages.get(tmpAssistantId);
-                if (old) {
-                  await db.messages.delete(tmpAssistantId);
-                  await db.messages.put({ ...old, id: serverAssistantId, conversation_id: convId });
-                  resolvedAssistantId = serverAssistantId;
-                  streamingMsgId = serverAssistantId;
-                }
-              }
               break;
             }
 
@@ -427,6 +447,44 @@
               await db.messages.delete(resolvedAssistantId);
               errorMsg = ev.message as string;
               break outer;
+            }
+
+            case 'tool_call': {
+              if (!toolMsgId) toolMsgId = resolvedAssistantId;
+              const tcId = (ev.id as string) || uuid();
+              toolCalls.set(tcId, {
+                name: (ev.name as string) || 'tool',
+                args: (ev.arguments as string) || '',
+                result: '',
+                done: false
+              });
+              toolCalls = new Map(toolCalls);
+              break;
+            }
+
+            case 'tool_result': {
+              const tcId = (ev.tool_call_id as string) || '';
+              const existing = tcId ? toolCalls.get(tcId) : null;
+              if (existing) {
+                toolCalls.set(tcId, { ...existing, result: (ev.content as string) || '', done: true });
+              } else {
+                for (const [id, tc] of toolCalls) {
+                  if (!tc.done) {
+                    toolCalls.set(id, { ...tc, result: (ev.content as string) || '', done: true });
+                    break;
+                  }
+                }
+                if (![...toolCalls.values()].some(tc => tc.done && tc.result)) {
+                  toolCalls.set(tcId || uuid(), {
+                    name: 'tool',
+                    args: '',
+                    result: (ev.content as string) || '',
+                    done: true
+                  });
+                }
+              }
+              toolCalls = new Map(toolCalls);
+              break;
             }
           }
         }
@@ -484,6 +542,62 @@
           <div class="msg assistant">
             <div class="assistant-body">
               <div class="assistant-bubble" class:pending={msg.pending}>
+                {#if msg.id === toolMsgId && toolCalls.size > 0}
+                  {@const entries = [...toolCalls.entries()]}
+                  {@const running = entries.filter(([, tc]) => !tc.done)}
+                  {@const done = entries.filter(([, tc]) => tc.done)}
+                  <div class="tool-block">
+                    <!-- Collapsed summary line -->
+                    <button
+                      class="tool-summary"
+                      onclick={() => (toolExpanded = !toolExpanded)}
+                      aria-expanded={toolExpanded}
+                    >
+                      <span class="tool-summary-left">
+                        {#if running.length > 0}
+                          <span class="tool-spinner"></span>
+                          <span class="tool-summary-label">Running {running.map(([, tc]) => tc.name).join(', ')}…</span>
+                        {:else}
+                          <span class="tool-check">✓</span>
+                          <span class="tool-summary-label">Ran {entries.map(([, tc]) => tc.name).join(', ')}</span>
+                        {/if}
+                      </span>
+                      <svg class="tool-chevron" class:tool-chevron-open={toolExpanded} width="10" height="6" viewBox="0 0 10 6" fill="none">
+                        <path d="M1 1l4 4 4-4" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
+                      </svg>
+                    </button>
+
+                    <!-- Expanded detail -->
+                    {#if toolExpanded}
+                      <div class="tool-detail">
+                        {#each entries as [id, tc] (id)}
+                          <div class="tool-detail-item" class:tool-done={tc.done}>
+                            <div class="tool-detail-head">
+                              {#if tc.done}
+                                <span class="tool-check">✓</span>
+                              {:else}
+                                <span class="tool-spinner"></span>
+                              {/if}
+                              <span class="tool-detail-name">{tc.name}</span>
+                            </div>
+                            {#if tc.args}
+                              <details class="tool-nested">
+                                <summary>arguments</summary>
+                                <pre class="tool-pre">{tc.args}</pre>
+                              </details>
+                            {/if}
+                            {#if tc.result}
+                              <details class="tool-nested" open>
+                                <summary>result</summary>
+                                <pre class="tool-pre">{tc.result}</pre>
+                              </details>
+                            {/if}
+                          </div>
+                        {/each}
+                      </div>
+                    {/if}
+                  </div>
+                {/if}
                 {#if msg.pending && msg.id === streamingMsgId}
                   {@html renderStreamingMarkdown(msg.content)}
                 {:else if msg.content}
@@ -537,7 +651,7 @@
         bind:this={inputEl}
         onkeydown={handleKeydown}
         oninput={(e) => resize(e.currentTarget as HTMLTextAreaElement)}
-        placeholder={streaming ? '' : 'Message…'}
+        placeholder={streaming ? 'Thinking…' : 'Message…'}
         disabled={streaming}
         rows={1}
       ></textarea>
@@ -715,6 +829,129 @@
     color: var(--text-faint);
   }
 
+  /* ── tool calls (Claude-style collapsible) ──────────────────────────────── */
+  .tool-block {
+    margin-bottom: 0.65rem;
+    border: 1px solid var(--accent);
+    border-radius: 0.45rem;
+    overflow: hidden;
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+  }
+
+  .tool-summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    padding: 0.45rem 0.65rem;
+    background: color-mix(in srgb, var(--accent) 6%, transparent);
+    border: none;
+    cursor: pointer;
+    color: var(--text-muted);
+    gap: 0.5rem;
+  }
+  .tool-summary:hover {
+    background: color-mix(in srgb, var(--accent) 10%, transparent);
+  }
+  .tool-summary-left {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    min-width: 0;
+    overflow: hidden;
+  }
+  .tool-summary-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    text-align: left;
+  }
+  .tool-chevron {
+    flex-shrink: 0;
+    opacity: 0.5;
+    transition: transform 0.15s;
+    color: var(--text-muted);
+  }
+  .tool-chevron-open {
+    transform: rotate(180deg);
+  }
+
+  .tool-detail {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    padding: 0.5rem 0.65rem 0.65rem;
+    border-top: 1px solid color-mix(in srgb, var(--accent) 12%, transparent);
+    background: color-mix(in srgb, var(--accent) 3%, transparent);
+  }
+  .tool-detail-item {
+    color: var(--text-faint);
+    font-size: 0.68rem;
+  }
+  .tool-detail-item.tool-done {
+    color: var(--text-muted);
+  }
+  .tool-detail-head {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-weight: 500;
+    margin-bottom: 0.15rem;
+  }
+  .tool-detail-name {
+    text-transform: capitalize;
+  }
+
+  .tool-nested {
+    margin-top: 0.2rem;
+    margin-left: 1rem;
+    font-size: 0.64rem;
+  }
+  .tool-nested > summary {
+    cursor: pointer;
+    color: var(--text-faint);
+    opacity: 0.65;
+    padding: 0.1rem 0;
+    user-select: none;
+  }
+  .tool-nested > summary:hover {
+    opacity: 0.9;
+  }
+
+  .tool-pre {
+    margin: 0.2rem 0 0;
+    padding: 0.4rem 0.55rem;
+    background: light-dark(#f0eceb, #25282b);
+    border-radius: 0.3rem;
+    overflow-x: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 220px;
+    overflow-y: auto;
+    color: var(--text);
+    font-size: 0.62rem;
+    line-height: 1.45;
+  }
+
+  .tool-spinner {
+    width: 0.65rem;
+    height: 0.65rem;
+    border: 1.5px solid var(--accent);
+    border-top-color: transparent;
+    border-radius: 50%;
+    animation: tool-spin 0.6s linear infinite;
+    flex-shrink: 0;
+  }
+  .tool-check {
+    color: var(--accent);
+    font-size: 0.7rem;
+    flex-shrink: 0;
+  }
+  @keyframes tool-spin {
+    to { transform: rotate(360deg); }
+  }
+
   .msg-meta {
     display: flex;
     align-items: center;
@@ -880,6 +1117,8 @@
 
   /* ── input area ─────────────────────────────────────────────────────────── */
   .input-bar {
+    display: flex;
+    flex-direction: column;
     flex-shrink: 0;
     padding: 0.75rem 1.5rem 1.25rem;
     background: var(--bg-page);
