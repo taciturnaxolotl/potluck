@@ -6,6 +6,7 @@
   import { v4 as uuid } from 'uuid';
   import { db, type DBMessage } from '$lib/db';
   import { listConversations, listMessages, listModels, type Model } from '$lib/api';
+  import { renderMarkdown, renderStreamingMarkdown } from '$lib/markdown';
 
   // ── state ─────────────────────────────────────────────────────────────────
 
@@ -25,6 +26,33 @@
   let pickerEl = $state<HTMLElement | null>(null);
   let atBottom = true;
   let errorMsg = $state<string | null>(null);
+
+  // ── spin cursor (crush-style cycling glyphs) ──────────────────────────────
+
+  const GLYPHS = '0123456789abcdefABCDEF~!@#$£€%^&*()+=_';
+  const SPIN_LEN = 14;
+  let spinChars = $state('.');
+  let spinInterval = 0;
+
+  $effect(() => {
+    if (streaming) {
+      let step = 0;
+      spinInterval = setInterval(() => {
+        step++;
+        if (step <= 3) {
+          spinChars = '.'.repeat(Math.min(step, 3));
+        } else {
+          spinChars = Array.from({ length: SPIN_LEN }, () =>
+            GLYPHS[Math.floor(Math.random() * GLYPHS.length)]
+          ).join('');
+        }
+      }, 50) as unknown as number;
+    } else {
+      clearInterval(spinInterval);
+      spinChars = '.';
+    }
+    return () => clearInterval(spinInterval);
+  });
 
   // ── streaming stats ───────────────────────────────────────────────────────
   let streamStartMs = $state(0);
@@ -182,9 +210,16 @@
   }
 
   function resize(el: HTMLTextAreaElement) {
-    el.style.height = 'auto';
-    el.style.height = Math.min(el.scrollHeight, 200) + 'px';
+    requestAnimationFrame(() => {
+      el.style.height = 'auto';
+      el.style.height = Math.min(el.scrollHeight, 200) + 'px';
+    });
   }
+
+  $effect(() => {
+    void input;
+    if (inputEl) resize(inputEl);
+  });
 
   // ── send / stream ─────────────────────────────────────────────────────────
 
@@ -405,52 +440,6 @@
     }
   }
 
-  // ── markdown renderer ─────────────────────────────────────────────────────
-
-  function renderMarkdown(text: string): string {
-    if (!text) return '';
-    let s = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-    s = s.replace(/```(\w*)\n?([\s\S]*?)```/g, (_, lang, code) => {
-      const l = lang ? ` data-lang="${lang}"` : '';
-      return `<pre class="md-code"${l}><code>${code.trimEnd()}</code></pre>`;
-    });
-    s = s.replace(/`([^`\n]+)`/g, '<code class="md-inline-code">$1</code>');
-    const lines = s.split('\n');
-    const out: string[] = [];
-    let inUl = false;
-    let inOl = false;
-    const closeList = () => {
-      if (inUl) { out.push('</ul>'); inUl = false; }
-      if (inOl) { out.push('</ol>'); inOl = false; }
-    };
-    for (const line of lines) {
-      if (/^#{1,3} /.test(line)) {
-        closeList();
-        const level = (line.match(/^(#+) /)![1]).length;
-        out.push(`<h${level} class="md-h">${line.replace(/^#+\s/, '')}</h${level}>`);
-      } else if (/^[-*] /.test(line)) {
-        if (inOl) { out.push('</ol>'); inOl = false; }
-        if (!inUl) { out.push('<ul class="md-ul">'); inUl = true; }
-        out.push(`<li>${line.slice(2)}</li>`);
-      } else if (/^\d+\. /.test(line)) {
-        if (inUl) { out.push('</ul>'); inUl = false; }
-        if (!inOl) { out.push('<ol class="md-ol">'); inOl = true; }
-        out.push(`<li>${line.replace(/^\d+\. /, '')}</li>`);
-      } else if (line.trim() === '') {
-        closeList();
-        out.push('<br>');
-      } else {
-        closeList();
-        let l = line;
-        l = l.replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>');
-        l = l.replace(/(?<!\*)\*([^*\n]+)\*(?!\*)/g, '<em>$1</em>');
-        out.push(l);
-      }
-    }
-    closeList();
-    return out.join('\n');
-  }
-
   // ── time formatting ───────────────────────────────────────────────────────
 
   function relTime(unix: number): string {
@@ -496,15 +485,17 @@
             <div class="assistant-body">
               <div class="assistant-bubble" class:pending={msg.pending}>
                 {#if msg.pending && msg.id === streamingMsgId}
-                  <span class="stream-text">{msg.content}</span><span class="cursor" aria-hidden="true">▋</span>
+                  {@html renderStreamingMarkdown(msg.content)}
                 {:else if msg.content}
                   {@html renderMarkdown(msg.content)}
                 {:else if msg.pending}
-                  <span class="cursor" aria-hidden="true">▋</span>
                 {/if}
               </div>
               <div class="msg-meta">
-                {#if msg.model}
+                {#if msg.pending && msg.id === streamingMsgId}
+                  <span class="spin-cursor">{spinChars}</span>
+                {/if}
+                {#if msg.model && typeof msg.model === 'string'}
                   <span class="meta-model">{msg.model.replace('free/', '')}</span>
                 {/if}
                 {#if msg.id === streamingMsgId && streamFirstTokenMs > 0}
@@ -703,10 +694,25 @@
     color: var(--text);
     font-size: 0.9rem;
     line-height: 1.65;
+    overflow-wrap: anywhere;
     word-break: break-word;
+    min-width: 0;
   }
   .assistant-bubble.pending {
     opacity: 0.8;
+  }
+
+  .spin-cursor {
+    font-family: var(--font-mono);
+    font-size: 0.68rem;
+    color: var(--accent);
+    letter-spacing: 0.05em;
+  }
+  .spin-cursor::after {
+    content: '·';
+    margin-left: 0.5rem;
+    opacity: 0.5;
+    color: var(--text-faint);
   }
 
   .msg-meta {
@@ -732,28 +738,33 @@
     opacity: 0.5;
   }
 
-  .stream-text {
-    white-space: pre-wrap;
+  /* Markdown inside assistant bubbles — semantic elements from markdown-it */
+  .assistant-bubble :global(p) {
+    margin: 0.35em 0;
   }
-
-  @keyframes blink {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0; }
+  .assistant-bubble :global(p:first-child) {
+    margin-top: 0;
   }
-  .cursor {
-    animation: blink 900ms step-end infinite;
-    color: var(--accent);
-    font-size: 0.85em;
-    margin-left: 1px;
+  .assistant-bubble :global(p:last-child) {
+    margin-bottom: 0;
   }
-
-  /* Markdown inside assistant bubbles */
-  .assistant-bubble :global(.md-h) {
-    margin: 0.5em 0 0.25em;
-    font-size: 1em;
+  .assistant-bubble :global(h1),
+  .assistant-bubble :global(h2),
+  .assistant-bubble :global(h3),
+  .assistant-bubble :global(h4),
+  .assistant-bubble :global(h5),
+  .assistant-bubble :global(h6) {
+    margin: 0.6em 0 0.25em;
     font-weight: 600;
+    line-height: 1.3;
   }
-  .assistant-bubble :global(.md-code) {
+  .assistant-bubble :global(h1) { font-size: 1.15em; }
+  .assistant-bubble :global(h2) { font-size: 1.05em; }
+  .assistant-bubble :global(h3) { font-size: 1em; }
+  .assistant-bubble :global(h4),
+  .assistant-bubble :global(h5),
+  .assistant-bubble :global(h6) { font-size: 0.95em; }
+  .assistant-bubble :global(pre.md-code) {
     display: block;
     background: var(--bg-code);
     border: 1px solid var(--border);
@@ -762,10 +773,19 @@
     font-family: var(--font-mono);
     font-size: 0.8rem;
     overflow-x: auto;
-    margin: 0.4em 0;
+    margin: 0.5em 0;
     white-space: pre;
+    max-width: 100%;
   }
-  .assistant-bubble :global(.md-inline-code) {
+  .assistant-bubble :global(pre.md-code code) {
+    font-family: var(--font-mono);
+    font-size: inherit;
+    background: none;
+    border: none;
+    padding: 0;
+    border-radius: 0;
+  }
+  .assistant-bubble :global(code) {
     font-family: var(--font-mono);
     font-size: 0.82em;
     background: var(--bg-code);
@@ -773,16 +793,65 @@
     border-radius: 3px;
     padding: 1px 4px;
   }
-  .assistant-bubble :global(.md-ul),
-  .assistant-bubble :global(.md-ol) {
+  .assistant-bubble :global(ul),
+  .assistant-bubble :global(ol) {
     margin: 0.3em 0;
     padding-left: 1.4em;
   }
   .assistant-bubble :global(li) {
     margin-bottom: 0.15em;
   }
+  .assistant-bubble :global(li > p) {
+    margin: 0.1em 0;
+  }
+  .assistant-bubble :global(blockquote) {
+    margin: 0.5em 0;
+    padding: 0.3em 0.8em;
+    border-left: 3px solid var(--accent);
+    color: var(--text-muted);
+  }
+  .assistant-bubble :global(blockquote p) {
+    margin: 0.15em 0;
+  }
+  .assistant-bubble :global(hr) {
+    border: none;
+    border-top: 1px solid var(--border);
+    margin: 0.8em 0;
+  }
+  .assistant-bubble :global(table) {
+    border-collapse: collapse;
+    margin: 0.5em 0;
+    font-size: 0.85em;
+    width: 100%;
+  }
+  .assistant-bubble :global(th),
+  .assistant-bubble :global(td) {
+    border: 1px solid var(--border);
+    padding: 0.3em 0.6em;
+    text-align: left;
+  }
+  .assistant-bubble :global(th) {
+    font-weight: 600;
+    background: var(--bg-code);
+  }
+  .assistant-bubble :global(a) {
+    color: var(--accent);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+  .assistant-bubble :global(a:hover) {
+    opacity: 0.85;
+  }
   .assistant-bubble :global(strong) { font-weight: 600; }
   .assistant-bubble :global(em) { font-style: italic; }
+  .assistant-bubble :global(del) {
+    opacity: 0.5;
+    text-decoration: line-through;
+  }
+  .assistant-bubble :global(img) {
+    max-width: 100%;
+    border-radius: var(--radius-sm);
+  }
 
   /* ── error banner ───────────────────────────────────────────────────────── */
   .error-banner {
@@ -830,7 +899,8 @@
   }
 
   .input {
-    flex: 1;
+    width: 100%;
+    box-sizing: border-box;
     background: none;
     border: none;
     outline: none;
@@ -839,10 +909,10 @@
     font-size: 0.9rem;
     color: var(--text);
     line-height: 1.5;
+    height: 1.35rem;
     max-height: 200px;
     overflow-y: auto;
     padding: 0;
-    min-height: 1.35rem;
   }
   .input::placeholder { color: var(--text-faint); }
   .input:disabled { opacity: 0.5; }
