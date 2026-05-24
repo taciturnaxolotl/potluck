@@ -164,7 +164,10 @@ func PoolGate(q *store.Queries, poolAvailable func(ctx context.Context) bool, er
 			}
 
 			// 2. Per-user budget check.
-			day := time.Now().UTC().Unix() / 86400
+			now := time.Now().UTC()
+			day := now.Unix() / 86400
+			dayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC).Unix()
+
 			allowRow, err := q.GetUserDailyAllowance(r.Context(), store.GetUserDailyAllowanceParams{
 				UserID: u.ID,
 				Day:    day,
@@ -175,38 +178,43 @@ func PoolGate(q *store.Queries, poolAvailable func(ctx context.Context) bool, er
 				return
 			}
 
-			spendRow, err := q.GetUserDailySpend(r.Context(), store.GetUserDailySpendParams{
-				UserID: u.ID,
-				Day:    day,
+			// Read live spend directly from billing rows — accurate to within
+			// the last reconciler tick, not a stale cached aggregate.
+			liveSpend, err := q.GetUserLiveSpendToday(r.Context(), store.GetUserLiveSpendTodayParams{
+				AttributedUserID: sql.NullString{String: u.ID, Valid: true},
+				PioneerCreatedAt: dayStart,
 			})
 			if err != nil {
-				// No spend yet — definitely allow.
+				// Can't read spend — allow rather than incorrectly block.
 				next.ServeHTTP(w, r)
 				return
 			}
 
-			sharedRemaining := allowRow.SharedAllowanceMicros - spendRow.SharedSpentMicros
-			if sharedRemaining > 0 {
-				next.ServeHTTP(w, r)
-				return
-			}
+			sharedSpent := toI64(liveSpend.SharedSpentMicros)
+			privateSpent := toI64(liveSpend.PrivateSpentMicros)
 
-			// No shared remaining — check private reservation.
-			// Private = user's own keys' (max - shared) summed.
-			// For now we look this up from pool_keys directly.
+			// Compute private reservation from the user's own pool keys.
+			var privateReserved int64
 			privateRows, err := q.ListPoolKeysForUser(r.Context(), u.ID)
 			if err == nil {
-				var privateReserved int64
 				for _, k := range privateRows {
-					if k.Active == 1 && k.RevokedAt.Valid == false {
+					if k.Active == 1 && !k.RevokedAt.Valid {
 						privateReserved += k.MaxMicros - k.SharedMicros
 					}
 				}
-				privateRemaining := privateReserved - spendRow.PrivateSpentMicros
-				if privateRemaining > 0 {
-					next.ServeHTTP(w, r)
-					return
-				}
+			}
+
+			privateRemaining := privateReserved - privateSpent
+			// Private overspend counts against the shared allowance too.
+			privateOverflow := int64(0)
+			if privateSpent > privateReserved {
+				privateOverflow = privateSpent - privateReserved
+			}
+			sharedRemaining := allowRow.SharedAllowanceMicros - sharedSpent - privateOverflow
+
+			if sharedRemaining > 0 || privateRemaining > 0 {
+				next.ServeHTTP(w, r)
+				return
 			}
 
 			errResp(w, http.StatusPaymentRequired, "insufficient_funds",
@@ -217,6 +225,19 @@ func PoolGate(q *store.Queries, poolAvailable func(ctx context.Context) bool, er
 
 
 // ---- per-user rate limiter --------------------------------------------
+
+// toI64 unboxes the interface{} sqlc emits for aggregate columns.
+func toI64(v any) int64 {
+	switch x := v.(type) {
+	case int64:
+		return x
+	case int:
+		return int64(x)
+	case float64:
+		return int64(x)
+	}
+	return 0
+}
 
 // RateLimit is a per-user token bucket. The map is bounded by the active
 // user set — keys are GC'd by the periodic sweep.

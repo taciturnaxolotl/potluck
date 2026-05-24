@@ -49,13 +49,15 @@ func (s *Server) RunSmartAllocation(ctx context.Context, setByUserID string) err
 		return fmt.Errorf("list pool allocations: %w", err)
 	}
 
-	spendRows, err := s.Q.ListUserDailySpendForDay(ctx, day)
+	spendRows, err := s.Q.ListAllUsersLiveSpendToday(ctx, dayStart.Unix())
 	if err != nil {
-		return fmt.Errorf("list daily spend: %w", err)
+		return fmt.Errorf("list live spend: %w", err)
 	}
 	spentByUser := map[string]int64{}
 	for _, sp := range spendRows {
-		spentByUser[sp.UserID] = sp.SharedSpentMicros
+		if sp.UserID.Valid {
+			spentByUser[sp.UserID.String] = toInt64(sp.SharedSpentMicros)
+		}
 	}
 
 	// Historical profile per user.
@@ -104,6 +106,13 @@ func (s *Server) RunSmartAllocation(ctx context.Context, setByUserID string) err
 
 	allocations := smartAllocate(totalShared, spends, histories, dayFraction)
 
+	// "system" is not a real user ID — resolve to the first user in the pool
+	// so the FK constraint on set_by_user_id is satisfied.
+	resolvedBy := setByUserID
+	if resolvedBy == "system" && len(userIDs) > 0 {
+		resolvedBy = userIDs[0]
+	}
+
 	nowUnix := now.Unix()
 	for i, id := range userIDs {
 		a := allocations[i]
@@ -116,7 +125,7 @@ func (s *Server) RunSmartAllocation(ctx context.Context, setByUserID string) err
 			PredictedTotalMicros:  a.PredictedTotal,
 			HistoryDaysUsed:       a.HistoryDays,
 			SetAt:                 nowUnix,
-			SetByUserID:           setByUserID,
+			SetByUserID:           resolvedBy,
 		}); err != nil {
 			return fmt.Errorf("upsert allowance for %s: %w", id, err)
 		}
@@ -194,15 +203,22 @@ func fairShareAllocate(pool int64, spends []int64) []int64 {
 
 // buildAllocations computes the full allocations payload.
 func (s *Server) buildAllocations(r *http.Request) map[string]any {
-	day := time.Now().UTC().Unix() / 86400
+	nowUtc := time.Now().UTC()
+	day := nowUtc.Unix() / 86400
+	dayStartUnix := time.Date(nowUtc.Year(), nowUtc.Month(), nowUtc.Day(), 0, 0, 0, 0, time.UTC).Unix()
 
 	rows, _ := s.Q.ListPoolAllocations(r.Context())
-	spendRows, _ := s.Q.ListUserDailySpendForDay(r.Context(), day)
+	liveSpendRows, _ := s.Q.ListAllUsersLiveSpendToday(r.Context(), dayStartUnix)
 	allowRows, _ := s.Q.ListUserDailyAllowancesForDay(r.Context(), day)
 
 	spendByUser := map[string]struct{ shared, private int64 }{}
-	for _, sp := range spendRows {
-		spendByUser[sp.UserID] = struct{ shared, private int64 }{sp.SharedSpentMicros, sp.PrivateSpentMicros}
+	for _, sp := range liveSpendRows {
+		if sp.UserID.Valid {
+			spendByUser[sp.UserID.String] = struct{ shared, private int64 }{
+				toInt64(sp.SharedSpentMicros),
+				toInt64(sp.PrivateSpentMicros),
+			}
+		}
 	}
 	allowByUser := map[string]store.UserDailyAllowance{}
 	for _, a := range allowRows {

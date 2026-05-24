@@ -10,6 +10,45 @@ import (
 	"database/sql"
 )
 
+const getUserLiveSpendToday = `-- name: GetUserLiveSpendToday :one
+SELECT
+    COALESCE(SUM(CASE
+        WHEN pk.user_id = b.attributed_user_id AND pk.max_micros > pk.shared_micros
+        THEN b.cost_micros ELSE 0
+    END), 0) AS private_spent_micros,
+    COALESCE(SUM(CASE
+        WHEN NOT (pk.user_id = b.attributed_user_id AND pk.max_micros > pk.shared_micros)
+        THEN b.cost_micros ELSE 0
+    END), 0) AS shared_spent_micros
+FROM pool_key_billing_rows b
+JOIN pool_keys pk ON pk.id = b.pool_key_id
+WHERE b.attributed_user_id = ?
+  AND b.is_duplicate = 0
+  AND b.pioneer_created_at >= ?
+`
+
+type GetUserLiveSpendTodayParams struct {
+	AttributedUserID sql.NullString `json:"attributed_user_id"`
+	PioneerCreatedAt int64          `json:"pioneer_created_at"`
+}
+
+type GetUserLiveSpendTodayRow struct {
+	PrivateSpentMicros interface{} `json:"private_spent_micros"`
+	SharedSpentMicros  interface{} `json:"shared_spent_micros"`
+}
+
+// Live spend for a user since the start of the current UTC day, read
+// directly from billing rows. Used by PoolGate for accurate pre-flight
+// checks without waiting for the reconciler to flush user_daily_spend.
+// Splits into shared vs private: private = rows where the user owns the
+// key and the key has a non-zero private reservation (max > shared).
+func (q *Queries) GetUserLiveSpendToday(ctx context.Context, arg GetUserLiveSpendTodayParams) (GetUserLiveSpendTodayRow, error) {
+	row := q.db.QueryRowContext(ctx, getUserLiveSpendToday, arg.AttributedUserID, arg.PioneerCreatedAt)
+	var i GetUserLiveSpendTodayRow
+	err := row.Scan(&i.PrivateSpentMicros, &i.SharedSpentMicros)
+	return i, err
+}
+
 const latestBillingRowTime = `-- name: LatestBillingRowTime :one
 SELECT COALESCE(SUM(pioneer_created_at * 0) + MAX(pioneer_created_at), 0)
 FROM pool_key_billing_rows
@@ -24,6 +63,57 @@ func (q *Queries) LatestBillingRowTime(ctx context.Context, poolKeyID string) (i
 	var coalesce interface{}
 	err := row.Scan(&coalesce)
 	return coalesce, err
+}
+
+const listAllUsersLiveSpendToday = `-- name: ListAllUsersLiveSpendToday :many
+SELECT
+    b.attributed_user_id AS user_id,
+    COALESCE(SUM(CASE
+        WHEN pk.user_id = b.attributed_user_id AND pk.max_micros > pk.shared_micros
+        THEN b.cost_micros ELSE 0
+    END), 0) AS private_spent_micros,
+    COALESCE(SUM(CASE
+        WHEN NOT (pk.user_id = b.attributed_user_id AND pk.max_micros > pk.shared_micros)
+        THEN b.cost_micros ELSE 0
+    END), 0) AS shared_spent_micros
+FROM pool_key_billing_rows b
+JOIN pool_keys pk ON pk.id = b.pool_key_id
+WHERE b.is_duplicate = 0
+  AND b.pioneer_created_at >= ?
+  AND b.attributed_user_id IS NOT NULL
+GROUP BY b.attributed_user_id
+`
+
+type ListAllUsersLiveSpendTodayRow struct {
+	UserID             sql.NullString `json:"user_id"`
+	PrivateSpentMicros interface{}    `json:"private_spent_micros"`
+	SharedSpentMicros  interface{}    `json:"shared_spent_micros"`
+}
+
+// Live spend for ALL users since dayStart, grouped by user.
+// Used by RunSmartAllocation so it doesn't depend on the stale
+// user_daily_spend cache.
+func (q *Queries) ListAllUsersLiveSpendToday(ctx context.Context, pioneerCreatedAt int64) ([]ListAllUsersLiveSpendTodayRow, error) {
+	rows, err := q.db.QueryContext(ctx, listAllUsersLiveSpendToday, pioneerCreatedAt)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListAllUsersLiveSpendTodayRow{}
+	for rows.Next() {
+		var i ListAllUsersLiveSpendTodayRow
+		if err := rows.Scan(&i.UserID, &i.PrivateSpentMicros, &i.SharedSpentMicros); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listBillingRowsForKeyAfter = `-- name: ListBillingRowsForKeyAfter :many

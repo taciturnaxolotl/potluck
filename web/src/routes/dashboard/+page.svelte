@@ -161,6 +161,7 @@
               {@const _overW = (Math.max(0, _sharedUsed - _sharedCap) / _total) * 100}
               {@const _privateUsedW = (Math.min(_privateUsed, _private) / _total) * 100}
               {@const _privateRemW = (Math.max(0, _private - _privateUsed) / _total) * 100}
+              {@const _privateOverW = (Math.max(0, _privateUsed - _private) / _total) * 100}
               <tr class:me={isMe}>
                 <td class="name-cell">
                   <div class="name-wrap">
@@ -194,23 +195,45 @@
                         <div class="seg seg-private-divider"></div>
                         <div class="seg seg-private-used" style="width:{_privateUsedW}%"></div>
                         <div class="seg seg-private-rem" style="width:{_privateRemW}%"></div>
+                        {#if _privateOverW > 0}<div class="seg seg-over" style="width:{_privateOverW}%"></div>{/if}
                       {/if}
                     </div>
                     <div class="usage-tip" role="tooltip">
-                      <div class="tip-headline">{trim(formatUSD(u.shared_allowance_today_micros + u.private_reservation_micros))} total budget today</div>
-                      <dl class="tip-list">
-                        <div class="tip-row"><dt>floor</dt><dd class="num mono">{trim(formatUSD(u.shared_allowance_floor_micros))}</dd><dd class="muted">equal share guarantee</dd></div>
-                        <div class="tip-row"><dt>bonus</dt><dd class="num mono">+{trim(formatUSD(u.shared_allowance_bonus_micros))}</dd><dd class="muted">{u.shared_allowance_bonus_micros > 0 ? 'redistributed from light users' : u.history_days_used < 3 ? 'no history yet' : 'history below fair share'}</dd></div>
-                        {#if u.private_reservation_micros > 0}
-                          <div class="tip-row"><dt>private</dt><dd class="num mono">+{trim(formatUSD(u.private_reservation_micros))}</dd><dd class="muted">your own keys' reserved budget</dd></div>
+                      <div class="tip-rows">
+                        <div class="tip-seg">
+                          <span class="tip-dot dot-used"></span>
+                          <span class="tip-label">used</span>
+                          <span class="tip-val mono">{trim(formatUSD(u.shared_spent_today_micros + u.private_spent_today_micros))}</span>
+                          {#if u.private_spent_today_micros > 0}
+                            <span class="tip-sub">{trim(formatUSD(u.shared_spent_today_micros))} shared + {trim(formatUSD(u.private_spent_today_micros))} private</span>
+                          {/if}
+                        </div>
+                        <div class="tip-seg">
+                          <span class="tip-dot dot-floor"></span>
+                          <span class="tip-label">floor</span>
+                          <span class="tip-val mono">{trim(formatUSD(u.shared_allowance_floor_micros))}</span>
+                        </div>
+                        {#if u.shared_allowance_bonus_micros > 0}
+                        <div class="tip-seg">
+                          <span class="tip-dot dot-bonus"></span>
+                          <span class="tip-label">bonus</span>
+                          <span class="tip-val mono">+{trim(formatUSD(u.shared_allowance_bonus_micros))}</span>
+                        </div>
                         {/if}
-                        <div class="tip-row"><dt>used</dt><dd class="num mono">{trim(formatUSD(u.shared_spent_today_micros + u.private_spent_today_micros))}</dd><dd class="muted">{u.private_spent_today_micros > 0 ? `today (${trim(formatUSD(u.shared_spent_today_micros))} shared + ${trim(formatUSD(u.private_spent_today_micros))} private)` : 'today'}</dd></div>
-                      </dl>
-                      {#if u.history_days_used >= 3}
-                        <div class="tip-meta">predicted today ~{trim(formatUSD(u.predicted_total_today_micros))} · active {u.history_days_used}/30 days{u.is_donating ? ' · donating slack' : ''}</div>
-                      {:else}
-                        <div class="tip-meta">no history yet ({u.history_days_used}/3 days needed for prediction)</div>
-                      {/if}
+                        {#if u.private_reservation_micros > 0}
+                        <div class="tip-seg">
+                          <span class="tip-dot dot-private"></span>
+                          <span class="tip-label">private</span>
+                          <span class="tip-val mono">+{trim(formatUSD(u.private_reservation_micros))}</span>
+                        </div>
+                        {/if}
+                        <div class="tip-seg tip-total">
+                          <span class="tip-dot"></span>
+                          <span class="tip-label">total</span>
+                          <span class="tip-val mono">{trim(formatUSD(u.shared_allowance_today_micros + u.private_reservation_micros))}</span>
+                        </div>
+                      </div>
+                      <div class="tip-meta">{#if u.history_days_used >= 3}~{trim(formatUSD(u.predicted_total_today_micros))} predicted · {u.history_days_used}/30 active days{u.is_donating ? ' · donating' : ''}{:else}no history ({u.history_days_used}/3 days){/if}</div>
                     </div>
                   </div>
                 </td>
@@ -432,23 +455,21 @@ curl {typeof window !== 'undefined' ? window.location.origin : 'https://potluck.
     white-space: normal;
   }
   .usage-cell:hover .usage-tip { opacity: 1; }
-  .tip-headline {
-    font-family: var(--font-mono);
-    font-size: 0.78rem;
-    font-weight: 600;
-    color: var(--text);
-    margin-bottom: 0.5rem;
-  }
-  .tip-list { margin: 0; padding: 0; font-size: 0.75rem; }
-  .tip-row { display: grid; grid-template-columns: 3rem 4.5rem 1fr; gap: 0.5rem; padding: 0.1rem 0; }
-  .tip-row dt { color: var(--text-muted); margin: 0; }
-  .tip-row dd { margin: 0; color: var(--text); text-align: right; }
-  .tip-row dd.muted { color: var(--text-muted); text-align: left; }
+  .tip-rows { display: flex; flex-direction: column; gap: 0.2rem; margin-bottom: 0.5rem; }
+  .tip-seg { display: grid; grid-template-columns: 0.6rem 3rem 1fr; align-items: baseline; gap: 0.4rem; font-size: 0.75rem; }
+  .tip-seg.tip-total { margin-top: 0.25rem; padding-top: 0.25rem; border-top: 1px solid var(--border); }
+  .tip-dot { width: 6px; height: 6px; border-radius: 50%; margin-top: 2px; flex-shrink: 0; }
+  .dot-used    { background: var(--accent); }
+  .dot-floor   { background: light-dark(oklch(85% 0.05 350), oklch(40% 0.08 350)); }
+  .dot-bonus   { background: light-dark(oklch(78% 0.13 90), oklch(55% 0.15 80)); }
+  .dot-private { background: light-dark(oklch(60% 0.12 230), oklch(65% 0.12 230)); }
+  .tip-label { color: var(--text-muted); }
+  .tip-val { color: var(--text); }
+  .tip-sub { grid-column: 3; font-size: 0.68rem; color: var(--text-muted); margin-top: -0.1rem; }
   .tip-meta {
-    margin-top: 0.5rem;
-    padding-top: 0.5rem;
+    padding-top: 0.4rem;
     border-top: 1px solid var(--border);
-    font-size: 0.7rem;
+    font-size: 0.68rem;
     color: var(--text-muted);
   }
 </style>

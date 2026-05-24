@@ -253,12 +253,40 @@ func (r *Reconciler) ingestBillingRows(ctx context.Context, key store.PoolKey, p
 		})
 
 		// Accumulate spend for today only, non-duplicate rows.
-		// Only goes to private if the user owns the key AND the key has
-		// a non-zero private reservation (max > shared).
+		// Route to private bucket only up to the key's private reservation
+		// (max - shared). Any overflow spills into shared.
 		if isDup == 0 && attrUserID.Valid && ts >= dayStart {
-			ownsKeyAndHasPrivate := attrUserID.String == key.UserID &&
-				(key.MaxMicros-key.SharedMicros) > 0
-			addSpend(attrUserID.String, costMicros, ownsKeyAndHasPrivate)
+			privateReservation := key.MaxMicros - key.SharedMicros
+			ownsKeyAndHasPrivate := attrUserID.String == key.UserID && privateReservation > 0
+			if ownsKeyAndHasPrivate {
+				// Cap private at reservation; spill remainder to shared.
+				// How much private spend has already been attributed in this
+				// batch for this user (earlier rows in the same reconciler tick).
+				alreadyPrivate := int64(0)
+				if d := spendDeltas[attrUserID.String]; d != nil {
+					alreadyPrivate = d.private
+				}
+				// NOTE: this only caps within a single reconciler run.
+				// Across ticks, the gate uses GetUserLiveSpendToday which
+				// reads already-written rows and applies the same cap logic.
+				canPrivate := privateReservation - alreadyPrivate
+				if canPrivate < 0 {
+					canPrivate = 0
+				}
+				privateAmount := costMicros
+				if privateAmount > canPrivate {
+					privateAmount = canPrivate
+				}
+				spillAmount := costMicros - privateAmount
+				if privateAmount > 0 {
+					addSpend(attrUserID.String, privateAmount, true)
+				}
+				if spillAmount > 0 {
+					addSpend(attrUserID.String, spillAmount, false)
+				}
+			} else {
+				addSpend(attrUserID.String, costMicros, false)
+			}
 		}
 	}
 

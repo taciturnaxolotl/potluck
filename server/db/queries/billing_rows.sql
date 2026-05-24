@@ -45,6 +45,48 @@ WHERE attributed_user_id = ?
   AND pioneer_created_at < ?
 ORDER BY pioneer_created_at ASC;
 
+-- name: ListAllUsersLiveSpendToday :many
+-- Live spend for ALL users since dayStart, grouped by user.
+-- Used by RunSmartAllocation so it doesn't depend on the stale
+-- user_daily_spend cache.
+SELECT
+    b.attributed_user_id AS user_id,
+    COALESCE(SUM(CASE
+        WHEN pk.user_id = b.attributed_user_id AND pk.max_micros > pk.shared_micros
+        THEN b.cost_micros ELSE 0
+    END), 0) AS private_spent_micros,
+    COALESCE(SUM(CASE
+        WHEN NOT (pk.user_id = b.attributed_user_id AND pk.max_micros > pk.shared_micros)
+        THEN b.cost_micros ELSE 0
+    END), 0) AS shared_spent_micros
+FROM pool_key_billing_rows b
+JOIN pool_keys pk ON pk.id = b.pool_key_id
+WHERE b.is_duplicate = 0
+  AND b.pioneer_created_at >= ?
+  AND b.attributed_user_id IS NOT NULL
+GROUP BY b.attributed_user_id;
+
+-- name: GetUserLiveSpendToday :one
+-- Live spend for a user since the start of the current UTC day, read
+-- directly from billing rows. Used by PoolGate for accurate pre-flight
+-- checks without waiting for the reconciler to flush user_daily_spend.
+-- Splits into shared vs private: private = rows where the user owns the
+-- key and the key has a non-zero private reservation (max > shared).
+SELECT
+    COALESCE(SUM(CASE
+        WHEN pk.user_id = b.attributed_user_id AND pk.max_micros > pk.shared_micros
+        THEN b.cost_micros ELSE 0
+    END), 0) AS private_spent_micros,
+    COALESCE(SUM(CASE
+        WHEN NOT (pk.user_id = b.attributed_user_id AND pk.max_micros > pk.shared_micros)
+        THEN b.cost_micros ELSE 0
+    END), 0) AS shared_spent_micros
+FROM pool_key_billing_rows b
+JOIN pool_keys pk ON pk.id = b.pool_key_id
+WHERE b.attributed_user_id = ?
+  AND b.is_duplicate = 0
+  AND b.pioneer_created_at >= ?;
+
 -- name: UserHistoryProfile :many
 -- Per-user historical spend profile over a time window.
 -- Returns one row per user, with total non-duplicate spend and the count

@@ -58,11 +58,21 @@ type Querier interface {
 	GetUserByID(ctx context.Context, id string) (User, error)
 	GetUserDailyAllowance(ctx context.Context, arg GetUserDailyAllowanceParams) (UserDailyAllowance, error)
 	GetUserDailySpend(ctx context.Context, arg GetUserDailySpendParams) (UserDailySpend, error)
+	// Live spend for a user since the start of the current UTC day, read
+	// directly from billing rows. Used by PoolGate for accurate pre-flight
+	// checks without waiting for the reconciler to flush user_daily_spend.
+	// Splits into shared vs private: private = rows where the user owns the
+	// key and the key has a non-zero private reservation (max > shared).
+	GetUserLiveSpendToday(ctx context.Context, arg GetUserLiveSpendTodayParams) (GetUserLiveSpendTodayRow, error)
 	// Most recent pioneer_created_at for a key.
 	// COALESCE(SUM(pioneer_created_at*0) + MAX(...)) is a workaround for
 	// sqlc's sqlite parser rejecting bare COALESCE(MAX(...), 0).
 	LatestBillingRowTime(ctx context.Context, poolKeyID string) (interface{}, error)
 	ListAPIKeysForUser(ctx context.Context, userID string) ([]ApiKey, error)
+	// Live spend for ALL users since dayStart, grouped by user.
+	// Used by RunSmartAllocation so it doesn't depend on the stale
+	// user_daily_spend cache.
+	ListAllUsersLiveSpendToday(ctx context.Context, pioneerCreatedAt int64) ([]ListAllUsersLiveSpendTodayRow, error)
 	// All billing rows for a key after a given timestamp.
 	ListBillingRowsForKeyAfter(ctx context.Context, arg ListBillingRowsForKeyAfterParams) ([]PoolKeyBillingRow, error)
 	// Billing rows attributed to a user in a time window.
