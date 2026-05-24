@@ -35,13 +35,8 @@
   }
 
   // ---- dynamic crush config ---------------------------------------------
-  function crushConfig(): string {
-    const chatModels = models.length > 0
-      ? models
-      : [
-          { id: 'claude-haiku-4-5', label: 'Claude Haiku 4.5', context_window: 200000 },
-          { id: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6', context_window: 1000000 }
-        ];
+  function crushConfig(): string | null {
+    if (models.length === 0) return null;
     return JSON.stringify({
       '$schema': 'https://charm.land/crush.json',
       providers: {
@@ -49,11 +44,17 @@
           type: 'openai-compat',
           base_url: `${baseURL}/v1`,
           api_key: keyExample,
-          models: chatModels.map(m => ({
+          models: models.map(m => ({
             id: m.id,
             name: m.label || m.id,
             context_window: m.context_window ?? 200000,
-            default_max_tokens: 4096
+            default_max_tokens: 4096,
+            can_reason: false,
+            supports_attachments: false,
+            cost_per_1m_in:        m.input_per_mil  ?? 0,
+            cost_per_1m_out:       m.output_per_mil ?? m.input_per_mil ?? 0,
+            cost_per_1m_in_cached:  0,
+            cost_per_1m_out_cached: 0,
           }))
         }
       }
@@ -212,7 +213,7 @@ console.log(resp.choices[0].message.content);`
     },
     crushConfig: {
       lang: 'json',
-      code: crushConfig
+      code: () => crushConfig() ?? ''
     },
     errorResponse: {
       lang: 'json',
@@ -402,16 +403,20 @@ x-potluck-balance-cents: 142`
     <h3>Claude Code / Cursor / any tool</h3>
     <p>Set <code>OPENAI_BASE_URL={baseURL}/v1</code> and <code>OPENAI_API_KEY=&lt;your key&gt;</code>.</p>
 
-    <h3>Crush</h3>
-    <p>Add a provider block to <code>~/.config/crush/crush.json</code> (or a project-level <code>crush.json</code>). Models are pulled from the live catalog — haiku is fastest for day-to-day use.</p>
-    {#key crushConfig()}
-      {#await highlighted.crushConfig then html}
-        <div class="codeblock-wrap">
-          <pre class="codeblock codeblock-scroll">{@html html}</pre>
-          <button class="copy-btn" aria-label="Copy" onclick={() => copy('crushConfig', crushConfig())}>{#if copiedMap['crushConfig']}<Check size={13} />{:else}<Copy size={13} />{/if}</button>
-        </div>
-      {/await}
-    {/key}
+    <h3><a href="https://github.com/charmbracelet/crush" target="_blank" rel="noopener">Crush</a></h3>
+    <p>Add a provider block to <code>~/.config/crush/crush.json</code> (or a project-level <code>crush.json</code>). Models and prices are pulled from the live catalog — haiku is fastest for day-to-day use.</p>
+    {#if crushConfig() !== null}
+      {#key crushConfig()}
+        {#await highlighted.crushConfig then html}
+          <div class="codeblock-wrap">
+            <pre class="codeblock codeblock-scroll">{@html html}</pre>
+            <button class="copy-btn" aria-label="Copy" onclick={() => copy('crushConfig', crushConfig()!)}>{#if copiedMap['crushConfig']}<Check size={13} />{:else}<Copy size={13} />{/if}</button>
+          </div>
+        {/await}
+      {/key}
+    {:else}
+      <p class="loading-note mono">loading models…</p>
+    {/if}
     <p>To avoid hardcoding your key use <code>"api_key": "$POTLUCK_API_KEY"</code> and export the env var.</p>
   </section>
 
