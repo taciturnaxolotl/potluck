@@ -90,9 +90,14 @@ func (s *Server) RunSmartAllocation(ctx context.Context, setByUserID string) err
 		}
 	}
 
-	var totalShared int64
+	var totalShared, spentTodayShared int64
 	for _, row := range rows {
 		totalShared += toInt64(row.DailyLimitMicros)
+		spentTodayShared += toInt64(row.TodayMicros)
+	}
+	remainingPool := totalShared - spentTodayShared
+	if remainingPool < 0 {
+		remainingPool = 0
 	}
 
 	userIDs := make([]string, len(rows))
@@ -104,7 +109,7 @@ func (s *Server) RunSmartAllocation(ctx context.Context, setByUserID string) err
 		histories[i] = historyByUser[row.UserID] // zero value if absent
 	}
 
-	allocations := smartAllocate(totalShared, spends, histories, dayFraction)
+	allocations := smartAllocate(remainingPool, spends, histories, dayFraction)
 
 	// "system" is not a real user ID — resolve to the first user in the pool
 	// so the FK constraint on set_by_user_id is satisfied.
@@ -297,7 +302,7 @@ func (s *Server) buildAllocations(r *http.Request) map[string]any {
 		liveSpends[i] = spendByUser[row.UserID].shared
 		liveHistories[i] = historyByUser[row.UserID]
 	}
-	liveAllocations := smartAllocate(totalShared, liveSpends, liveHistories, dayFraction)
+	liveAllocations := smartAllocate(remaining, liveSpends, liveHistories, dayFraction)
 
 	out := make([]userEntry, 0, len(rows))
 	for i, row := range rows {

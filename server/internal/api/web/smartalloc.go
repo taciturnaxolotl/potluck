@@ -64,7 +64,7 @@ type SmartAllocation struct {
 //
 // Inputs:
 //
-//	pool        = totalShared (sum of all active pool keys' shared_micros)
+//	pool        = remaining pool budget (totalShared - spentTodayShared, clamped ≥ 0)
 //	spends      = today's shared spend per user, parallel to histories
 //	histories   = per-user historical profile (parallel to spends)
 //	dayFraction = fraction of UTC day elapsed (0.0 to 1.0)
