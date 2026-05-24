@@ -67,6 +67,11 @@ type Config struct {
 	// Pioneer.ai inference credentials.
 	Pioneer Pioneer `envPrefix:"PIONEER_"`
 
+	// Self-hosted free inference endpoint (optional).
+	// Set FREE_PROVIDER_BASE_URL to enable; requests to models available on
+	// that endpoint are free for all users and skip the shared pool gate.
+	FreeProvider FreeProviderConfig `envPrefix:"FREE_PROVIDER_"`
+
 	// Pool key encryption secret. 64-char hex (32 bytes) or base64 (44 chars).
 	// Generate with: openssl rand -hex 32
 	// Required to store keys securely; dev allows empty (plaintext fallback).
@@ -91,6 +96,18 @@ type Pioneer struct {
 	// Base URL — override for testing against the fake provider.
 	BaseURL string `env:"BASE_URL" envDefault:"https://api.pioneer.ai"`
 }
+
+// FreeProviderConfig holds settings for the optional self-hosted free inference endpoint.
+// Leave BaseURL empty to disable.
+type FreeProviderConfig struct {
+	// Base URL of a self-hosted OpenAI-compatible inference endpoint.
+	// Requests to models served by this endpoint are free for all users and
+	// bypass the shared pool gate entirely.
+	BaseURL string `env:"BASE_URL"`
+}
+
+// Enabled reports whether the free provider is configured.
+func (f FreeProviderConfig) Enabled() bool { return f.BaseURL != "" }
 
 // HCAConfig holds the Hack Club Auth OAuth credentials. Empty client_id
 // disables the integration entirely (the splash sign-in button still

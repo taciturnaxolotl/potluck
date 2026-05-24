@@ -12,7 +12,6 @@ package v1
 import (
 	"github.com/go-chi/chi/v5"
 
-	"github.com/taciturnaxolotl/potluck/internal/api/middleware"
 	"github.com/taciturnaxolotl/potluck/internal/auth"
 	"github.com/taciturnaxolotl/potluck/internal/ledger"
 	"github.com/taciturnaxolotl/potluck/internal/pool"
@@ -22,21 +21,22 @@ import (
 
 // Server bundles the deps the v1 handlers need.
 type Server struct {
-	Q        *store.Queries
-	Auth     *auth.Service
-	Ledger   *ledger.Service
-	Provider *provider.Client
-	Pool     *pool.Manager
+	Q            *store.Queries
+	Auth         *auth.Service
+	Ledger       *ledger.Service
+	Provider     *provider.Client
+	Pool         *pool.Manager
+	FreeProvider *provider.Client // nil when free provider is not configured
 }
 
 // Mount installs the v1 routes onto r. The caller chains the bearer-auth
 // middleware in front of this; the balance gate and rate limit are wired
 // per-route since /v1/models is a free read.
+//
+// /chat/completions is registered without the PoolGate middleware so that
+// requests to free/ models can bypass pool checks. The handler performs the
+// gate check itself for non-free models.
 func (s *Server) Mount(r chi.Router) {
 	r.Get("/models", s.handleListModels)
-
-	r.Group(func(r chi.Router) {
-		r.Use(middleware.PoolGate(s.Q, s.Pool.HasHealthyKey, writeError))
-		r.Post("/chat/completions", s.handleChatCompletions)
-	})
+	r.Post("/chat/completions", s.handleChatCompletions)
 }

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	charmlog "charm.land/log/v2"
@@ -19,12 +20,12 @@ import (
 	"github.com/taciturnaxolotl/potluck/internal/store"
 )
 
-// handleChatCompletions proxies POST /v1/chat/completions to pioneer.
-// Streaming requests stay streaming; non-streaming responses are buffered.
+// handleChatCompletions proxies POST /v1/chat/completions.
 //
-// Cancellation semantics: the upstream is bound to the request context.
-// Client disconnect → upstream canceled → no spend for tokens we didn't deliver.
-// This is correct for stateless API clients (not refreshing tabs).
+// Models prefixed with "free/" are routed to the self-hosted free provider
+// (when configured) and bypass the shared pool gate entirely — no pool key is
+// consumed and no spend is recorded. All other models go through the existing
+// pool-gated Pioneer path.
 func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 8<<20))
 	if err != nil {
@@ -42,11 +43,145 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Route free/ models to the self-hosted provider, bypassing the pool gate.
+	if s.FreeProvider != nil && strings.HasPrefix(probe.Model, "free/") {
+		// Strip the "free/" prefix before forwarding — the upstream doesn't know it.
+		upstreamModel := strings.TrimPrefix(probe.Model, "free/")
+		body = rewriteModelInBody(body, upstreamModel)
+		if probe.Stream {
+			s.streamCompletionFree(w, r, body)
+		} else {
+			s.bufferedCompletionFree(w, r, body)
+		}
+		return
+	}
+
+	// Paid path: enforce pool gate before picking a key.
+	u, _ := apimw.UserFromContext(r.Context())
+	if gr := apimw.CheckPoolGate(r.Context(), s.Q, s.Pool.HasHealthyKey, u); gr != nil {
+		writeError(w, gr.Status, gr.Code, gr.Message)
+		return
+	}
+
 	if probe.Stream {
 		s.streamCompletion(w, r, body, probe.Model)
 		return
 	}
 	s.bufferedCompletion(w, r, body, probe.Model)
+}
+
+// rewriteModelInBody replaces the "model" field in a raw JSON chat-completion
+// body. Returns the original body unchanged on any error.
+func rewriteModelInBody(body []byte, model string) []byte {
+	var req map[string]json.RawMessage
+	if err := json.Unmarshal(body, &req); err != nil {
+		return body
+	}
+	modelJSON, err := json.Marshal(model)
+	if err != nil {
+		return body
+	}
+	req["model"] = modelJSON
+	out, err := json.Marshal(req)
+	if err != nil {
+		return body
+	}
+	return out
+}
+
+// streamCompletionFree forwards a streaming request to the free provider.
+// No pool key is selected and no spend is recorded.
+func (s *Server) streamCompletionFree(w http.ResponseWriter, r *http.Request, body []byte) {
+	var req map[string]json.RawMessage
+	if err := json.Unmarshal(body, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	req["stream"] = json.RawMessage(`true`)
+	if _, ok := req["stream_options"]; !ok {
+		req["stream_options"] = json.RawMessage(`{"include_usage":true}`)
+	}
+	patchedBody, err := json.Marshal(req)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "server_error", err.Error())
+		return
+	}
+
+	chunks, errs, err := s.FreeProvider.StreamChatRaw(r.Context(), patchedBody)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "provider_down", err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.WriteHeader(http.StatusOK)
+	flusher, _ := w.(http.Flusher)
+
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case ch, ok := <-chunks:
+			if !ok {
+				_, _ = w.Write([]byte("data: [DONE]\n\n"))
+				return
+			}
+			if ch.Done {
+				_, _ = w.Write([]byte("data: [DONE]\n\n"))
+				if flusher != nil {
+					flusher.Flush()
+				}
+				return
+			}
+			_, _ = w.Write([]byte("data: "))
+			_, _ = w.Write(ch.Raw)
+			_, _ = w.Write([]byte("\n\n"))
+			if flusher != nil {
+				flusher.Flush()
+			}
+		case e := <-errs:
+			if e != nil {
+				errJSON, _ := json.Marshal(map[string]any{
+					"error": map[string]any{
+						"message": e.Error(),
+						"type":    "server_error",
+						"code":    "provider_error",
+					},
+				})
+				_, _ = fmt.Fprintf(w, "data: %s\n\ndata: [DONE]\n\n", errJSON)
+				if flusher != nil {
+					flusher.Flush()
+				}
+				return
+			}
+		}
+	}
+}
+
+// bufferedCompletionFree forwards a non-streaming request to the free provider.
+// No pool key is selected and no spend is recorded.
+func (s *Server) bufferedCompletionFree(w http.ResponseWriter, r *http.Request, body []byte) {
+	req, err := http.NewRequestWithContext(r.Context(),
+		http.MethodPost, s.FreeProvider.BaseURL+"/v1/chat/completions", bytes.NewReader(body))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "server_error", err.Error())
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := s.FreeProvider.HTTP.Do(req)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "provider_down", err.Error())
+		return
+	}
+	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(resp.Body)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(resp.StatusCode)
+	_, _ = w.Write(respBody)
 }
 
 // bufferedCompletion handles a non-streaming chat completion.

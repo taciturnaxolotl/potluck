@@ -170,6 +170,76 @@ func RequireActive(errResp ErrorResponder) func(http.Handler) http.Handler {
 
 // ---- pool gate ---------------------------------------------------------
 
+// GateResult carries a rejection reason from CheckPoolGate.
+type GateResult struct {
+	Status  int
+	Code    string
+	Message string
+}
+
+// CheckPoolGate performs the pool-health and per-user budget checks.
+// Returns nil when the request may proceed, or a *GateResult describing the
+// rejection. u must not be nil; the caller is responsible for ensuring a user
+// is present in context before calling this.
+func CheckPoolGate(ctx context.Context, q *store.Queries, poolAvailable func(context.Context) bool, u *store.User) *GateResult {
+	// 1. Pool health — can we even route a request?
+	if !poolAvailable(ctx) {
+		return &GateResult{http.StatusServiceUnavailable, "no_pool_keys", "no active pool keys available"}
+	}
+
+	// 2. Per-user budget check.
+	now := time.Now().UTC()
+	day := now.Unix() / 86400
+	dayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC).Unix()
+
+	allowRow, err := q.GetUserDailyAllowance(ctx, store.GetUserDailyAllowanceParams{
+		UserID: u.ID,
+		Day:    day,
+	})
+	if err != nil {
+		// No allowance row yet — reconciler hasn't set one. Default: allow.
+		return nil
+	}
+
+	liveSpend, err := q.GetUserLiveSpendToday(ctx, store.GetUserLiveSpendTodayParams{
+		AttributedUserID: sql.NullString{String: u.ID, Valid: true},
+		PioneerCreatedAt: dayStart,
+	})
+	if err != nil {
+		// Can't read spend — allow rather than incorrectly block.
+		return nil
+	}
+
+	sharedSpent := toI64(liveSpend.SharedSpentMicros)
+	privateSpent := toI64(liveSpend.PrivateSpentMicros)
+
+	var privateReserved int64
+	privateRows, err := q.ListPoolKeysForUser(ctx, u.ID)
+	if err == nil {
+		for _, k := range privateRows {
+			if k.Active == 1 && !k.RevokedAt.Valid {
+				privateReserved += k.MaxMicros - k.SharedMicros
+			}
+		}
+	}
+
+	privateRemaining := privateReserved - privateSpent
+	privateOverflow := int64(0)
+	if privateSpent > privateReserved {
+		privateOverflow = privateSpent - privateReserved
+	}
+	sharedRemaining := allowRow.SharedAllowanceMicros - sharedSpent - privateOverflow
+
+	if sharedRemaining > 0 || privateRemaining > 0 {
+		return nil
+	}
+	return &GateResult{
+		http.StatusPaymentRequired,
+		"insufficient_funds",
+		"your shared allowance and private reservation for today are both exhausted",
+	}
+}
+
 // PoolGate replaces BalanceGate. Checks pool health and per-user budget.
 // poolAvailable should return true if at least one healthy key can serve requests.
 func PoolGate(q *store.Queries, poolAvailable func(ctx context.Context) bool, errResp ErrorResponder) func(http.Handler) http.Handler {
@@ -180,69 +250,11 @@ func PoolGate(q *store.Queries, poolAvailable func(ctx context.Context) bool, er
 				errResp(w, http.StatusUnauthorized, "unauthenticated", "login required")
 				return
 			}
-
-			// 1. Pool health — can we even route a request?
-			if !poolAvailable(r.Context()) {
-				errResp(w, http.StatusServiceUnavailable, "no_pool_keys", "no active pool keys available")
+			if gr := CheckPoolGate(r.Context(), q, poolAvailable, u); gr != nil {
+				errResp(w, gr.Status, gr.Code, gr.Message)
 				return
 			}
-
-			// 2. Per-user budget check.
-			now := time.Now().UTC()
-			day := now.Unix() / 86400
-			dayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC).Unix()
-
-			allowRow, err := q.GetUserDailyAllowance(r.Context(), store.GetUserDailyAllowanceParams{
-				UserID: u.ID,
-				Day:    day,
-			})
-			if err != nil {
-				// No allowance row yet — reconciler hasn't set one. Default: allow.
-				next.ServeHTTP(w, r)
-				return
-			}
-
-			// Read live spend directly from billing rows — accurate to within
-			// the last reconciler tick, not a stale cached aggregate.
-			liveSpend, err := q.GetUserLiveSpendToday(r.Context(), store.GetUserLiveSpendTodayParams{
-				AttributedUserID: sql.NullString{String: u.ID, Valid: true},
-				PioneerCreatedAt: dayStart,
-			})
-			if err != nil {
-				// Can't read spend — allow rather than incorrectly block.
-				next.ServeHTTP(w, r)
-				return
-			}
-
-			sharedSpent := toI64(liveSpend.SharedSpentMicros)
-			privateSpent := toI64(liveSpend.PrivateSpentMicros)
-
-			// Compute private reservation from the user's own pool keys.
-			var privateReserved int64
-			privateRows, err := q.ListPoolKeysForUser(r.Context(), u.ID)
-			if err == nil {
-				for _, k := range privateRows {
-					if k.Active == 1 && !k.RevokedAt.Valid {
-						privateReserved += k.MaxMicros - k.SharedMicros
-					}
-				}
-			}
-
-			privateRemaining := privateReserved - privateSpent
-			// Private overspend counts against the shared allowance too.
-			privateOverflow := int64(0)
-			if privateSpent > privateReserved {
-				privateOverflow = privateSpent - privateReserved
-			}
-			sharedRemaining := allowRow.SharedAllowanceMicros - sharedSpent - privateOverflow
-
-			if sharedRemaining > 0 || privateRemaining > 0 {
-				next.ServeHTTP(w, r)
-				return
-			}
-
-			errResp(w, http.StatusPaymentRequired, "insufficient_funds",
-				"your shared allowance and private reservation for today are both exhausted")
+			next.ServeHTTP(w, r)
 		})
 	}
 }
