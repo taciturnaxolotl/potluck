@@ -91,6 +91,11 @@ LIMIT 1;
 -- First leg of user-aware picking: try to find the user's own key that
 -- still has private reservation room (max_micros > shared_micros).
 -- If this returns no rows, fall back to PickPoolKeyV2.
+--
+-- Orders by remaining private budget (most remaining first) so that when a
+-- user has multiple keys with private reserves we pick the one with the most
+-- headroom — this avoids over-draining a single key from shared pool traffic.
+-- RANDOM() tiebreak ensures cycling when keys have equal private remaining.
 SELECT * FROM pool_keys
 WHERE user_id = ?
   AND active = 1
@@ -100,5 +105,5 @@ WHERE user_id = ?
   AND (pioneer_remaining_micros IS NULL OR pioneer_remaining_micros > 10000000)
   AND today_micros < max_micros
   AND max_micros > shared_micros
-ORDER BY today_micros ASC
+ORDER BY (max_micros - CASE WHEN today_micros > shared_micros THEN today_micros ELSE shared_micros END) DESC, RANDOM()
 LIMIT 1;

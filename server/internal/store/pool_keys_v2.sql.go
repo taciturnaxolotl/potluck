@@ -167,7 +167,7 @@ WHERE user_id = ?
   AND (pioneer_remaining_micros IS NULL OR pioneer_remaining_micros > 10000000)
   AND today_micros < max_micros
   AND max_micros > shared_micros
-ORDER BY today_micros ASC
+ORDER BY (max_micros - CASE WHEN today_micros > shared_micros THEN today_micros ELSE shared_micros END) DESC, RANDOM()
 LIMIT 1
 `
 
