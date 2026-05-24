@@ -7,4 +7,4 @@ compatibility_flags = ["nodejs_compat"]
 bucket = ".svelte-kit/cloudflare"
 
 [vars]
-BACKEND_URL = "https://potluck-api.dunkirk.sh"
+BACKEND_URL = "https://backend.potluck.dunkirk.sh"
