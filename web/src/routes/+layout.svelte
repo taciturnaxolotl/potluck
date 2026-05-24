@@ -9,12 +9,12 @@
   import { page } from '$app/state';
   import { cycleTheme, currentTheme, type Theme } from '$lib/theme';
   import { me, balance, type User } from '$lib/api';
+  import { auth } from '$lib/auth.svelte';
   import type { Snippet } from 'svelte';
 
   let { children }: { children: Snippet } = $props();
 
   let theme = $state<Theme>('auto');
-  let user = $state<User | null>(null);
   let bal = $state<{ balance_usd: string } | null>(null);
   let authChecked = $state(false);
 
@@ -25,10 +25,10 @@
   $effect(() => {
     (async () => {
       try {
-        user = await me();
+        auth.user = await me();
         bal = await balance();
       } catch {
-        user = null;
+        auth.user = null;
       } finally {
         authChecked = true;
       }
@@ -41,7 +41,7 @@
 
   // Sidebar shows only when authenticated. Splash routes (the home page
   // for unauthenticated visitors) get a minimal centered layout.
-  let showSidebar = $derived(user !== null);
+  let showSidebar = $derived(auth.user !== null);
 
   // When an error is rendering (404, 500, etc.) we skip both the sidebar
   // and the splash shell — the +error.svelte page paints its own
@@ -183,18 +183,18 @@
       {/each}
 
       <div class="sidebar-foot">
-        {#if user}
+        {#if auth.user}
           <a class="who" href="/settings">
-            {#if user.slack_id?.Valid}
+            {#if auth.user.slack_id?.Valid}
               <img
                 class="who-avatar"
-                src="https://cachet.dunkirk.sh/users/{user.slack_id.String}/r"
-                alt={user.display_name}
+                src="https://cachet.dunkirk.sh/users/{auth.user.slack_id.String}/r"
+                alt={auth.user.display_name}
               />
             {:else}
-              <span class="who-initial">{user.display_name?.[0]?.toUpperCase() ?? '?'}</span>
+              <span class="who-initial">{auth.user.display_name?.[0]?.toUpperCase() ?? '?'}</span>
             {/if}
-            <span class="who-name">{user.display_name?.split(' ')[0] ?? user.email}</span>
+            <span class="who-name">{auth.user.display_name?.split(' ')[0] ?? auth.user.email}</span>
             {#if bal}
               <span class="who-bal mono">${bal.balance_usd}</span>
             {/if}

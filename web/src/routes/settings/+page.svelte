@@ -15,6 +15,7 @@
     type Session
   } from '$lib/api';
   import { cycleTheme, currentTheme, type Theme } from '$lib/theme';
+  import { auth } from '$lib/auth.svelte';
   import { onMount } from 'svelte';
 
   let theme = $state<Theme>('auto');
@@ -212,6 +213,7 @@
   async function handleLogout() {
     signingOut = true;
     await logout();
+    auth.user = null;
     goto('/');
   }
 
