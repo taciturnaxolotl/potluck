@@ -344,7 +344,7 @@
           ></div>
         </div>
       {/if}
-      <a class="splash-signin" href="/auth/login">Sign in with Hack Club</a>
+      <a class="splash-signin" href="/auth/login">Sign in w/ HCA</a>
     </header>
     <main class="splash-main">
       {#if authChecked}
