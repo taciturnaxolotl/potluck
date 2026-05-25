@@ -81,6 +81,8 @@ WHERE id = ?4;
 -- All users with their pool key stats (if any).
 -- Users without keys appear with zero contributions.
 -- private_reservation_micros = sum(max_micros - shared_micros) for active keys.
+-- today_micros capped at shared_micros: a key whose credit limit dropped (e.g.
+-- $1000->$50) can't report more pool spend than its current contribution.
 SELECT
     u.id            AS user_id,
     u.display_name,
@@ -88,7 +90,7 @@ SELECT
     COUNT(pk.id)                                                                             AS key_count,
     COALESCE(SUM(CASE WHEN pk.active = 1 THEN pk.shared_micros ELSE 0 END), 0)              AS daily_limit_micros,
     COALESCE(SUM(CASE WHEN pk.active = 1 THEN pk.max_micros - pk.shared_micros ELSE 0 END), 0) AS private_reservation_micros,
-    COALESCE(SUM(CASE WHEN pk.active = 1 THEN pk.today_micros ELSE 0 END), 0)               AS today_micros,
+    COALESCE(SUM(CASE WHEN pk.active = 1 THEN MIN(pk.today_micros, pk.shared_micros) ELSE 0 END), 0) AS today_micros,
     COALESCE(SUM(pk.total_micros), 0)                                                        AS total_micros,
     COALESCE(SUM(pk.request_count), 0)                                                       AS request_count
 FROM users u

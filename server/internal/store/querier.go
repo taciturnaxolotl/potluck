@@ -55,7 +55,6 @@ type Querier interface {
 	GetModelPrice(ctx context.Context, model string) (ModelPrice, error)
 	GetPoolKey(ctx context.Context, id string) (PoolKey, error)
 	GetSession(ctx context.Context, arg GetSessionParams) (Session, error)
-	GetRunningStreamForConversation(ctx context.Context, conversationID string) (Stream, error)
 	GetStream(ctx context.Context, id string) (Stream, error)
 	GetStreamByIdempotencyKey(ctx context.Context, arg GetStreamByIdempotencyKeyParams) (Stream, error)
 	GetUserByEmail(ctx context.Context, email string) (User, error)
@@ -101,6 +100,8 @@ type Querier interface {
 	// All users with their pool key stats (if any).
 	// Users without keys appear with zero contributions.
 	// private_reservation_micros = sum(max_micros - shared_micros) for active keys.
+	// today_micros capped at shared_micros: a key whose credit limit dropped (e.g.
+	// $1000->$50) can't report more pool spend than its current contribution.
 	ListPoolAllocations(ctx context.Context) ([]ListPoolAllocationsRow, error)
 	// All keys (for the pool management page). Includes inactive and other users' keys.
 	ListPoolKeys(ctx context.Context) ([]ListPoolKeysRow, error)
