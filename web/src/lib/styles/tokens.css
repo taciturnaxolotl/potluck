@@ -118,6 +118,12 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+@media (max-width: 720px) {
+  html {
+    font-size: 17px;
+  }
+}
+
 #app {
   display: contents;
 }

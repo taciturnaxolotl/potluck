@@ -151,6 +151,25 @@
     lastTick = 0;
   }
 
+  // ---- mobile drawer --------------------------------------------------
+  let sidebarOpen = $state(false);
+  function toggleSidebar() { sidebarOpen = !sidebarOpen; }
+  function closeSidebar() { sidebarOpen = false; }
+
+  // Close on navigation.
+  $effect(() => {
+    void page.url.pathname;
+    void page.url.searchParams.toString();
+    sidebarOpen = false;
+  });
+
+  // Prevent body scroll when drawer is open.
+  $effect(() => {
+    if (typeof document === 'undefined') return;
+    document.body.style.overflow = sidebarOpen ? 'hidden' : '';
+    return () => { document.body.style.overflow = ''; };
+  });
+
   // Active nav item is derived from the current route. Each entry's `match`
   // returns true when its href is the active page.
   type NavItem = { label: string; href: string; section: string };
@@ -201,53 +220,79 @@
   {@render children()}
 {:else if showSidebar}
   <div class="shell">
-    <aside class="sidebar">
+
+    <!-- Mobile-only top bar -->
+    <div class="top-bar">
+      <button class="menu-btn" onclick={toggleSidebar} aria-label="Open menu" aria-expanded={sidebarOpen}>
+        <svg width="18" height="14" viewBox="0 0 18 14" fill="none" aria-hidden="true">
+          <path d="M1 1h16M1 7h16M1 13h16" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"/>
+        </svg>
+      </button>
+      <span class="top-bar-brand">potluck</span>
+      {#if onChat}
+        <a class="top-bar-new" href="/chat" aria-label="New chat">
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+            <path d="M7 1v12M1 7h12" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"/>
+          </svg>
+        </a>
+      {/if}
+    </div>
+
+    <!-- Drawer backdrop -->
+    {#if sidebarOpen}
+      <div class="drawer-backdrop" onclick={closeSidebar} aria-hidden="true"></div>
+    {/if}
+
+    <aside class="sidebar" class:open={sidebarOpen} aria-hidden={!sidebarOpen}>
       <div class="brand">potluck</div>
       <div class="brand-sub">What will you make today?</div>
 
-      {#each sections as [section, items] (section)}
-        <div class="nav-section">{section}</div>
-        {#each items as item (item.href)}
-          <a
-            class="nav-item"
-            class:active={isActive(item.href)}
-            href={item.href}
-            data-sveltekit-preload-data="hover"
-          >
-            {item.label}
-          </a>
-        {/each}
-      {/each}
-
-      <!-- conversations section — always visible -->
-      <div class="nav-section">conversations</div>
-      <a
-        class="nav-item"
-        class:active={page.url.pathname === '/chat' && !page.url.searchParams.get('c')}
-        href="/chat"
-        data-sveltekit-preload-data="hover"
-      >converse</a>
-      {#if onChat}
-        {#each chatConvs as conv (conv.id)}
-          <div
-            class="nav-item nav-conv-row"
-            class:active={page.url.searchParams.get('c') === conv.id}
-          >
+      <!-- Scrollable nav area — footer stays pinned below -->
+      <div class="sidebar-scroll">
+        {#each sections as [section, items] (section)}
+          <div class="nav-section">{section}</div>
+          {#each items as item (item.href)}
             <a
-              class="nav-conv-link"
-              href="/chat?c={conv.id}"
-              title={conv.title}
-              data-sveltekit-preload-data="tap"
-            >{conv.title}</a>
-            <button
-              class="conv-del-btn"
-              onclick={(e) => deleteThread(conv.id, e)}
-              title="Delete thread"
-              aria-label="Delete thread"
-            >×</button>
-          </div>
+              class="nav-item"
+              class:active={isActive(item.href)}
+              href={item.href}
+              data-sveltekit-preload-data="hover"
+            >
+              {item.label}
+            </a>
+          {/each}
         {/each}
-      {/if}
+
+        <!-- conversations section — always visible -->
+        <div class="nav-section">conversations</div>
+        <a
+          class="nav-item"
+          class:active={page.url.pathname === '/chat' && !page.url.searchParams.get('c')}
+          href="/chat"
+          data-sveltekit-preload-data="hover"
+        >converse</a>
+        {#if onChat}
+          {#each chatConvs as conv (conv.id)}
+            <div
+              class="nav-item nav-conv-row"
+              class:active={page.url.searchParams.get('c') === conv.id}
+            >
+              <a
+                class="nav-conv-link"
+                href="/chat?c={conv.id}"
+                title={conv.title}
+                data-sveltekit-preload-data="tap"
+              >{conv.title}</a>
+              <button
+                class="conv-del-btn"
+                onclick={(e) => deleteThread(conv.id, e)}
+                title="Delete thread"
+                aria-label="Delete thread"
+              >×</button>
+            </div>
+          {/each}
+        {/if}
+      </div>
 
       <div class="sidebar-foot">
         {#if auth.user}
@@ -314,8 +359,22 @@
   .shell {
     display: grid;
     grid-template-columns: 240px 1fr;
+    grid-template-rows: 1fr;
     height: 100dvh;
     overflow: hidden;
+  }
+
+  /* Mobile top bar — hidden on desktop */
+  .top-bar {
+    display: none;
+  }
+
+  .drawer-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.45);
+    z-index: 90;
+    backdrop-filter: blur(1px);
   }
 
   .sidebar {
@@ -324,7 +383,19 @@
     padding: 1.5rem 1rem;
     display: flex;
     flex-direction: column;
+    overflow: hidden;
+    /* Explicit height makes the flex main-axis bounded when height comes
+       from the grid rather than an explicit declaration — without this the
+       flex algorithm may treat the container as auto-sized and let sidebar-foot
+       render below the visible area. */
+    height: 100%;
+    box-sizing: border-box;
+  }
+
+  .sidebar-scroll {
+    flex: 1;
     overflow-y: auto;
+    min-height: 0;
   }
 
   .brand {
@@ -381,12 +452,15 @@
   }
 
   .sidebar-foot {
-    margin-top: auto;
+    flex-shrink: 0;
     color: var(--text-muted);
     font-size: 0.8rem;
     display: flex;
     flex-direction: column;
     gap: 0.6rem;
+    border-top: 1px solid var(--border);
+    padding-top: 0.75rem;
+    margin-top: 0.5rem;
   }
 
   .who {
@@ -442,10 +516,12 @@
   .main {
     padding: 2rem 2.25rem;
     overflow-y: auto;
+    min-height: 0;
   }
   .main.chat-route {
     padding: 0;
     overflow: hidden;
+    height: 100%;
   }
 
   /* ---- thread sub-items ------------------------------------------------ */
@@ -629,23 +705,108 @@
     padding: 2rem;
   }
 
+  /* ---- mobile top bar controls --------------------------------------- */
+  .menu-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    border: none;
+    background: none;
+    color: var(--text);
+    cursor: pointer;
+    border-radius: var(--radius-sm);
+    flex-shrink: 0;
+    transition: background 80ms;
+  }
+  .menu-btn:hover { background: var(--bg-page); }
+
+  .top-bar-brand {
+    font-family: var(--font-serif);
+    font-variation-settings: var(--fraunces-display);
+    font-size: 1.25rem;
+    color: var(--text);
+    flex: 1;
+  }
+
+  .top-bar-new {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
+    text-decoration: none;
+    transition: border-color 80ms, color 80ms;
+  }
+  .top-bar-new:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+    text-decoration: none;
+  }
+
   /* ---- responsive ----------------------------------------------------- */
   @media (max-width: 720px) {
     .shell {
       grid-template-columns: 1fr;
+      grid-template-rows: 48px 1fr;
     }
-    .sidebar {
-      border-right: none;
+
+    .top-bar {
+      display: flex;
+      align-items: center;
+      gap: 0.65rem;
+      padding: 0 0.85rem;
+      grid-row: 1;
+      grid-column: 1;
+      background: var(--bg-sidebar);
       border-bottom: 1px solid var(--border);
-      padding: 1rem;
+      z-index: 50;
     }
-    .brand-sub {
-      margin-bottom: 1rem;
+
+    /* Sidebar becomes a fixed slide-in drawer */
+    .sidebar {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: min(280px, 82vw);
+      height: 100dvh;
+      z-index: 100;
+      background: var(--bg-surface);
+      border-right: 1px solid var(--border);
+      border-bottom: none;
+      padding: 1rem 0.85rem max(1rem, env(safe-area-inset-bottom));
+      transform: translateX(-100%);
+      transition: transform 220ms ease;
+      box-shadow: none;
     }
+    .sidebar.open {
+      transform: translateX(0);
+      box-shadow: 4px 0 24px rgba(0,0,0,0.18);
+    }
+
+    .brand-sub { margin-bottom: 1rem; }
+
+    /* Always show delete button on touch devices */
+    .conv-del-btn { display: flex; }
+
     .main {
+      grid-row: 2;
+      grid-column: 1;
       padding: 1.25rem;
+      /* Ensure height is constrained to grid cell, not full viewport */
+      min-height: 0;
     }
+    .main.chat-route {
+      padding: 0;
+      overflow: hidden;
+    }
+
     .splash-nav {
+      display: grid;
       grid-template-columns: 1fr auto;
       grid-template-rows: auto auto;
       row-gap: 0.6rem;

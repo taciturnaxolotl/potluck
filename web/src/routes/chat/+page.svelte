@@ -204,6 +204,18 @@
   let freeModels = $derived(models.filter((m) => m.id.startsWith('free/')));
   let paidModels = $derived(models.filter((m) => !m.id.startsWith('free/')));
 
+  let modelSearch = $state('');
+  let filteredFreeModels = $derived(
+    modelSearch.trim()
+      ? freeModels.filter((m) => (m.label || m.id).toLowerCase().includes(modelSearch.toLowerCase()))
+      : freeModels
+  );
+  let filteredPaidModels = $derived(
+    modelSearch.trim()
+      ? paidModels.filter((m) => (m.label || m.id).toLowerCase().includes(modelSearch.toLowerCase()))
+      : paidModels
+  );
+
   function saveModel() {
     localStorage.setItem('chat:model', selectedModel);
   }
@@ -219,12 +231,22 @@
     selectedModel = id;
     saveModel();
     modelPickerOpen = false;
+    modelSearch = '';
     inputEl?.focus();
+  }
+
+  function closePicker() {
+    modelPickerOpen = false;
+    modelSearch = '';
+  }
+
+  function focusEl(el: HTMLElement) {
+    el.focus();
   }
 
   function onWindowClick(e: MouseEvent) {
     if (modelPickerOpen && pickerEl && !pickerEl.contains(e.target as Node)) {
-      modelPickerOpen = false;
+      closePicker();
     }
   }
 
@@ -832,9 +854,19 @@
 
           {#if modelPickerOpen}
             <div class="model-menu" role="listbox">
-              {#if freeModels.length > 0}
+              <div class="model-search-wrap">
+                <input
+                  class="model-search"
+                  type="search"
+                  placeholder="search models…"
+                  bind:value={modelSearch}
+                  onkeydown={(e) => { if (e.key === 'Escape') closePicker(); }}
+                  use:focusEl
+                />
+              </div>
+              {#if filteredFreeModels.length > 0}
                 <div class="model-group-hdr">free</div>
-                {#each freeModels as m (m.id)}
+                {#each filteredFreeModels as m (m.id)}
                   <button
                     class="model-opt"
                     class:sel={selectedModel === m.id}
@@ -844,9 +876,9 @@
                   >{m.label || m.id.replace('free/', '')}</button>
                 {/each}
               {/if}
-              {#if paidModels.length > 0}
+              {#if filteredPaidModels.length > 0}
                 <div class="model-group-hdr">pool</div>
-                {#each paidModels as m (m.id)}
+                {#each filteredPaidModels as m (m.id)}
                   <button
                     class="model-opt"
                     class:sel={selectedModel === m.id}
@@ -858,6 +890,8 @@
               {/if}
               {#if models.length === 0}
                 <span class="model-opt" style="opacity:0.5;cursor:default">loading…</span>
+              {:else if filteredFreeModels.length === 0 && filteredPaidModels.length === 0}
+                <span class="model-opt" style="opacity:0.5;cursor:default">no matches</span>
               {/if}
             </div>
           {/if}
@@ -886,7 +920,7 @@
   .chat {
     display: flex;
     flex-direction: column;
-    height: 100dvh;
+    height: 100%;
     overflow: hidden;
     background: var(--bg-page);
   }
@@ -1414,6 +1448,35 @@
     font-weight: 500;
   }
 
+  .model-search-wrap {
+    padding: 0.3rem 0.3rem 0.2rem;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 0.2rem;
+  }
+
+  .model-search {
+    display: block;
+    width: 100%;
+    box-sizing: border-box;
+    background: var(--bg-page);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 0.28rem 0.5rem;
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    color: var(--text);
+    outline: none;
+  }
+  .model-search::placeholder { color: var(--text-faint); }
+  .model-search:focus { border-color: var(--accent); }
+
+  .model-no-match {
+    padding: 0.5rem 0.5rem;
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    font-family: var(--font-sans);
+  }
+
   /* ── send button ────────────────────────────────────────────────────────── */
   .send-btn {
     flex-shrink: 0;
@@ -1446,8 +1509,13 @@
 
   /* ── responsive ─────────────────────────────────────────────────────────── */
   @media (max-width: 720px) {
-    .msgs { padding: 1rem; }
-    .msg { max-width: 92%; }
+    .msgs { padding: 0.85rem 1rem; gap: 0.75rem; }
+    .user-bubble { max-width: min(88%, 44rem); }
+    .assistant-body { max-width: 100%; }
     .input-bar { padding: 0.5rem 0.75rem 0.85rem; }
+    /* Prevent iOS Safari from zooming on textarea focus */
+    .input { font-size: 1rem; }
+    .meta-stat { display: none; }
+    .meta-stat:first-of-type { display: inline; }
   }
 </style>

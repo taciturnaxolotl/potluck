@@ -123,6 +123,7 @@
   {:else if models.length === 0}
     <p class="muted">catalog is being populated — check back in a minute.</p>
   {:else}
+    <div class="table-scroll">
     <div class="model-table">
       <div class="table-head">
         <button class="sort-btn" class:active={sortKey==='name'} onclick={() => setSort('name')}>
@@ -167,6 +168,7 @@
       {#if sorted.length === 0}
         <p class="muted small empty">no models match this filter.</p>
       {/if}
+    </div>
     </div>
   {/if}
 </article>
@@ -234,12 +236,18 @@
     color: var(--text-on-accent);
   }
 
+  .table-scroll {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
   .model-table {
     display: flex;
     flex-direction: column;
     border: 1px solid var(--border);
     border-radius: var(--radius-md);
     overflow: hidden;
+    min-width: 640px;
   }
   .table-head {
     display: grid;

@@ -135,6 +135,7 @@
             </button>
           </div>
         </div>
+        <div class="table-scroll">
         <table class="alloc-table">
           <thead>
             <tr>
@@ -272,6 +273,7 @@
             {/each}
           </tbody>
         </table>
+        </div>
       </div>
     {/if}
 
@@ -302,10 +304,17 @@ curl {typeof window !== 'undefined' ? window.location.origin : 'https://potluck.
     /* No overflow:hidden — would clip the tooltip popover. */
   }
 
+  .table-scroll {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
   .alloc-head {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 0.5rem;
     padding: 0.75rem 1rem;
     border-bottom: 1px solid var(--border);
   }

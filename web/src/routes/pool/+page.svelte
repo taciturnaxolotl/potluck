@@ -360,6 +360,7 @@
       {#if keys.length === 0}
         <div class="empty mono">no keys in the pool yet — add one above to get started</div>
       {:else}
+        <div class="table-scroll">
         <table class="keys-table">
           <thead>
             <tr>
@@ -458,6 +459,7 @@
             {/each}
           </tbody>
         </table>
+        </div>
       {/if}
     </div>
 
@@ -698,10 +700,16 @@
     font-size: 0.82rem;
   }
 
+  .table-scroll {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
   .keys-table {
     width: 100%;
     border-collapse: collapse;
     font-size: 0.82rem;
+    min-width: 700px;
   }
 
   .keys-table thead tr th:first-child { border-radius: 0; }
