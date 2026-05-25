@@ -26,6 +26,10 @@
   let recomputing = $state(false);
   let recomputeCooldown = $state(false);
 
+  // Fixed-position usage tooltip (escapes overflow-x: auto clipping)
+  let tipHoverId = $state<string | null>(null);
+  let tipPos = $state<{ top: number; left: number } | null>(null);
+
   async function handleRecompute() {
     if (recomputing || recomputeCooldown) return;
     recomputing = true;
@@ -182,7 +186,9 @@
                     <span>{pct(u.share_fraction)}</span>
                   </div>
                 </td>
-                <td class="num mono usage-cell" class:negative={u.shared_remaining_today_micros < 0}>
+                <td class="num mono usage-cell" class:negative={u.shared_remaining_today_micros < 0}
+                  onmouseenter={(e) => { const r = e.currentTarget.getBoundingClientRect(); tipHoverId = u.user_id; tipPos = { top: r.top - 8, left: r.left + r.width / 2 }; }}
+                  onmouseleave={() => { tipHoverId = null; tipPos = null; }}>
                   <div class="usage-wrap">
                     <div class="usage-numbers">
                       <span class="usage-used">{trim(formatUSD(u.shared_spent_today_micros + u.private_spent_today_micros))}</span>
@@ -201,7 +207,8 @@
                         {#if _privateOverW > 0}<div class="seg seg-over" style="width:{_privateOverW}%"></div>{/if}
                       {/if}
                     </div>
-                    <div class="usage-tip" role="tooltip">
+                    {#if tipHoverId === u.user_id && tipPos}
+                    <div class="usage-tip" role="tooltip" style="position:fixed;bottom:auto;top:{tipPos.top}px;left:{tipPos.left}px;transform:translate(-50%,-100%);opacity:1">
                       <div class="tip-group">
                         <div class="tip-row">
                           <span class="tip-dot dot-used"></span>
@@ -267,6 +274,7 @@
                         {/if}
                       </div>
                     </div>
+                    {/if}
                   </div>
                 </td>
               </tr>
@@ -479,7 +487,7 @@ curl {typeof window !== 'undefined' ? window.location.origin : 'https://potluck.
     position: absolute;
     bottom: calc(100% + 0.5rem);
     right: 0;
-    z-index: 10;
+    z-index: 100;
     background: var(--bg-surface);
     border: 1px solid var(--border);
     border-radius: var(--radius-md);
@@ -494,6 +502,7 @@ curl {typeof window !== 'undefined' ? window.location.origin : 'https://potluck.
     line-height: 1.4;
     white-space: normal;
   }
+  /* JS-driven fixed positioning overrides CSS hover when tipHoverId matches */
   .usage-cell:hover .usage-tip { opacity: 1; }
 
   .tip-group { display: flex; flex-direction: column; gap: 0.18rem; }

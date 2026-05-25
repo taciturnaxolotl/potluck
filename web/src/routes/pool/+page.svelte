@@ -43,6 +43,10 @@
   // Menu open state per key
   let openMenu = $state<string | null>(null);
 
+  // Fixed-position popover coordinates (to escape overflow: auto clipping)
+  let menuPos = $state<{ top: number; right: number } | null>(null);
+  let limitsPos = $state<{ top: number; right: number } | null>(null);
+
   // Syncing state
   let syncing = $state<Set<string>>(new Set());
 
@@ -163,6 +167,7 @@
     const max = key.max_micros;
     const shared = Math.max(0, Math.min(editSharedDollars * 1_000_000, max));
     editingLimitsId = null;
+    limitsPos = null;
     try {
       await updatePoolKeyLimits(id, max, shared);
       await reload();
@@ -256,7 +261,7 @@
   $effect(() => { if (editSharedDollars > editMaxDollars) editSharedDollars = editMaxDollars; });
 </script>
 
-<svelte:window onclick={() => { openMenu = null; editingLimitsId = null; }} />
+<svelte:window onclick={() => { openMenu = null; editingLimitsId = null; menuPos = null; limitsPos = null; }} />
 
 <div class="page">
   <div class="eyebrow mono">the pot · key pool</div>
@@ -399,8 +404,8 @@
                   <span class:over={(key.today_micros / (key.max_micros || 1)) > 0.8} class:syncing={syncing.has(key.id)}>{syncing.has(key.id) ? '…' : fmtMicros(key.today_micros)}</span>
                 </td>
                 <td class="num mono limits-td" onclick={(e) => editingLimitsId === key.id && e.stopPropagation()}>
-                  {#if key.mine && editingLimitsId === key.id}
-                    <div class="limits-popover" role="dialog">
+                  {#if key.mine && editingLimitsId === key.id && limitsPos}
+                    <div class="limits-popover" role="dialog" style="position:fixed;top:{limitsPos.top}px;right:{limitsPos.right}px" onclick={(e) => e.stopPropagation()}>
                       <div class="limits-row">
                         <span class="limits-label">ceiling</span>
                         <span class="limits-readonly mono">${editMaxDollars} <span class="limits-hint">(from pioneer)</span></span>
@@ -415,11 +420,11 @@
                       <div class="limits-preview mono">${editSharedDollars} shared · ${editMaxDollars - editSharedDollars} reserved</div>
                       <div class="limits-actions">
                         <button class="btn-mini" onclick={() => saveLimits(key.id)}>save</button>
-                        <button class="btn-mini btn-cancel" onclick={() => editingLimitsId = null}>cancel</button>
+                        <button class="btn-mini btn-cancel" onclick={() => { editingLimitsId = null; limitsPos = null; }}>cancel</button>
                       </div>
                     </div>
                   {:else}
-                    <button class="limits-display" onclick={() => key.mine && startEditLimits(key)} disabled={!key.mine} title={key.mine ? 'click to edit' : undefined}>
+                    <button class="limits-display" onclick={(e) => { if (!key.mine) return; e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); limitsPos = { top: r.bottom + 4, right: window.innerWidth - r.right }; startEditLimits(key); }} disabled={!key.mine} title={key.mine ? 'click to edit' : undefined}>
                       {fmtMicros(key.shared_micros)}
                     </button>
                   {/if}
@@ -432,16 +437,16 @@
                   {#if key.mine}
                     <div class="menu-wrap">
                       <button class="menu-trigger" class:open={openMenu === key.id}
-                        onclick={(e) => { e.stopPropagation(); openMenu = openMenu === key.id ? null : key.id; }}
+                        onclick={(e) => { e.stopPropagation(); if (openMenu === key.id) { openMenu = null; menuPos = null; } else { const r = e.currentTarget.getBoundingClientRect(); menuPos = { top: r.bottom + 4, right: window.innerWidth - r.right }; openMenu = key.id; } }}
                         aria-label="actions">⋯</button>
-                      {#if openMenu === key.id}
-                        <div class="menu-popover" role="menu" tabindex="-1">
+                      {#if openMenu === key.id && menuPos}
+                        <div class="menu-popover" role="menu" tabindex="-1" style="position:fixed;top:{menuPos.top}px;right:{menuPos.right}px">
                           <button class="menu-item" role="menuitem"
-                            onclick={() => { handleToggleActive(key); openMenu = null; }}
+                            onclick={() => { handleToggleActive(key); openMenu = null; menuPos = null; }}
                           >{key.active ? 'pause' : 'activate'}</button>
                           <button class="menu-item" role="menuitem"
                             disabled={syncing.has(key.id)}
-                            onclick={() => { handleSync(key); openMenu = null; }}
+                            onclick={() => { handleSync(key); openMenu = null; menuPos = null; }}
                           >{syncing.has(key.id) ? 'syncing…' : 'sync spend'}</button>
                           <div class="menu-divider"></div>
                           <button class="menu-item danger" role="menuitem"
@@ -814,9 +819,6 @@
   }
 
   .menu-popover {
-    position: absolute;
-    right: 0;
-    top: calc(100% + 4px);
     z-index: 200;
     background: light-dark(var(--paper), var(--jet-black));
     border: 1px solid var(--border);
@@ -955,9 +957,6 @@
   .limits-display:disabled { cursor: default; }
 
   .limits-popover {
-    position: absolute;
-    right: 0;
-    top: calc(100% + 4px);
     z-index: 200;
     background: light-dark(var(--paper), var(--jet-black));
     border: 1px solid var(--border);
