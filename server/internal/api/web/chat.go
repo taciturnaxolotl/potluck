@@ -265,6 +265,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	ctxDone := r.Context().Done()
 	genCtx := context.Background()
 	bus := s.Hub.Subscriber(streamID)
+	convBus := s.Hub.Subscriber("conv:" + convID)
 
 	emit := func(event string, payload map[string]any) {
 		seq++
@@ -277,7 +278,13 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 			Data:      string(b),
 			CreatedAt: time.Now().Unix(),
 		})
-		bus.Publish(stream.Event{Seq: seq, Type: event, Raw: json.RawMessage(b)})
+		ev := stream.Event{Seq: seq, Type: event, Raw: json.RawMessage(b)}
+		bus.Publish(ev)
+		// Notify any other browsers watching this conversation when a new
+		// stream starts so they can attach their own stream consumer.
+		if event == "start" {
+			convBus.Publish(ev)
+		}
 		if clientGone {
 			return
 		}

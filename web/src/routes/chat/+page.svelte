@@ -18,6 +18,7 @@
   let activeStreamId = $state<string | null>(null);
   let activeAfterSeq = $state(0);
   let stopActiveConsumer: (() => void) | null = null;
+  let stopConvWatcher: (() => void) | null = null;
 
   let models = $state<Model[]>([]);
   let selectedModel = $state('');
@@ -197,7 +198,115 @@
       stopActiveConsumer();
       stopActiveConsumer = null;
     }
+    if (stopConvWatcher) {
+      stopConvWatcher();
+      stopConvWatcher = null;
+    }
   });
+
+  // ── cross-browser streaming sync ──────────────────────────────────────────
+  // When another tab or browser sends a message on the same conversation,
+  // the backend publishes a "start" event to the conversation-level bus.
+  // We subscribe here and attach a stream consumer so the spinner starts
+  // immediately without a reload.
+
+  $effect(() => {
+    const id = activeConvId;
+    if (!id) {
+      stopConvWatcher?.();
+      stopConvWatcher = null;
+      return;
+    }
+    stopConvWatcher?.();
+    stopConvWatcher = watchConversation(id);
+    return () => {
+      stopConvWatcher?.();
+      stopConvWatcher = null;
+    };
+  });
+
+  function watchConversation(convId: string): () => void {
+    let aborted = false;
+    let controller = new AbortController();
+
+    const loop = async () => {
+      while (!aborted) {
+        try {
+          const res = await fetch(`/api/conversations/${convId}/events`, {
+            credentials: 'include',
+            signal: controller.signal
+          });
+          if (!res.ok || !res.body) return;
+
+          const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
+          let buf = '';
+          for (;;) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            buf += value;
+            let idx: number;
+            while ((idx = buf.indexOf('\n\n')) >= 0) {
+              const frame = buf.slice(0, idx);
+              buf = buf.slice(idx + 2);
+              const dataLine = frame
+                .split('\n')
+                .find((l) => l.startsWith('data:'))
+                ?.slice(5)
+                .trim();
+              if (!dataLine) continue;
+              try {
+                const ev = JSON.parse(dataLine);
+                await handleConvEvent(ev, convId);
+              } catch { /* skip malformed */ }
+            }
+          }
+        } catch {
+          if (aborted) return;
+          await new Promise((r) => setTimeout(r, 1000));
+          controller = new AbortController();
+        }
+      }
+    };
+
+    loop();
+    return () => { aborted = true; controller.abort(); };
+  }
+
+  async function handleConvEvent(ev: Record<string, any>, convId: string) {
+    if (ev.type !== 'start') return;
+    if (!ev.stream_id || !ev.assistant_message_id) return;
+    // Ignore if we're the one already consuming this stream.
+    if (streaming && activeStreamId === ev.stream_id) return;
+    if (streaming) return;
+
+    const sid: string = ev.stream_id;
+    const aid: string = ev.assistant_message_id;
+    const model: string = ev.model || selectedModel || '';
+
+    streaming = true;
+    streamingMsgId = aid;
+    activeStreamId = sid;
+    streamStartMs = Date.now();
+    streamFirstTokenMs = 0;
+    streamElapsedMs = 0;
+    toolCalls = new Map();
+    toolMsgId = null;
+
+    // Seed the placeholder message in Dexie so the spinner appears immediately.
+    const now = Math.floor(Date.now() / 1000);
+    await db.messages.put({
+      id: aid,
+      conversation_id: convId,
+      client_id: null,
+      role: 'assistant',
+      content: '',
+      model,
+      created_at: now,
+      pending: true
+    });
+
+    attachStreamConsumer(sid, convId, aid, now, 0);
+  }
 
   // ── model selection ───────────────────────────────────────────────────────
 

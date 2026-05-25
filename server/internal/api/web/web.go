@@ -60,6 +60,7 @@ func (s *Server) Mount(r chi.Router) {
 	r.Get("/conversations/{id}", s.handleGetConversation)
 	r.Delete("/conversations/{id}", s.handleDeleteConversation)
 	r.Get("/conversations/{id}/messages", s.handleListMessages)
+	r.Get("/conversations/{id}/events", s.handleConversationEvents)
 
 	r.Get("/keys", s.handleListKeys)
 	r.Post("/keys", s.handleCreateKey)
@@ -483,6 +484,73 @@ func (s *Server) handleRevokeKey(w http.ResponseWriter, r *http.Request) {
 }
 
 // ---- chat / streams ----------------------------------------------------
+
+// handleConversationEvents serves a long-lived SSE feed for a single
+// conversation. It emits a "start" event whenever a new stream begins for that
+// conversation so that observers in other browser tabs/windows can attach their
+// own stream consumer without polling.
+//
+// On connect it immediately replays any currently-running stream as a synthetic
+// "start" event so late joiners don't miss a stream that's already in progress.
+func (s *Server) handleConversationEvents(w http.ResponseWriter, r *http.Request) {
+	u, _ := currentUser(r)
+	convID := chi.URLParam(r, "id")
+	if _, err := s.Q.GetConversation(r.Context(), store.GetConversationParams{ID: convID, UserID: u.ID}); err != nil {
+		writeErr(w, 404, "not_found", "conversation not found")
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.WriteHeader(200)
+	flusher, _ := w.(http.Flusher)
+
+	emitRaw := func(b []byte) {
+		_, _ = w.Write([]byte("data: "))
+		_, _ = w.Write(b)
+		_, _ = w.Write([]byte("\n\n"))
+		if flusher != nil {
+			flusher.Flush()
+		}
+	}
+
+	// Subscribe to the conversation-level bus BEFORE checking DB so we don't
+	// miss a start event that fires between the DB check and subscribe.
+	convBus := s.Hub.Subscriber("conv:" + convID)
+	ch, _, _ := convBus.Subscribe(8)
+
+	// If a stream is already running, send a synthetic start event immediately.
+	if running, err := s.Q.GetRunningStreamForConversation(r.Context(), convID); err == nil {
+		b, _ := json.Marshal(map[string]any{
+			"type":                 "start",
+			"conversation_id":      running.ConversationID,
+			"stream_id":            running.ID,
+			"assistant_message_id": running.AssistantMessageID.String,
+			"model":                running.Model,
+		})
+		emitRaw(b)
+	}
+
+	heartbeat := time.NewTicker(15 * time.Second)
+	defer heartbeat.Stop()
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case <-heartbeat.C:
+			_, _ = w.Write([]byte(": ping\n\n"))
+			if flusher != nil {
+				flusher.Flush()
+			}
+		case ev, ok := <-ch:
+			if !ok {
+				return
+			}
+			emitRaw([]byte(ev.Raw))
+		}
+	}
+}
 
 // handleStreamEvents serves SSE events for a given stream id, optionally
 // resuming from ?after_seq=N. It replays durable chunks from DB first, then

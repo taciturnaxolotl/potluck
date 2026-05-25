@@ -223,3 +223,27 @@ func (q *Queries) SetStreamStatus(ctx context.Context, arg SetStreamStatusParams
 	)
 	return err
 }
+
+// GetRunningStreamForConversation returns the most-recently-started stream for
+// a conversation that is currently running. Used by handleConversationEvents to
+// bootstrap observers who connect after the stream has already started.
+func (q *Queries) GetRunningStreamForConversation(ctx context.Context, conversationID string) (Stream, error) {
+	const q2 = `SELECT id, conversation_id, user_id, assistant_message_id, idempotency_key, model, status, error_code, error_message, started_at, finished_at
+FROM streams WHERE conversation_id = ? AND status = 'running' ORDER BY started_at DESC LIMIT 1`
+	row := q.db.QueryRowContext(ctx, q2, conversationID)
+	var i Stream
+	err := row.Scan(
+		&i.ID,
+		&i.ConversationID,
+		&i.UserID,
+		&i.AssistantMessageID,
+		&i.IdempotencyKey,
+		&i.Model,
+		&i.Status,
+		&i.ErrorCode,
+		&i.ErrorMessage,
+		&i.StartedAt,
+		&i.FinishedAt,
+	)
+	return i, err
+}

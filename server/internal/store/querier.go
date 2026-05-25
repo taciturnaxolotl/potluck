@@ -55,6 +55,7 @@ type Querier interface {
 	GetModelPrice(ctx context.Context, model string) (ModelPrice, error)
 	GetPoolKey(ctx context.Context, id string) (PoolKey, error)
 	GetSession(ctx context.Context, arg GetSessionParams) (Session, error)
+	GetRunningStreamForConversation(ctx context.Context, conversationID string) (Stream, error)
 	GetStream(ctx context.Context, id string) (Stream, error)
 	GetStreamByIdempotencyKey(ctx context.Context, arg GetStreamByIdempotencyKeyParams) (Stream, error)
 	GetUserByEmail(ctx context.Context, email string) (User, error)
