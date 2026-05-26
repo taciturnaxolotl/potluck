@@ -69,11 +69,12 @@
   let streamFirstTokenMs = $state(0);  // 0 = not yet arrived
   let streamElapsedMs = $state(0);     // ticking while streaming
   let streamLiveTokens = $state(0);    // rough token count from delta chars
+  let streamToolPausedMs = $state(0);  // accumulated time waiting for tool results
   let elapsedInterval = 0;
 
   let streamLiveTps = $derived.by(() => {
     if (!streamFirstTokenMs) return 0;
-    const postTtftMs = streamElapsedMs - (streamFirstTokenMs - streamStartMs);
+    const postTtftMs = streamElapsedMs - (streamFirstTokenMs - streamStartMs) - streamToolPausedMs;
     if (postTtftMs <= 0) return 0;
     return Math.round(streamLiveTokens / (postTtftMs / 1000));
   });
@@ -337,6 +338,7 @@
   // and resume/cross-tab flows via attachStreamConsumer.
   function makeStreamHandlers(convId: string, assistantId: string, now: number) {
     let accContent = '';
+    let toolPauseStartMs = 0;
 
     return {
       onEvent: async (ev: StreamEvent) => {
@@ -368,6 +370,8 @@
         }
 
         if (ev.type === 'reasoning' && ev.content) {
+          if (!streamFirstTokenMs) streamFirstTokenMs = Date.now();
+          streamLiveTokens += Math.ceil((ev.content as string).length / 4);
           if (!processMsgId) processMsgId = assistantId;
           const last = processSteps.at(-1);
           if (last?.type === 'reasoning') {
@@ -380,6 +384,8 @@
 
         if (ev.type === 'tool_call') {
           if (!processMsgId) processMsgId = assistantId;
+          const hadPending = processSteps.some((s) => s.type === 'tool' && !s.done);
+          if (!hadPending) toolPauseStartMs = Date.now();
           processSteps = [...processSteps, {
             type: 'tool',
             id: ((ev as any).id as string) || uuid(),
@@ -404,6 +410,11 @@
               ...processSteps.slice(idx + 1)
             ];
           }
+          const stillPending = processSteps.some((s) => s.type === 'tool' && !s.done);
+          if (!stillPending && toolPauseStartMs > 0) {
+            streamToolPausedMs += Date.now() - toolPauseStartMs;
+            toolPauseStartMs = 0;
+          }
         }
 
         if (ev.type === 'done' || ev.type === 'error') {
@@ -412,7 +423,7 @@
           const ttft = streamFirstTokenMs ? streamFirstTokenMs - streamStartMs : undefined;
           const tps =
             completionTokens && streamFirstTokenMs
-              ? completionTokens / ((doneMs - streamFirstTokenMs) / 1000)
+              ? completionTokens / ((doneMs - streamFirstTokenMs - streamToolPausedMs) / 1000)
               : undefined;
 
           if (ev.type === 'done') {
@@ -463,6 +474,7 @@
     errorMsg = null;
     processSteps = [];
     processMsgId = null;
+    streamToolPausedMs = 0;
 
     streamStartMs = Date.now();
     streamFirstTokenMs = 0;
