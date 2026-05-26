@@ -8,6 +8,8 @@
   import { listConversations, listMessages, listModels, type Model } from '$lib/api';
   import { renderMarkdown, renderStreamingMarkdown } from '$lib/markdown';
   import { consume, type StreamEvent } from '$lib/stream';
+  import ModelPicker from './ModelPicker.svelte';
+  import ToolCallBlock from './ToolCallBlock.svelte';
 
   // ── state ─────────────────────────────────────────────────────────────────
 
@@ -22,13 +24,13 @@
 
   let models = $state<Model[]>([]);
   let selectedModel = $state('');
-  let modelPickerOpen = $state(false);
+
 
   let messages = $state<DBMessage[]>([]);
 
   let msgsEl = $state<HTMLElement | null>(null);
   let inputEl = $state<HTMLTextAreaElement | null>(null);
-  let pickerEl = $state<HTMLElement | null>(null);
+
   let atBottom = true;
   let errorMsg = $state<string | null>(null);
 
@@ -37,7 +39,7 @@
   // finished assistant message.
   let toolCalls = $state<Map<string, { name: string; args: string; result: string; done: boolean }>>(new Map());
   let toolMsgId = $state<string | null>(null);
-  let toolExpanded = $state(false);
+
 
   // ── spin cursor (crush-style cycling glyphs) ──────────────────────────────
 
@@ -180,16 +182,23 @@
     // Sync conversations so the layout sidebar has data.
     syncConversations();
 
-    // Resume in-flight stream after reload.
+    // Resume in-flight stream after reload — only if the URL actually matches
+    // the stale conv (i.e. this is a true reload, not a navigation to /chat).
+    // Mismatched stale data means the stream finished or was abandoned; clear it.
+    const urlConvIdAtMount = page.url.searchParams.get('c');
     if (resumeStreamId && resumeConvId && resumeAssistantId) {
-      activeConvId = resumeConvId;
-      streaming = true;
-      activeStreamId = resumeStreamId;
-      streamingMsgId = resumeAssistantId;
-      activeAfterSeq = Number.isFinite(resumeAfterSeq) ? resumeAfterSeq : 0;
-      streamStartMs = Date.now();
-      streamFirstTokenMs = 0;
-      attachStreamConsumer(resumeStreamId, resumeConvId, resumeAssistantId, Math.floor(Date.now() / 1000), resumeAfterSeq);
+      if (urlConvIdAtMount !== resumeConvId) {
+        clearActiveStreamStorage();
+      } else {
+        activeConvId = resumeConvId;
+        streaming = true;
+        activeStreamId = resumeStreamId;
+        streamingMsgId = resumeAssistantId;
+        activeAfterSeq = Number.isFinite(resumeAfterSeq) ? resumeAfterSeq : 0;
+        streamStartMs = Date.now();
+        streamFirstTokenMs = 0;
+        attachStreamConsumer(resumeStreamId, resumeConvId, resumeAssistantId, Math.floor(Date.now() / 1000), resumeAfterSeq);
+      }
     }
   });
 
@@ -226,53 +235,15 @@
   });
 
   function watchConversation(convId: string): () => void {
-    let aborted = false;
-    let controller = new AbortController();
-
-    const loop = async () => {
-      while (!aborted) {
-        try {
-          const res = await fetch(`/api/conversations/${convId}/events`, {
-            credentials: 'include',
-            signal: controller.signal
-          });
-          if (!res.ok || !res.body) return;
-
-          const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
-          let buf = '';
-          for (;;) {
-            const { value, done } = await reader.read();
-            if (done) break;
-            buf += value;
-            let idx: number;
-            while ((idx = buf.indexOf('\n\n')) >= 0) {
-              const frame = buf.slice(0, idx);
-              buf = buf.slice(idx + 2);
-              const dataLine = frame
-                .split('\n')
-                .find((l) => l.startsWith('data:'))
-                ?.slice(5)
-                .trim();
-              if (!dataLine) continue;
-              try {
-                const ev = JSON.parse(dataLine);
-                await handleConvEvent(ev, convId);
-              } catch { /* skip malformed */ }
-            }
-          }
-        } catch {
-          if (aborted) return;
-          await new Promise((r) => setTimeout(r, 1000));
-          controller = new AbortController();
-        }
-      }
-    };
-
-    loop();
-    return () => { aborted = true; controller.abort(); };
+    return consume(
+      () => `/api/conversations/${convId}/events`,
+      { onEvent: (ev) => { handleConvEvent(ev, convId); } },
+      0,
+      { reconnectAlways: true }
+    );
   }
 
-  async function handleConvEvent(ev: Record<string, any>, convId: string) {
+  async function handleConvEvent(ev: StreamEvent, convId: string) {
     if (ev.type !== 'start') return;
     if (!ev.stream_id || !ev.assistant_message_id) return;
     // Ignore if we're the one already consuming this stream.
@@ -310,54 +281,7 @@
 
   // ── model selection ───────────────────────────────────────────────────────
 
-  let freeModels = $derived(models.filter((m) => m.id.startsWith('free/')));
-  let paidModels = $derived(models.filter((m) => !m.id.startsWith('free/')));
 
-  let modelSearch = $state('');
-  let filteredFreeModels = $derived(
-    modelSearch.trim()
-      ? freeModels.filter((m) => (m.label || m.id).toLowerCase().includes(modelSearch.toLowerCase()))
-      : freeModels
-  );
-  let filteredPaidModels = $derived(
-    modelSearch.trim()
-      ? paidModels.filter((m) => (m.label || m.id).toLowerCase().includes(modelSearch.toLowerCase()))
-      : paidModels
-  );
-
-  function saveModel() {
-    localStorage.setItem('chat:model', selectedModel);
-  }
-
-  function modelDisplay(id: string) {
-    if (!id) return 'pick model';
-    const m = models.find((x) => x.id === id);
-    if (m) return m.label || id.replace(/^free\//, '');
-    return id.replace(/^free\//, '');
-  }
-
-  function pickModel(id: string) {
-    selectedModel = id;
-    saveModel();
-    modelPickerOpen = false;
-    modelSearch = '';
-    inputEl?.focus();
-  }
-
-  function closePicker() {
-    modelPickerOpen = false;
-    modelSearch = '';
-  }
-
-  function focusEl(el: HTMLElement) {
-    el.focus();
-  }
-
-  function onWindowClick(e: MouseEvent) {
-    if (modelPickerOpen && pickerEl && !pickerEl.contains(e.target as Node)) {
-      closePicker();
-    }
-  }
 
   // ── input ─────────────────────────────────────────────────────────────────
 
@@ -365,9 +289,6 @@
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       sendMessage();
-    }
-    if (e.key === 'Escape') {
-      modelPickerOpen = false;
     }
   }
 
@@ -392,13 +313,12 @@
     localStorage.removeItem('chat:active_stream_after_seq');
   }
 
-  function attachStreamConsumer(streamId: string, convId: string, assistantId: string, now: number, initialAfterSeq = 0) {
-    if (stopActiveConsumer) {
-      stopActiveConsumer();
-      stopActiveConsumer = null;
-    }
+  // Unified stream event handler used by both sendMessage (after handoff)
+  // and resume/cross-tab flows via attachStreamConsumer.
+  function makeStreamHandlers(convId: string, assistantId: string, now: number) {
+    let accContent = '';
 
-    stopActiveConsumer = consume(streamId, {
+    return {
       onEvent: async (ev: StreamEvent) => {
         if (ev.seq > activeAfterSeq) {
           activeAfterSeq = ev.seq;
@@ -407,14 +327,19 @@
 
         if (ev.type === 'delta' && ev.content) {
           if (!streamFirstTokenMs) streamFirstTokenMs = Date.now();
-          const msg = await db.messages.get(assistantId);
-          const current = msg?.content ?? '';
+          if (!accContent) {
+            // Resume path: seed accContent from DB so replayed deltas append
+            // to existing content rather than overwriting it.
+            const existing = await db.messages.get(assistantId);
+            accContent = existing?.content ?? '';
+          }
+          accContent += ev.content;
           await db.messages.put({
             id: assistantId,
             conversation_id: convId,
             client_id: null,
             role: 'assistant',
-            content: current + ev.content,
+            content: accContent,
             model: selectedModel,
             created_at: now + 1,
             pending: true
@@ -439,11 +364,21 @@
           if (existing) {
             toolCalls.set(tcId, { ...existing, result: ((ev as any).content as string) || '', done: true });
           } else {
+            let matched = false;
             for (const [id, tc] of toolCalls) {
               if (!tc.done) {
                 toolCalls.set(id, { ...tc, result: ((ev as any).content as string) || '', done: true });
+                matched = true;
                 break;
               }
+            }
+            if (!matched) {
+              toolCalls.set(tcId || uuid(), {
+                name: 'tool',
+                args: '',
+                result: ((ev as any).content as string) || '',
+                done: true
+              });
             }
           }
           toolCalls = new Map(toolCalls);
@@ -451,41 +386,48 @@
 
         if (ev.type === 'done' || ev.type === 'error') {
           const doneMs = Date.now();
-          const completionTokens = ev.usage?.output_tokens;
+          const completionTokens = (ev.usage as any)?.completion_tokens ?? ev.usage?.output_tokens;
           const ttft = streamFirstTokenMs ? streamFirstTokenMs - streamStartMs : undefined;
           const tps =
             completionTokens && streamFirstTokenMs
               ? completionTokens / ((doneMs - streamFirstTokenMs) / 1000)
               : undefined;
 
-          await db.messages.where({ id: assistantId }).modify({
-            pending: false,
-            ttft,
-            tps,
-            tokens: completionTokens
-          });
-          await db.conversations.where({ id: convId }).modify({ updated_at: Math.floor(doneMs / 1000) });
-
-          streaming = false;
-          streamingMsgId = null;
-          activeStreamId = null;
-          activeAfterSeq = 0;
-          clearActiveStreamStorage();
-
-          if (stopActiveConsumer) {
-            stopActiveConsumer();
-            stopActiveConsumer = null;
-          }
-
-          if (ev.type === 'error') {
+          if (ev.type === 'done') {
+            await db.messages.where({ id: assistantId }).modify({
+              pending: false,
+              ttft,
+              tps,
+              tokens: completionTokens
+            });
+            await db.conversations.where({ id: convId }).modify({ updated_at: Math.floor(doneMs / 1000) });
+          } else {
+            await db.messages.delete(assistantId);
             errorMsg = ev.error?.message || (ev as any).message || 'stream error';
           }
+          // UI state teardown: onClose (attach path) or finally (inline path).
         }
       },
-      onClose: (reason) => {
+      onClose: (reason: string) => {
         if (reason === 'aborted') return;
+        streaming = false;
+        streamingMsgId = null;
+        activeStreamId = null;
+        activeAfterSeq = 0;
+        clearActiveStreamStorage();
+        // consume() has already terminated when onClose fires — just null the ref.
+        stopActiveConsumer = null;
       }
-    }, initialAfterSeq);
+    };
+  }
+
+  function attachStreamConsumer(streamId: string, convId: string, assistantId: string, now: number, initialAfterSeq = 0) {
+    if (stopActiveConsumer) {
+      stopActiveConsumer();
+      stopActiveConsumer = null;
+    }
+
+    stopActiveConsumer = consume(streamId, makeStreamHandlers(convId, assistantId, now), initialAfterSeq);
   }
 
   async function sendMessage() {
@@ -499,7 +441,7 @@
     errorMsg = null;
     toolCalls = new Map();
     toolMsgId = null;
-    toolExpanded = false;
+
     streamStartMs = Date.now();
     streamFirstTokenMs = 0;
     streamElapsedMs = 0;
@@ -560,10 +502,6 @@
         ...(m.id === tmpUserId ? { client_id: clientId } : {})
       }));
 
-    let resolvedUserId = tmpUserId;
-    let resolvedAssistantId = tmpAssistantId;
-    let accContent = '';
-
     try {
       const res = await fetch('/api/chat', {
         method: 'POST',
@@ -584,6 +522,7 @@
 
       const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
       let buf = '';
+      let resolvedHandlers: ReturnType<typeof makeStreamHandlers> | null = null;
 
       outer: for (;;) {
         const { value, done } = await reader.read();
@@ -609,177 +548,92 @@
             continue;
           }
 
-          // Keep activeAfterSeq current so resume picks up from the right spot.
           if (typeof ev.seq === 'number' && ev.seq > activeAfterSeq) {
             activeAfterSeq = ev.seq;
-            if (activeStreamId) {
-              localStorage.setItem('chat:active_stream_after_seq', String(activeAfterSeq));
-            }
+            localStorage.setItem('chat:active_stream_after_seq', String(activeAfterSeq));
           }
 
-          switch (ev.type) {
-            case 'start': {
-              const serverConvId: string = ev.conversation_id;
-              const serverUserId: string = ev.user_message_id;
-              const serverAssistantId: string = ev.assistant_message_id;
-              const serverStreamId: string | undefined = ev.stream_id;
+          if (ev.type === 'start') {
+            const serverConvId: string = ev.conversation_id;
+            const serverUserId: string = ev.user_message_id;
+            const serverAssistantId: string = ev.assistant_message_id || tmpAssistantId;
+            const serverStreamId: string | undefined = ev.stream_id;
+            const localConvId = convId!;
 
-              const outerConvId: string = convId!;
-
-              // Resolve all ID swaps in a single transaction so the live query
-              // sees exactly one consistent snapshot.
-              await db.transaction('rw', db.conversations, db.messages, async () => {
-                // New conversation ID swap.
-                if (isNewConv && serverConvId && serverConvId !== outerConvId) {
-                  const tmpConv = await db.conversations.get(outerConvId);
-                  if (tmpConv) {
-                    await db.conversations.delete(outerConvId);
-                    await db.conversations.put({ ...tmpConv, id: serverConvId });
-                    const affected = await db.messages
-                      .where('conversation_id')
-                      .equals(outerConvId)
-                      .toArray();
-                    await db.messages.bulkPut(affected.map((m) => ({ ...m, conversation_id: serverConvId })));
-                    await db.messages.where('conversation_id').equals(outerConvId).delete();
-                  }
+            await db.transaction('rw', db.conversations, db.messages, async () => {
+              if (isNewConv && serverConvId && serverConvId !== localConvId) {
+                const tmpConv = await db.conversations.get(localConvId);
+                if (tmpConv) {
+                  await db.conversations.delete(localConvId);
+                  await db.conversations.put({ ...tmpConv, id: serverConvId });
+                  const affected = await db.messages
+                    .where('conversation_id')
+                    .equals(localConvId)
+                    .toArray();
+                  await db.messages.bulkPut(affected.map((m) => ({ ...m, conversation_id: serverConvId })));
+                  await db.messages.where('conversation_id').equals(localConvId).delete();
                 }
-
-                // User message ID swap.
-                if (serverUserId && serverUserId !== tmpUserId) {
-                  const old = await db.messages.get(tmpUserId);
-                  if (old) {
-                    await db.messages.delete(tmpUserId);
-                    await db.messages.put({ ...old, id: serverUserId, pending: false });
-                    resolvedUserId = serverUserId;
-                  }
-                } else {
-                  await db.messages.where({ id: resolvedUserId }).modify({ pending: false });
-                }
-
-                // Assistant message ID swap.
-                if (serverAssistantId && serverAssistantId !== tmpAssistantId) {
-                  const old = await db.messages.get(tmpAssistantId);
-                  if (old) {
-                    await db.messages.delete(tmpAssistantId);
-                    await db.messages.put({ ...old, id: serverAssistantId });
-                    resolvedAssistantId = serverAssistantId;
-                    streamingMsgId = serverAssistantId;
-                  }
-                }
-              });
-
-              if (isNewConv && serverConvId && serverConvId !== outerConvId) {
-                convId = serverConvId;
-                activeConvId = serverConvId;
-                goto(`/chat?c=${serverConvId}`, { replaceState: true, noScroll: true, keepFocus: true });
               }
 
-              // Save stream metadata for resume-on-reload — don't hand off mid-stream.
-              if (serverStreamId) {
-                activeStreamId = serverStreamId;
-                localStorage.setItem('chat:active_stream_id', serverStreamId);
-                localStorage.setItem('chat:active_stream_conv_id', convId);
-                localStorage.setItem('chat:active_stream_assistant_id', resolvedAssistantId);
-                localStorage.setItem('chat:active_stream_after_seq', String(activeAfterSeq));
-              }
-
-              break;
-            }
-
-            case 'delta': {
-              if (!streamFirstTokenMs) {
-                streamFirstTokenMs = Date.now();
-              }
-              accContent += ev.content as string;
-              await db.messages.put({
-                id: resolvedAssistantId,
-                conversation_id: convId,
-                client_id: null,
-                role: 'assistant',
-                content: accContent,
-                model: selectedModel,
-                created_at: now + 1,
-                pending: true
-              });
-              break;
-            }
-
-            case 'done': {
-              const completionTokens: number | undefined = (ev.usage as any)?.completion_tokens;
-              const ttft = streamFirstTokenMs ? streamFirstTokenMs - streamStartMs : undefined;
-              const doneMs = Date.now();
-              const tps =
-                completionTokens && streamFirstTokenMs
-                  ? completionTokens / ((doneMs - streamFirstTokenMs) / 1000)
-                  : undefined;
-              await db.messages.where({ id: resolvedAssistantId }).modify({
-                pending: false,
-                ttft,
-                tps,
-                tokens: completionTokens
-              });
-              await db.conversations.where({ id: convId }).modify({ updated_at: Math.floor(doneMs / 1000) });
-              activeStreamId = null;
-              activeAfterSeq = 0;
-              clearActiveStreamStorage();
-              break outer;
-            }
-
-            case 'error': {
-              await db.messages.delete(resolvedAssistantId);
-              errorMsg = ev.message as string;
-              activeStreamId = null;
-              activeAfterSeq = 0;
-              clearActiveStreamStorage();
-              break outer;
-            }
-
-            case 'tool_call': {
-              if (!toolMsgId) toolMsgId = resolvedAssistantId;
-              const tcId = (ev.id as string) || uuid();
-              toolCalls.set(tcId, {
-                name: (ev.name as string) || 'tool',
-                args: (ev.arguments as string) || '',
-                result: '',
-                done: false
-              });
-              toolCalls = new Map(toolCalls);
-              break;
-            }
-
-            case 'tool_result': {
-              const tcId = (ev.tool_call_id as string) || '';
-              const existing = tcId ? toolCalls.get(tcId) : null;
-              if (existing) {
-                toolCalls.set(tcId, { ...existing, result: (ev.content as string) || '', done: true });
+              if (serverUserId && serverUserId !== tmpUserId) {
+                const old = await db.messages.get(tmpUserId);
+                if (old) {
+                  await db.messages.delete(tmpUserId);
+                  await db.messages.put({ ...old, id: serverUserId, pending: false });
+                }
               } else {
-                for (const [id, tc] of toolCalls) {
-                  if (!tc.done) {
-                    toolCalls.set(id, { ...tc, result: (ev.content as string) || '', done: true });
-                    break;
-                  }
-                }
-                if (![...toolCalls.values()].some(tc => tc.done && tc.result)) {
-                  toolCalls.set(tcId || uuid(), {
-                    name: 'tool',
-                    args: '',
-                    result: (ev.content as string) || '',
-                    done: true
-                  });
+                await db.messages.where({ id: tmpUserId }).modify({ pending: false });
+              }
+
+              if (serverAssistantId && serverAssistantId !== tmpAssistantId) {
+                const old = await db.messages.get(tmpAssistantId);
+                if (old) {
+                  await db.messages.delete(tmpAssistantId);
+                  await db.messages.put({ ...old, id: serverAssistantId });
+                  streamingMsgId = serverAssistantId;
                 }
               }
-              toolCalls = new Map(toolCalls);
-              break;
+            });
+
+            if (isNewConv && serverConvId && serverConvId !== localConvId) {
+              convId = serverConvId;
+              activeConvId = serverConvId;
+              goto(`/chat?c=${serverConvId}`, { replaceState: true, noScroll: true, keepFocus: true });
             }
+
+            if (serverStreamId) {
+              activeStreamId = serverStreamId;
+              localStorage.setItem('chat:active_stream_id', serverStreamId);
+              localStorage.setItem('chat:active_stream_conv_id', convId);
+              localStorage.setItem('chat:active_stream_assistant_id', streamingMsgId || tmpAssistantId);
+              localStorage.setItem('chat:active_stream_after_seq', String(activeAfterSeq));
+            }
+
+            resolvedHandlers = makeStreamHandlers(convId, streamingMsgId || tmpAssistantId, now);
+            continue;
+          }
+
+          if (ev.type === 'error' && !resolvedHandlers) {
+            await db.messages.delete(tmpAssistantId);
+            errorMsg = ev.message as string;
+            return;
+          }
+
+          if (resolvedHandlers) {
+            await resolvedHandlers.onEvent(ev as StreamEvent);
+            if (ev.type === 'done' || ev.type === 'error') break outer;
           }
         }
       }
     } catch (err) {
-      await db.messages.delete(resolvedAssistantId);
+      await db.messages.delete(streamingMsgId || tmpAssistantId);
       errorMsg = err instanceof Error ? err.message : 'Something went wrong';
     } finally {
       streaming = false;
       streamingMsgId = null;
+      activeStreamId = null;
+      activeAfterSeq = 0;
+      clearActiveStreamStorage();
     }
   }
 
@@ -794,8 +648,6 @@
     return new Date(unix * 1000).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
   }
 </script>
-
-<svelte:window onclick={onWindowClick} />
 
 <svelte:head>
   <title>chat · potluck</title>
@@ -828,62 +680,9 @@
             <div class="assistant-body">
               <div class="assistant-bubble" class:pending={msg.pending}>
                 {#if msg.id === toolMsgId && toolCalls.size > 0}
-                  {@const entries = [...toolCalls.entries()]}
-                  {@const running = entries.filter(([, tc]) => !tc.done)}
-                  {@const done = entries.filter(([, tc]) => tc.done)}
-                  <div class="tool-block">
-                    <!-- Collapsed summary line -->
-                    <button
-                      class="tool-summary"
-                      onclick={() => (toolExpanded = !toolExpanded)}
-                      aria-expanded={toolExpanded}
-                    >
-                      <span class="tool-summary-left">
-                        {#if running.length > 0}
-                          <span class="tool-spinner"></span>
-                          <span class="tool-summary-label">Running {running.map(([, tc]) => tc.name).join(', ')}…</span>
-                        {:else}
-                          <span class="tool-check">✓</span>
-                          <span class="tool-summary-label">Ran {entries.map(([, tc]) => tc.name).join(', ')}</span>
-                        {/if}
-                      </span>
-                      <svg class="tool-chevron" class:tool-chevron-open={toolExpanded} width="10" height="6" viewBox="0 0 10 6" fill="none">
-                        <path d="M1 1l4 4 4-4" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
-                      </svg>
-                    </button>
-
-                    <!-- Expanded detail -->
-                    {#if toolExpanded}
-                      <div class="tool-detail">
-                        {#each entries as [id, tc] (id)}
-                          <div class="tool-detail-item" class:tool-done={tc.done}>
-                            <div class="tool-detail-head">
-                              {#if tc.done}
-                                <span class="tool-check">✓</span>
-                              {:else}
-                                <span class="tool-spinner"></span>
-                              {/if}
-                              <span class="tool-detail-name">{tc.name}</span>
-                            </div>
-                            {#if tc.args}
-                              <details class="tool-nested">
-                                <summary>arguments</summary>
-                                <pre class="tool-pre">{tc.args}</pre>
-                              </details>
-                            {/if}
-                            {#if tc.result}
-                              <details class="tool-nested" open>
-                                <summary>result</summary>
-                                <pre class="tool-pre">{tc.result}</pre>
-                              </details>
-                            {/if}
-                          </div>
-                        {/each}
-                      </div>
-                    {/if}
-                  </div>
+                  <ToolCallBlock {toolCalls} />
                 {/if}
-                {#if msg.pending && msg.id === streamingMsgId}
+                {#if streaming && msg.pending}
                   {@html renderStreamingMarkdown(msg.content)}
                 {:else if msg.content}
                   {@html renderMarkdown(msg.content)}
@@ -891,7 +690,7 @@
                 {/if}
               </div>
               <div class="msg-meta">
-                {#if msg.pending && msg.id === streamingMsgId}
+                {#if streaming && msg.pending}
                   <span class="spin-cursor">{spinChars}</span>
                 {/if}
                 {#if msg.model && typeof msg.model === 'string'}
@@ -941,70 +740,16 @@
         rows={1}
       ></textarea>
       <div class="input-footer">
-        <!-- Model picker -->
-        <div class="model-picker" bind:this={pickerEl}>
-          <button
-            class="model-chip"
-            onclick={() => (modelPickerOpen = !modelPickerOpen)}
-            disabled={streaming}
-            aria-haspopup="listbox"
-            aria-expanded={modelPickerOpen}
-          >
-            {#if selectedModel?.startsWith('free/')}
-              <span class="tier-dot free" aria-hidden="true"></span>
-            {:else if selectedModel}
-              <span class="tier-dot pool" aria-hidden="true"></span>
-            {/if}
-            <span class="chip-label">{modelDisplay(selectedModel)}</span>
-            <svg class="chip-caret" width="8" height="5" viewBox="0 0 8 5" fill="none" aria-hidden="true">
-              <path d="M1 1l3 3 3-3" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
-            </svg>
-          </button>
-
-          {#if modelPickerOpen}
-            <div class="model-menu" role="listbox">
-              <div class="model-search-wrap">
-                <input
-                  class="model-search"
-                  type="search"
-                  placeholder="search models…"
-                  bind:value={modelSearch}
-                  onkeydown={(e) => { if (e.key === 'Escape') closePicker(); }}
-                  use:focusEl
-                />
-              </div>
-              {#if filteredFreeModels.length > 0}
-                <div class="model-group-hdr">free</div>
-                {#each filteredFreeModels as m (m.id)}
-                  <button
-                    class="model-opt"
-                    class:sel={selectedModel === m.id}
-                    role="option"
-                    aria-selected={selectedModel === m.id}
-                    onclick={() => pickModel(m.id)}
-                  >{m.label || m.id.replace('free/', '')}</button>
-                {/each}
-              {/if}
-              {#if filteredPaidModels.length > 0}
-                <div class="model-group-hdr">pool</div>
-                {#each filteredPaidModels as m (m.id)}
-                  <button
-                    class="model-opt"
-                    class:sel={selectedModel === m.id}
-                    role="option"
-                    aria-selected={selectedModel === m.id}
-                    onclick={() => pickModel(m.id)}
-                  >{m.label || m.id}</button>
-                {/each}
-              {/if}
-              {#if models.length === 0}
-                <span class="model-opt" style="opacity:0.5;cursor:default">loading…</span>
-              {:else if filteredFreeModels.length === 0 && filteredPaidModels.length === 0}
-                <span class="model-opt" style="opacity:0.5;cursor:default">no matches</span>
-              {/if}
-            </div>
-          {/if}
-        </div>
+        <ModelPicker
+          {models}
+          selectedModel={selectedModel}
+          disabled={streaming}
+          onPick={(id) => {
+            selectedModel = id;
+            localStorage.setItem('chat:model', id);
+            inputEl?.focus();
+          }}
+        />
 
         <button
           class="send-btn"
@@ -1126,128 +871,7 @@
     color: var(--text-faint);
   }
 
-  /* ── tool calls (Claude-style collapsible) ──────────────────────────────── */
-  .tool-block {
-    margin-bottom: 0.65rem;
-    border: 1px solid var(--accent);
-    border-radius: 0.45rem;
-    overflow: hidden;
-    font-family: var(--font-mono);
-    font-size: 0.7rem;
-  }
 
-  .tool-summary {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    width: 100%;
-    padding: 0.45rem 0.65rem;
-    background: color-mix(in srgb, var(--accent) 6%, transparent);
-    border: none;
-    cursor: pointer;
-    color: var(--text-muted);
-    gap: 0.5rem;
-  }
-  .tool-summary:hover {
-    background: color-mix(in srgb, var(--accent) 10%, transparent);
-  }
-  .tool-summary-left {
-    display: flex;
-    align-items: center;
-    gap: 0.4rem;
-    min-width: 0;
-    overflow: hidden;
-  }
-  .tool-summary-label {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    text-align: left;
-  }
-  .tool-chevron {
-    flex-shrink: 0;
-    opacity: 0.5;
-    transition: transform 0.15s;
-    color: var(--text-muted);
-  }
-  .tool-chevron-open {
-    transform: rotate(180deg);
-  }
-
-  .tool-detail {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-    padding: 0.5rem 0.65rem 0.65rem;
-    border-top: 1px solid color-mix(in srgb, var(--accent) 12%, transparent);
-    background: color-mix(in srgb, var(--accent) 3%, transparent);
-  }
-  .tool-detail-item {
-    color: var(--text-faint);
-    font-size: 0.68rem;
-  }
-  .tool-detail-item.tool-done {
-    color: var(--text-muted);
-  }
-  .tool-detail-head {
-    display: flex;
-    align-items: center;
-    gap: 0.35rem;
-    font-weight: 500;
-    margin-bottom: 0.15rem;
-  }
-  .tool-detail-name {
-    text-transform: capitalize;
-  }
-
-  .tool-nested {
-    margin-top: 0.2rem;
-    margin-left: 1rem;
-    font-size: 0.64rem;
-  }
-  .tool-nested > summary {
-    cursor: pointer;
-    color: var(--text-faint);
-    opacity: 0.65;
-    padding: 0.1rem 0;
-    user-select: none;
-  }
-  .tool-nested > summary:hover {
-    opacity: 0.9;
-  }
-
-  .tool-pre {
-    margin: 0.2rem 0 0;
-    padding: 0.4rem 0.55rem;
-    background: light-dark(#f0eceb, #25282b);
-    border-radius: 0.3rem;
-    overflow-x: auto;
-    white-space: pre-wrap;
-    word-break: break-word;
-    max-height: 220px;
-    overflow-y: auto;
-    color: var(--text);
-    font-size: 0.62rem;
-    line-height: 1.45;
-  }
-
-  .tool-spinner {
-    width: 0.65rem;
-    height: 0.65rem;
-    border: 1.5px solid var(--accent);
-    border-top-color: transparent;
-    border-radius: 50%;
-    animation: tool-spin 0.6s linear infinite;
-    flex-shrink: 0;
-  }
-  .tool-check {
-    color: var(--accent);
-    font-size: 0.7rem;
-    flex-shrink: 0;
-  }
-  @keyframes tool-spin {
-    to { transform: rotate(360deg); }
-  }
 
   .msg-meta {
     display: flex;
@@ -1460,131 +1084,7 @@
     margin-top: 0.4rem;
   }
 
-  /* ── model picker ───────────────────────────────────────────────────────── */
-  .model-picker {
-    position: relative;
-  }
 
-  .model-chip {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.3rem;
-    background: none;
-    border: 1px solid var(--border);
-    border-radius: 5px;
-    padding: 0.18rem 0.5rem 0.18rem 0.4rem;
-    cursor: pointer;
-    font-family: var(--font-mono);
-    font-size: 0.7rem;
-    color: var(--text-muted);
-    transition: border-color 80ms, color 80ms;
-    white-space: nowrap;
-  }
-  .model-chip:hover:not(:disabled) {
-    border-color: color-mix(in srgb, var(--accent) 50%, transparent);
-    color: var(--text);
-  }
-  .model-chip:disabled {
-    opacity: 0.5;
-    cursor: default;
-  }
-
-  .tier-dot {
-    width: 5px;
-    height: 5px;
-    border-radius: 50%;
-    flex-shrink: 0;
-  }
-  .tier-dot.free  { background: #4ade80; }
-  .tier-dot.pool  { background: var(--accent); }
-
-  .chip-label {
-    max-width: 180px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  .chip-caret {
-    opacity: 0.5;
-    flex-shrink: 0;
-  }
-
-  .model-menu {
-    position: absolute;
-    bottom: calc(100% + 6px);
-    left: 0;
-    background: var(--bg-surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-md);
-    padding: 0.3rem;
-    min-width: 190px;
-    max-height: 260px;
-    overflow-y: auto;
-    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.12);
-    z-index: 200;
-  }
-
-  .model-group-hdr {
-    font-family: var(--font-sans);
-    font-size: 10px;
-    font-weight: 600;
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
-    color: var(--text-muted);
-    padding: 0.4rem 0.5rem 0.2rem;
-  }
-
-  .model-opt {
-    display: block;
-    width: 100%;
-    text-align: left;
-    background: none;
-    border: none;
-    border-radius: var(--radius-sm);
-    padding: 0.32rem 0.5rem;
-    font-family: var(--font-mono);
-    font-size: 0.75rem;
-    color: var(--text);
-    cursor: pointer;
-    transition: background 60ms;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  .model-opt:hover { background: var(--bg-page); }
-  .model-opt.sel {
-    color: var(--accent);
-    font-weight: 500;
-  }
-
-  .model-search-wrap {
-    padding: 0.3rem 0.3rem 0.2rem;
-    border-bottom: 1px solid var(--border);
-    margin-bottom: 0.2rem;
-  }
-
-  .model-search {
-    display: block;
-    width: 100%;
-    box-sizing: border-box;
-    background: var(--bg-page);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    padding: 0.28rem 0.5rem;
-    font-family: var(--font-mono);
-    font-size: 0.75rem;
-    color: var(--text);
-    outline: none;
-  }
-  .model-search::placeholder { color: var(--text-faint); }
-  .model-search:focus { border-color: var(--accent); }
-
-  .model-no-match {
-    padding: 0.5rem 0.5rem;
-    font-size: 0.75rem;
-    color: var(--text-muted);
-    font-family: var(--font-sans);
-  }
 
   /* ── send button ────────────────────────────────────────────────────────── */
   .send-btn {
