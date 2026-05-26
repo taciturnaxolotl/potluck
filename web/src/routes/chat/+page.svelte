@@ -69,12 +69,20 @@
   let streamStartMs = $state(0);
   let streamFirstTokenMs = $state(0);  // 0 = not yet arrived
   let streamElapsedMs = $state(0);     // ticking while streaming
+  let streamLiveTokens = $state(0);    // rough token count from delta chars
   let elapsedInterval = 0;
 
+  let streamLiveTps = $derived.by(() => {
+    if (!streamFirstTokenMs) return 0;
+    const postTtftMs = streamElapsedMs - (streamFirstTokenMs - streamStartMs);
+    if (postTtftMs <= 0) return 0;
+    return Math.round(streamLiveTokens / (postTtftMs / 1000));
+  });
+
   $effect(() => {
-    if (streaming && streamFirstTokenMs > 0) {
+    if (streaming) {
       elapsedInterval = setInterval(() => {
-        streamElapsedMs = Date.now() - streamFirstTokenMs;
+        streamElapsedMs = Date.now() - streamStartMs;
       }, 100) as unknown as number;
     } else {
       clearInterval(elapsedInterval);
@@ -92,7 +100,15 @@
     }
     const sub = liveQuery(() =>
       db.messages.where('conversation_id').equals(id).sortBy('created_at')
-    ).subscribe({ next: (r) => (messages = r as DBMessage[]), error: () => {} });
+    ).subscribe({
+      next: (r) => {
+        // During streaming, suppress empty results: the tmpConvId→serverConvId
+        // migration fires the old subscription with [] before Svelte can
+        // unsubscribe it, causing a brief flash with no messages.
+        if (r.length > 0 || !streaming) messages = r as DBMessage[];
+      },
+      error: () => {}
+    });
     return () => sub.unsubscribe();
   });
 
@@ -260,6 +276,7 @@
     streamStartMs = Date.now();
     streamFirstTokenMs = 0;
     streamElapsedMs = 0;
+    streamLiveTokens = 0;
     toolCalls = new Map();
     toolMsgId = null;
 
@@ -327,6 +344,7 @@
 
         if (ev.type === 'delta' && ev.content) {
           if (!streamFirstTokenMs) streamFirstTokenMs = Date.now();
+          streamLiveTokens += Math.ceil(ev.content.length / 4);
           if (!accContent) {
             // Resume path: seed accContent from DB so replayed deltas append
             // to existing content rather than overwriting it.
@@ -445,6 +463,7 @@
     streamStartMs = Date.now();
     streamFirstTokenMs = 0;
     streamElapsedMs = 0;
+    streamLiveTokens = 0;
 
     const clientId = uuid();
     const now = Math.floor(Date.now() / 1000);
@@ -682,7 +701,7 @@
                 {#if msg.id === toolMsgId && toolCalls.size > 0}
                   <ToolCallBlock {toolCalls} />
                 {/if}
-                {#if streaming && msg.pending}
+                {#if msg.id === streamingMsgId}
                   {@html renderStreamingMarkdown(msg.content)}
                 {:else if msg.content}
                   {@html renderMarkdown(msg.content)}
@@ -690,21 +709,25 @@
                 {/if}
               </div>
               <div class="msg-meta">
-                {#if streaming && msg.pending}
+                {#if msg.id === streamingMsgId}
                   <span class="spin-cursor">{spinChars}</span>
                 {/if}
-                {#if msg.model && typeof msg.model === 'string'}
-                  <span class="meta-model">{msg.model.replace('free/', '')}</span>
+                {#if (typeof msg.model === 'string' && msg.model) || msg.id === streamingMsgId}
+                  <span class="meta-model">{(typeof msg.model === 'string' && msg.model ? msg.model : selectedModel).replace('free/', '')}</span>
                 {/if}
-                {#if msg.id === streamingMsgId && streamFirstTokenMs > 0}
-                  <span class="meta-stat">{((streamFirstTokenMs - streamStartMs) / 1000).toFixed(2)}s ttft</span>
+                {#if msg.id === streamingMsgId}
+                  {#if streamFirstTokenMs > 0}
+                    <span class="meta-stat">{((streamFirstTokenMs - streamStartMs) / 1000).toFixed(2)}s ttft</span>
+                  {/if}
                   {#if streaming}
                     <span class="meta-stat">{(streamElapsedMs / 1000).toFixed(1)}s</span>
                   {/if}
                 {:else if msg.ttft}
                   <span class="meta-stat">{(msg.ttft / 1000).toFixed(2)}s ttft</span>
                 {/if}
-                {#if msg.tps && msg.id !== streamingMsgId}
+                {#if msg.id === streamingMsgId}
+                  <span class="meta-stat">{streamLiveTps > 0 ? streamLiveTps + ' tok/s' : '??? tok/s'}</span>
+                {:else if msg.tps}
                   <span class="meta-stat">{msg.tps.toFixed(0)} tok/s</span>
                 {/if}
                 {#if msg.tokens && msg.id !== streamingMsgId}
@@ -715,6 +738,18 @@
           </div>
         {/if}
       {/each}
+      {#if streaming && streamingMsgId && !messages.some((m) => m.id === streamingMsgId)}
+        <div class="msg assistant">
+          <div class="assistant-body">
+            <div class="assistant-bubble pending"></div>
+            <div class="msg-meta">
+              <span class="spin-cursor">{spinChars}</span>
+              <span class="meta-model">{selectedModel.replace('free/', '')}</span>
+              <span class="meta-stat">{(streamElapsedMs / 1000).toFixed(1)}s</span>
+            </div>
+          </div>
+        </div>
+      {/if}
     {/if}
   </div>
 
