@@ -1,8 +1,14 @@
 # potluck
 
-a communal token pool for Pioneer AI. everyone brings a key, everyone gets an equal share.
+![the dashboard](https://l4.dunkirk.sh/i/dYUZzVMz9Er4.webp)
+
+a communal token pool for Pioneer AI. designed on the [hackclub](https://hackclub.com/slack) slack to share api credits :)
 
 The canonical repo is hosted on tangled at [`dunkirk.sh/potluck`](https://tangled.org/dunkirk.sh/potluck)
+
+there is also a neat chat interface that supports toolcalls
+
+![the chat interface](https://l4.dunkirk.sh/i/_TEYXZtiPL5t.webp)
 
 <p align="center">
     <img src="https://raw.githubusercontent.com/taciturnaxolotl/carriage/main/.github/images/line-break.svg" />
