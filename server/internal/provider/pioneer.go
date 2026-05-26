@@ -92,13 +92,14 @@ type ToolResult struct {
 
 // Chunk is one decoded SSE event from the provider.
 type Chunk struct {
-	Raw       []byte         // the verbatim JSON for re-emission to clients
-	Delta     string         // assistant content delta, if any
-	ToolCalls []ToolCallDelta // tool call deltas, if any
-	FinishReason string      // "stop", "tool_calls", etc.
-	Usage     *Usage         // populated on the final chunk when include_usage is on
-	Done      bool           // true once we see "[DONE]"
-	Extra     map[string]any // anything else we care to inspect later
+	Raw              []byte          // the verbatim JSON for re-emission to clients
+	Delta            string          // assistant content delta, if any
+	ReasoningDelta   string          // reasoning/thinking content delta, if any
+	ToolCalls        []ToolCallDelta // tool call deltas, if any
+	FinishReason     string          // "stop", "tool_calls", etc.
+	Usage            *Usage          // populated on the final chunk when include_usage is on
+	Done             bool            // true once we see "[DONE]"
+	Extra            map[string]any  // anything else we care to inspect later
 }
 
 // ToolCallDelta represents an incremental tool call from a streaming response.
@@ -231,8 +232,9 @@ func (c *Client) StreamChatRaw(ctx context.Context, body []byte) (<-chan Chunk, 
 type rawChunk struct {
 	Choices []struct {
 		Delta struct {
-			Content   string           `json:"content"`
-			ToolCalls []ToolCallDelta  `json:"tool_calls,omitempty"`
+			Content          string          `json:"content"`
+			ReasoningContent string          `json:"reasoning_content,omitempty"`
+			ToolCalls        []ToolCallDelta `json:"tool_calls,omitempty"`
 		} `json:"delta"`
 		FinishReason *string `json:"finish_reason,omitempty"`
 	} `json:"choices"`
@@ -257,6 +259,7 @@ func decodeChunk(payload []byte) (Chunk, error) {
 	c := Chunk{Raw: append([]byte(nil), payload...), Usage: rc.Usage}
 	if len(rc.Choices) > 0 {
 		c.Delta = rc.Choices[0].Delta.Content
+		c.ReasoningDelta = rc.Choices[0].Delta.ReasoningContent
 		if len(rc.Choices[0].Delta.ToolCalls) > 0 {
 			c.ToolCalls = rc.Choices[0].Delta.ToolCalls
 		}

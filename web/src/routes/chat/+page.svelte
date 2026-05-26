@@ -9,7 +9,7 @@
   import { renderMarkdown, renderStreamingMarkdown } from '$lib/markdown';
   import { consume, type StreamEvent } from '$lib/stream';
   import ModelPicker from './ModelPicker.svelte';
-  import ToolCallBlock from './ToolCallBlock.svelte';
+  import ProcessBlock, { type ProcessStep } from './ProcessBlock.svelte';
 
   // ── state ─────────────────────────────────────────────────────────────────
 
@@ -34,11 +34,10 @@
   let atBottom = true;
   let errorMsg = $state<string | null>(null);
 
-  // Tool call tracking during streaming — keyed by tool_call_id.
-  // Persists past streaming=false so the expandable widget renders on the
-  // finished assistant message.
-  let toolCalls = $state<Map<string, { name: string; args: string; result: string; done: boolean }>>(new Map());
-  let toolMsgId = $state<string | null>(null);
+  // Ordered process steps (reasoning + tool calls) for the active stream.
+  // Persists past streaming=false so ProcessBlock stays rendered.
+  let processSteps = $state<ProcessStep[]>([]);
+  let processMsgId = $state<string | null>(null);
 
 
   // ── spin cursor (crush-style cycling glyphs) ──────────────────────────────
@@ -281,8 +280,8 @@
     streamFirstTokenMs = 0;
     streamElapsedMs = 0;
     streamLiveTokens = 0;
-    toolCalls = new Map();
-    toolMsgId = null;
+    processSteps = [];
+    processMsgId = null;
 
     // Seed the placeholder message in Dexie so the spinner appears immediately.
     const now = Math.floor(Date.now() / 1000);
@@ -368,42 +367,43 @@
           });
         }
 
+        if (ev.type === 'reasoning' && ev.content) {
+          if (!processMsgId) processMsgId = assistantId;
+          const last = processSteps.at(-1);
+          if (last?.type === 'reasoning') {
+            last.content += ev.content as string;
+            processSteps = [...processSteps];
+          } else {
+            processSteps = [...processSteps, { type: 'reasoning', content: ev.content as string }];
+          }
+        }
+
         if (ev.type === 'tool_call') {
-          if (!toolMsgId) toolMsgId = assistantId;
-          const tcId = (ev as any).id as string || uuid();
-          toolCalls.set(tcId, {
+          if (!processMsgId) processMsgId = assistantId;
+          processSteps = [...processSteps, {
+            type: 'tool',
+            id: ((ev as any).id as string) || uuid(),
             name: ((ev as any).name as string) || 'tool',
             args: ((ev as any).arguments as string) || '',
             result: '',
             done: false
-          });
-          toolCalls = new Map(toolCalls);
+          }];
         }
 
         if (ev.type === 'tool_result') {
           const tcId = ((ev as any).tool_call_id as string) || '';
-          const existing = tcId ? toolCalls.get(tcId) : null;
-          if (existing) {
-            toolCalls.set(tcId, { ...existing, result: ((ev as any).content as string) || '', done: true });
-          } else {
-            let matched = false;
-            for (const [id, tc] of toolCalls) {
-              if (!tc.done) {
-                toolCalls.set(id, { ...tc, result: ((ev as any).content as string) || '', done: true });
-                matched = true;
-                break;
-              }
-            }
-            if (!matched) {
-              toolCalls.set(tcId || uuid(), {
-                name: 'tool',
-                args: '',
-                result: ((ev as any).content as string) || '',
-                done: true
-              });
-            }
+          const result = ((ev as any).content as string) || '';
+          const idx = tcId
+            ? processSteps.findIndex((s) => s.type === 'tool' && s.id === tcId)
+            : processSteps.findLastIndex((s) => s.type === 'tool' && !s.done);
+          if (idx >= 0) {
+            const step = processSteps[idx] as Extract<ProcessStep, { type: 'tool' }>;
+            processSteps = [
+              ...processSteps.slice(0, idx),
+              { ...step, result, done: true },
+              ...processSteps.slice(idx + 1)
+            ];
           }
-          toolCalls = new Map(toolCalls);
         }
 
         if (ev.type === 'done' || ev.type === 'error') {
@@ -461,8 +461,8 @@
     streaming = true;
     atBottom = true;
     errorMsg = null;
-    toolCalls = new Map();
-    toolMsgId = null;
+    processSteps = [];
+    processMsgId = null;
 
     streamStartMs = Date.now();
     streamFirstTokenMs = 0;
@@ -702,8 +702,8 @@
           <div class="msg assistant">
             <div class="assistant-body">
               <div class="assistant-bubble" class:pending={msg.pending}>
-                {#if msg.id === toolMsgId && toolCalls.size > 0}
-                  <ToolCallBlock {toolCalls} />
+                {#if msg.id === processMsgId && processSteps.length > 0}
+                  <ProcessBlock steps={processSteps} streaming={msg.id === streamingMsgId} />
                 {/if}
                 {#if msg.id === streamingMsgId}
                   {@html renderStreamingMarkdown(msg.content)}

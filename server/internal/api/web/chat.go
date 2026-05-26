@@ -337,6 +337,9 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 					streamDone = true
 					continue
 				}
+				if ch.ReasoningDelta != "" {
+					emit("reasoning", map[string]any{"type": "reasoning", "content": ch.ReasoningDelta})
+				}
 				if ch.Delta != "" {
 					full.WriteString(ch.Delta)
 					emit("delta", map[string]any{"type": "delta", "content": ch.Delta})
