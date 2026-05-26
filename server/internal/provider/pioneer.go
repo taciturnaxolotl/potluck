@@ -127,6 +127,27 @@ type Usage struct {
 // Important: the producer goroutine that uses this client should run on
 // context.Background()-derived contexts so a client disconnect never
 // cancels the upstream call. See AGENTS.md "Streaming".
+// Complete sends a non-tool chat request and returns the full response text.
+// Useful for short one-shot generations (e.g. title generation) where you
+// don't need streaming or tool calls.
+func (c *Client) Complete(ctx context.Context, model string, msgs []ChatMessage) (string, error) {
+	chunks, errs, err := c.StreamChat(ctx, ChatRequest{
+		Model:    model,
+		Messages: msgs,
+	})
+	if err != nil {
+		return "", err
+	}
+	var sb strings.Builder
+	for ch := range chunks {
+		sb.WriteString(ch.Delta)
+	}
+	if err := <-errs; err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(sb.String()), nil
+}
+
 func (c *Client) StreamChat(ctx context.Context, req ChatRequest) (<-chan Chunk, <-chan error, error) {
 	req.Stream = true
 	if req.StreamOptions == nil {

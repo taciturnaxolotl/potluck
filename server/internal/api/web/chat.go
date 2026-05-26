@@ -117,6 +117,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 
 	// Resolve conversation — create if not supplied.
 	convID := req.ConversationID
+	isNewConv := convID == ""
 	if convID == "" {
 		title := req.Title
 		if title == "" {
@@ -441,7 +442,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 			ErrorMessage: sql.NullString{},
 			ID:           streamID,
 		})
-		go s.finalizeChatMsg(convID, assistantMsgID, full.String(), isFree, sel, reqID, usage)
+		go s.finalizeChatMsg(convID, assistantMsgID, full.String(), isFree, sel, reqID, usage, isNewConv, firstUserMsg(req.Messages), pc, upstreamModel)
 		return
 	}
 
@@ -462,10 +463,10 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		ErrorMessage: sql.NullString{},
 		ID:           streamID,
 	})
-	go s.finalizeChatMsg(convID, assistantMsgID, full.String(), isFree, sel, reqID, usage)
+	go s.finalizeChatMsg(convID, assistantMsgID, full.String(), isFree, sel, reqID, usage, isNewConv, firstUserMsg(req.Messages), pc, upstreamModel)
 }
 
-func (s *Server) finalizeChatMsg(convID, aID, content string, isFree bool, sel *pool.Selection, reqID string, usage *provider.Usage) {
+func (s *Server) finalizeChatMsg(convID, aID, content string, isFree bool, sel *pool.Selection, reqID string, usage *provider.Usage, isNew bool, userMsg string, pc *provider.Client, model string) {
 	ctx := context.Background()
 	_ = s.Q.AppendAssistantContent(ctx, store.AppendAssistantContentParams{Content: content, ID: aID})
 	_ = s.Q.TouchConversation(ctx, store.TouchConversationParams{UpdatedAt: time.Now().Unix(), ID: convID})
@@ -477,6 +478,40 @@ func (s *Server) finalizeChatMsg(convID, aID, content string, isFree bool, sel *
 		finishWebReq(s.Q, reqID, p, c, t, "done")
 		_ = s.Pool.RecordSpend(ctx, sel, 0)
 	}
+	if isNew && pc != nil && userMsg != "" {
+		go s.generateAndPushTitle(convID, userMsg, content, pc, model)
+	}
+}
+
+func (s *Server) generateAndPushTitle(convID, userMsg, assistantMsg string, pc *provider.Client, model string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	uSnip := truncateTitle(userMsg, 300)
+	aSnip := truncateTitle(assistantMsg, 300)
+	prompt := "Generate a short title (3-7 words, no quotes, no trailing punctuation) for this conversation:\n\nUser: " + uSnip + "\nAssistant: " + aSnip + "\n\nReply with ONLY the title."
+
+	title, err := pc.Complete(ctx, model, []provider.ChatMessage{
+		{Role: "user", Content: provider.StringContent(prompt)},
+	})
+	if err != nil || title == "" {
+		return
+	}
+	title = truncateTitle(strings.Trim(title, `"' `), 80)
+
+	if err := s.Q.UpdateConversationTitle(ctx, store.UpdateConversationTitleParams{
+		Title:     title,
+		UpdatedAt: time.Now().Unix(),
+		ID:        convID,
+	}); err != nil {
+		return
+	}
+
+	b, _ := json.Marshal(map[string]any{"type": "title_updated", "title": title, "seq": 0})
+	s.Hub.Subscriber("conv:" + convID).Publish(stream.Event{
+		Type: "title_updated",
+		Raw:  json.RawMessage(b),
+	})
 }
 
 func finishWebReq(q *store.Queries, id string, p, c, t int64, status string) {
@@ -489,6 +524,15 @@ func finishWebReq(q *store.Queries, id string, p, c, t int64, status string) {
 		Status:           status,
 		ID:               id,
 	})
+}
+
+func firstUserMsg(msgs []chatMsg) string {
+	for _, m := range msgs {
+		if m.Role == "user" && m.Content != "" {
+			return m.Content
+		}
+	}
+	return ""
 }
 
 func truncateTitle(s string, n int) string {

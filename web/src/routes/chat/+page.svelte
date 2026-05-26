@@ -260,6 +260,10 @@
   }
 
   async function handleConvEvent(ev: StreamEvent, convId: string) {
+    if (ev.type === 'title_updated' && typeof ev.title === 'string' && ev.title) {
+      await db.conversations.update(convId, { title: ev.title });
+      return;
+    }
     if (ev.type !== 'start') return;
     if (!ev.stream_id || !ev.assistant_message_id) return;
     // Ignore if we're the one already consuming this stream.
