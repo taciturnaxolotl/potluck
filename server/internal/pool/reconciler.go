@@ -217,14 +217,6 @@ func (r *Reconciler) tick(ctx context.Context) {
 		if key.RevokedAt.Valid {
 			continue
 		}
-		// Skip unauthorized keys unless they haven't been probed in >23h
-		// (daily reset window). The health prober handles those separately.
-		if key.PioneerHealth == HealthUnauthorized {
-			lastSync := key.LastBillingSyncAt.Int64
-			if time.Now().Unix()-lastSync < 23*3600 {
-				continue
-			}
-		}
 		r.probeKey(ctx, key)
 	}
 }
@@ -267,7 +259,7 @@ func (r *Reconciler) probeKey(ctx context.Context, key store.PoolKey) {
 			PioneerCreditLimitMicros: key.PioneerCreditLimitMicros,
 			PioneerRemainingMicros:   key.PioneerRemainingMicros,
 			TodayMicros:              key.TodayMicros,
-			LastBillingSyncAt:        sql.NullInt64{Int64: now, Valid: true},
+			LastBillingSyncAt:        key.LastBillingSyncAt, // preserve last successful sync
 			ID:                       key.ID,
 		})
 		return
