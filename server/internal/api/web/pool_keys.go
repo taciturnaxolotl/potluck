@@ -186,7 +186,7 @@ func (s *Server) handleProbePoolKey(w http.ResponseWriter, r *http.Request) {
 	}
 	if billing.PaymentPlan != "" && !pool.AcceptedPlan(billing.PaymentPlan) {
 		writeErr(w, 422, "invalid_plan",
-			fmt.Sprintf("unsupported pioneer plan %q (accepted: pro, partner)", billing.PaymentPlan))
+			fmt.Sprintf("unsupported pioneer plan %q (accepted: pro, pro_legacy, partner)", billing.PaymentPlan))
 		return
 	}
 
@@ -229,7 +229,7 @@ func (s *Server) handleAddPoolKey(w http.ResponseWriter, r *http.Request) {
 		pendingReason = "pioneer auth service is temporarily down; we'll retry automatically"
 	case billing.PaymentPlan != "" && !pool.AcceptedPlan(billing.PaymentPlan):
 		writeErr(w, 422, "invalid_plan",
-			fmt.Sprintf("unsupported pioneer plan %q (accepted: pro, partner)", billing.PaymentPlan))
+			fmt.Sprintf("unsupported pioneer plan %q (accepted: pro, pro_legacy, partner)", billing.PaymentPlan))
 		return
 	}
 

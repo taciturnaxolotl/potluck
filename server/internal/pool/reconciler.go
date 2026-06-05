@@ -51,10 +51,10 @@ const (
 )
 
 // AcceptedPlan reports whether a pioneer payment plan is allowed in the pool.
-// Both "pro" and "partner" are paid tiers; free plans are rejected.
+// "pro", "pro_legacy", and "partner" are paid tiers; free plans are rejected.
 func AcceptedPlan(plan string) bool {
 	switch plan {
-	case "pro", "partner":
+	case "pro", "pro_legacy", "partner":
 		return true
 	default:
 		return false
