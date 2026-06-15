@@ -69,8 +69,8 @@ func (r *ModelsRefresher) refreshAll(ctx context.Context) {
 			apiKey = sel.APIKey()
 		}
 
-		ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-		models, err := fetcher.FetchModels(ctx, r.httpClient, p.BaseURL, apiKey)
+		fetchCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		models, err := fetcher.FetchModels(fetchCtx, r.httpClient, p.BaseURL, apiKey)
 		cancel()
 
 		if err != nil {
@@ -81,7 +81,7 @@ func (r *ModelsRefresher) refreshAll(ctx context.Context) {
 
 		upserted := 0
 		for _, params := range models {
-			if err := r.q.UpsertModelCatalog(ctx, params); err == nil {
+			if err := r.q.UpsertModelCatalog(context.Background(), params); err == nil {
 				upserted++
 			}
 		}

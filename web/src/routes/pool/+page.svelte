@@ -357,20 +357,22 @@
                 <span class="probe-plan">key validated ✓</span>
               </div>
             {/if}
-            <div class="form-row slider-row">
-              <label class="form-label" for="probe-share">share with pool</label>
-              <div class="slider-wrap">
-                <input id="probe-share" class="slider" type="range"
-                  min="0" max={Math.round(probeResult.credit_limit_micros / 1_000_000)}
-                  step="1" bind:value={probeSharedDollars} />
-                <span class="slider-val mono">${probeSharedDollars}</span>
+            {#if probeResult.credit_limit_micros > 0}
+              <div class="form-row slider-row">
+                <label class="form-label" for="probe-share">share with pool</label>
+                <div class="slider-wrap">
+                  <input id="probe-share" class="slider" type="range"
+                    min="0" max={Math.round(probeResult.credit_limit_micros / 1_000_000)}
+                    step="1" bind:value={probeSharedDollars} />
+                  <span class="slider-val mono">${probeSharedDollars}</span>
+                </div>
               </div>
-            </div>
-            <div class="budget-preview mono">
-              <span class="preview-shared">${probeSharedDollars} shared</span>
-              <span class="preview-sep"> · </span>
-              <span class="preview-private">${Math.round(probeResult.credit_limit_micros / 1_000_000) - probeSharedDollars} reserved for you</span>
-            </div>
+              <div class="budget-preview mono">
+                <span class="preview-shared">${probeSharedDollars} shared</span>
+                <span class="preview-sep"> · </span>
+                <span class="preview-private">${Math.round(probeResult.credit_limit_micros / 1_000_000) - probeSharedDollars} reserved for you</span>
+              </div>
+            {/if}
             {#if addPending}
               <div class="form-warn mono">✓ key added as pending — {addPendingReason}</div>
             {:else if addErr}

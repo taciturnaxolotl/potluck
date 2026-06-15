@@ -26,6 +26,7 @@
     { value: 'anthropic', label: 'Anthropic' },
     { value: 'google', label: 'Google / Gemini' },
     { value: 'openrouter', label: 'OpenRouter' },
+    { value: 'nvidia', label: 'NVIDIA NIM' },
     { value: 'generic', label: 'Generic (no billing)' },
     { value: 'free', label: 'Free / Self-hosted' }
   ];

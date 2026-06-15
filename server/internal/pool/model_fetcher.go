@@ -224,7 +224,7 @@ func baseModelToParams(bm baseModelResp, vm v1Model, now int64) store.UpsertMode
 	}
 
 	return store.UpsertModelCatalogParams{
-		ID:                          bm.ID,
+		ID:                          "pioneer/" + bm.ID,
 		Label:                       label,
 		Description:                 desc,
 		ContextWindow:               nullInt64(ctxWindow),
@@ -241,7 +241,7 @@ func baseModelToParams(bm baseModelResp, vm v1Model, now int64) store.UpsertMode
 func v1OnlyModelToParams(vm v1Model, now int64) store.UpsertModelCatalogParams {
 	rawJSON, _ := json.Marshal(vm)
 	return store.UpsertModelCatalogParams{
-		ID:              vm.ID,
+		ID:              "pioneer/" + vm.ID,
 		Label:           vm.DisplayName,
 		ContextWindow:   nullInt64(int64(vm.MaxInputTokens)),
 		MaxOutputTokens: nullInt64(int64(vm.MaxTokens)),

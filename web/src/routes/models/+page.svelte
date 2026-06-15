@@ -7,6 +7,8 @@
   let loading = $state(true);
   let err = $state<string | null>(null);
   let filter = $state<'all' | 'open' | 'proprietary'>('all');
+  let search = $state('');
+  let providerFilter = $state('all');
 
   onMount(async () => {
     try {
@@ -20,9 +22,27 @@
     }
   });
 
+  function modelProvider(id: string): string {
+    // Model IDs are stored as "provider/model-name". For NVIDIA, models use
+    // "nvidia/org/model-name" format, so we only split on the first slash.
+    const idx = id.indexOf('/');
+    return idx > 0 ? id.slice(0, idx) : 'pioneer';
+  }
+
+  let providers = $derived.by(() => {
+    const set = new Set<string>();
+    for (const m of models) set.add(modelProvider(m.id));
+    return ['all', ...[...set].sort()];
+  });
+
   let visible = $derived(models.filter((m) => {
-    if (filter === 'open') return m.tier === 'open';
-    if (filter === 'proprietary') return m.tier === 'enterprise';
+    if (filter === 'open' && m.tier !== 'open') return false;
+    if (filter === 'proprietary' && m.tier !== 'enterprise') return false;
+    if (providerFilter !== 'all' && modelProvider(m.id) !== providerFilter) return false;
+    if (search) {
+      const q = search.toLowerCase();
+      if (!m.label.toLowerCase().includes(q) && !m.id.toLowerCase().includes(q) && !(m.description || '').toLowerCase().includes(q)) return false;
+    }
     return true;
   }));
 
@@ -107,13 +127,27 @@
   <p class="lede">all models available via the api · spend is all-time · t/s from last 48h{#if refreshedAt} · refreshed {fmtAge(refreshedAt)}{/if}</p>
 
   <div class="filters">
-    {#each (['all', 'open', 'proprietary'] as const) as f}
-      <button
-        class="filter-btn"
-        class:active={filter === f}
-        onclick={() => (filter = f)}
-      >{f}</button>
-    {/each}
+    <input class="search-input" type="text" placeholder="search models…" bind:value={search} />
+    <div class="filter-group">
+      {#each (['all', 'open', 'proprietary'] as const) as f}
+        <button
+          class="filter-btn"
+          class:active={filter === f}
+          onclick={() => (filter = f)}
+        >{f}</button>
+      {/each}
+    </div>
+    {#if providers.length > 2}
+      <div class="filter-group">
+        {#each providers as p}
+          <button
+            class="filter-btn"
+            class:active={providerFilter === p}
+            onclick={() => (providerFilter = p)}
+          >{p}</button>
+        {/each}
+      </div>
+    {/if}
   </div>
 
   {#if loading}
@@ -187,9 +221,28 @@
 
   .filters {
     display: flex;
-    gap: 0.4rem;
+    gap: 0.6rem;
     margin-bottom: 1.25rem;
     flex-wrap: wrap;
+    align-items: center;
+  }
+  .filter-group {
+    display: flex;
+    gap: 0.4rem;
+    flex-wrap: wrap;
+  }
+  .search-input {
+    padding: 0.35rem 0.6rem;
+    font-size: 0.82rem;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--bg-page);
+    color: var(--text);
+    min-width: 10rem;
+  }
+  .search-input:focus {
+    outline: none;
+    border-color: var(--accent);
   }
   .sort-btn {
     background: transparent;
