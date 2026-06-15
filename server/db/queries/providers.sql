@@ -3,6 +3,9 @@
 -- name: ListActiveProviders :many
 SELECT * FROM providers WHERE active = 1 ORDER BY id;
 
+-- name: ListAllProviders :many
+SELECT * FROM providers ORDER BY id;
+
 -- name: GetProvider :one
 SELECT * FROM providers WHERE id = ?;
 

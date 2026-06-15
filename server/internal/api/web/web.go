@@ -51,6 +51,9 @@ func (s *Server) Mount(r chi.Router) {
 
 	r.Get("/models", s.handleListModels)
 	r.Get("/providers", s.handleListProviders)
+	r.Post("/providers", s.handleCreateProvider)
+	r.Patch("/providers/{id}", s.handleUpdateProvider)
+	r.Delete("/providers/{id}", s.handleDeleteProvider)
 	r.Get("/usage", s.handleUsage)
 	r.Get("/sessions", s.handleListSessions)
 	r.Delete("/sessions/{id}", s.handleRevokeSession)

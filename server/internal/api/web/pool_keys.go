@@ -20,16 +20,146 @@ import (
 
 // handleListProviders returns all active providers from the registry.
 func (s *Server) handleListProviders(w http.ResponseWriter, r *http.Request) {
-	providers := s.Registry.List()
-	out := make([]map[string]any, 0, len(providers))
-	for _, p := range providers {
+	rows, err := s.Q.ListAllProviders(r.Context())
+	if err != nil {
+		writeErr(w, 500, "internal", err.Error())
+		return
+	}
+	out := make([]map[string]any, 0, len(rows))
+	for _, p := range rows {
 		out = append(out, map[string]any{
-			"id":   p.ID,
-			"type": string(p.Type),
-			"name": p.Name,
+			"id":     p.ID,
+			"type":   p.Type,
+			"name":   p.Name,
+			"active": p.Active == 1,
 		})
 	}
 	writeJSON(w, 200, out)
+}
+
+// handleCreateProvider adds a new provider to the registry.
+func (s *Server) handleCreateProvider(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ID      string `json:"id"`
+		Type    string `json:"type"`
+		Name    string `json:"name"`
+		BaseURL string `json:"base_url"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, 400, "invalid_request", err.Error())
+		return
+	}
+	if req.ID == "" || req.Type == "" || req.Name == "" || req.BaseURL == "" {
+		writeErr(w, 400, "invalid_request", "id, type, name, and base_url are required")
+		return
+	}
+
+	now := time.Now().Unix()
+	err := s.Q.CreateProvider(r.Context(), store.CreateProviderParams{
+		ID:         req.ID,
+		Type:       req.Type,
+		Name:       req.Name,
+		BaseUrl:    req.BaseURL,
+		ConfigJson: "{}",
+		Active:     1,
+		CreatedAt:  now,
+	})
+	if err != nil {
+		if isUniqueConstraintErr(err) {
+			writeErr(w, 409, "duplicate", "provider with this ID already exists")
+			return
+		}
+		writeErr(w, 500, "internal", err.Error())
+		return
+	}
+
+	writeJSON(w, 201, map[string]any{
+		"id":   req.ID,
+		"type": req.Type,
+		"name": req.Name,
+	})
+}
+
+// handleUpdateProvider updates a provider's fields or toggles active status.
+func (s *Server) handleUpdateProvider(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		writeErr(w, 400, "invalid_request", "provider ID required")
+		return
+	}
+
+	var req struct {
+		Type    *string `json:"type,omitempty"`
+		Name    *string `json:"name,omitempty"`
+		BaseURL *string `json:"base_url,omitempty"`
+		Active  *bool   `json:"active,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, 400, "invalid_request", err.Error())
+		return
+	}
+
+	// Fetch current to preserve unchanged fields.
+	current, err := s.Q.GetProvider(r.Context(), id)
+	if err != nil {
+		writeErr(w, 404, "not_found", "provider not found")
+		return
+	}
+
+	newType := current.Type
+	newName := current.Name
+	newBaseURL := current.BaseUrl
+	newActive := current.Active == 1
+	if req.Type != nil {
+		newType = *req.Type
+	}
+	if req.Name != nil {
+		newName = *req.Name
+	}
+	if req.BaseURL != nil {
+		newBaseURL = *req.BaseURL
+	}
+	if req.Active != nil {
+		newActive = *req.Active
+	}
+
+	activeInt := int64(0)
+	if newActive {
+		activeInt = 1
+	}
+	_ = s.Q.UpdateProvider(r.Context(), store.UpdateProviderParams{
+		Type:       newType,
+		Name:       newName,
+		BaseUrl:    newBaseURL,
+		ConfigJson: current.ConfigJson,
+		Active:     activeInt,
+		ID:         id,
+	})
+
+	writeJSON(w, 200, map[string]any{"ok": true})
+}
+
+// handleDeleteProvider removes a provider. Fails if pool keys reference it.
+func (s *Server) handleDeleteProvider(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		writeErr(w, 400, "invalid_request", "provider ID required")
+		return
+	}
+
+	// Check for existing keys.
+	keys, _ := s.Q.ListKeysByProvider(r.Context(), id)
+	if len(keys) > 0 {
+		writeErr(w, 409, "has_keys", fmt.Sprintf("cannot delete: %d pool keys still reference this provider", len(keys)))
+		return
+	}
+
+	if err := s.Q.DeleteProvider(r.Context(), id); err != nil {
+		writeErr(w, 500, "internal", err.Error())
+		return
+	}
+
+	writeJSON(w, 200, map[string]any{"ok": true})
 }
 
 // handleListPoolKeys returns all pool keys visible to any authenticated user.
@@ -200,36 +330,29 @@ func (s *Server) handleProbePoolKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if providerID == "pioneer" {
-		billing, err := probePioneerBilling(r.Context(), req.APIKey)
+	// Use provider capabilities for validation if available.
+	caps := pool.GetProviderCapabilities(string(provCfg.Type))
+	if caps != nil {
+		val, err := caps.ValidateKey(r.Context(), http.DefaultClient, provCfg.BaseURL, req.APIKey)
 		if err != nil {
 			writeErr(w, 422, "probe_failed", err.Error())
 			return
 		}
-		if billing.HTTP401 {
-			writeErr(w, 422, "unauthorized", "pioneer returned 401 — key may be exhausted or not yet active")
-			return
-		}
-		if billing.HTTP503 {
-			writeErr(w, 503, "provider_down", "pioneer auth service is temporarily down; try again shortly")
-			return
-		}
-		if billing.PaymentPlan != "" && !pool.AcceptedPlan(billing.PaymentPlan) {
-			writeErr(w, 422, "invalid_plan",
-				fmt.Sprintf("unsupported pioneer plan %q (accepted: pro, pro_legacy, partner)", billing.PaymentPlan))
+		if val.PendingReason != "" {
+			writeErr(w, 422, "unauthorized", val.PendingReason)
 			return
 		}
 		writeJSON(w, 200, map[string]any{
-			"provider_id":         "pioneer",
-			"payment_plan":        billing.PaymentPlan,
-			"credit_limit_micros": billing.CreditLimitMicros,
-			"remaining_micros":    billing.RemainingMicros,
-			"today_micros":        billing.TodayMicros,
+			"provider_id":         providerID,
+			"payment_plan":        val.PaymentPlan,
+			"credit_limit_micros": val.CreditLimitMicros,
+			"remaining_micros":    val.RemainingMicros,
+			"today_micros":        val.TodayMicros,
 		})
 		return
 	}
 
-	// Generic probe for non-pioneer providers: validate key via /v1/models.
+	// Fallback: generic /v1/models probe.
 	valid, err := probeGenericKey(r.Context(), provCfg.BaseURL, req.APIKey)
 	if err != nil {
 		writeErr(w, 422, "probe_failed", err.Error())
@@ -242,7 +365,7 @@ func (s *Server) handleProbePoolKey(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, 200, map[string]any{
 		"provider_id":         providerID,
-		"credit_limit_micros": int64(0), // unknown for generic providers
+		"credit_limit_micros": int64(0),
 		"remaining_micros":    int64(0),
 		"today_micros":        int64(0),
 	})
@@ -294,7 +417,8 @@ func (s *Server) handleAddPoolKey(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Validate the provider exists.
-	if _, ok := s.Registry.Get(providerID); !ok {
+	provCfg, ok := s.Registry.Get(providerID)
+	if !ok {
 		writeErr(w, 400, "invalid_provider", fmt.Sprintf("unknown provider: %s", providerID))
 		return
 	}
@@ -303,28 +427,27 @@ func (s *Server) handleAddPoolKey(w http.ResponseWriter, r *http.Request) {
 	var pendingValidation int64
 	var pendingReason string
 
-	if providerID == "pioneer" {
-		var err error
-		billing, err = probePioneerBilling(r.Context(), req.APIKey)
+	// Use provider capabilities for validation if available.
+	caps := pool.GetProviderCapabilities(string(provCfg.Type))
+	if caps != nil {
+		val, err := caps.ValidateKey(r.Context(), http.DefaultClient, provCfg.BaseURL, req.APIKey)
 		if err != nil {
 			writeErr(w, 422, "invalid_key", err.Error())
 			return
 		}
-		switch {
-		case billing.HTTP401:
+		if val.PendingReason != "" {
 			pendingValidation = 1
-			pendingReason = "pioneer returned 401 — key may be exhausted or not yet active; we'll retry automatically"
-		case billing.HTTP503:
-			pendingValidation = 1
-			pendingReason = "pioneer auth service is temporarily down; we'll retry automatically"
-		case billing.PaymentPlan != "" && !pool.AcceptedPlan(billing.PaymentPlan):
-			writeErr(w, 422, "invalid_plan",
-				fmt.Sprintf("unsupported pioneer plan %q (accepted: pro, pro_legacy, partner)", billing.PaymentPlan))
-			return
+			pendingReason = val.PendingReason
+		}
+		billing = pioneerBillingResult{
+			TodayMicros:       val.TodayMicros,
+			RemainingMicros:   val.RemainingMicros,
+			CreditLimitMicros: val.CreditLimitMicros,
+			TeamID:            val.TeamID,
+			PaymentPlan:       val.PaymentPlan,
 		}
 	} else {
-		// Generic provider: validate via /v1/models.
-		provCfg, _ := s.Registry.Get(providerID)
+		// Fallback: generic /v1/models probe.
 		valid, err := probeGenericKey(r.Context(), provCfg.BaseURL, req.APIKey)
 		if err != nil {
 			writeErr(w, 422, "invalid_key", err.Error())
@@ -334,7 +457,6 @@ func (s *Server) handleAddPoolKey(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, 422, "unauthorized", "key validation failed — check your API key")
 			return
 		}
-		// Generic providers start healthy with no billing info.
 		billing = pioneerBillingResult{}
 	}
 

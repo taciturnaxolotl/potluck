@@ -35,6 +35,7 @@ type ProviderConfig struct {
 	Type     ProviderType
 	Name     string
 	BaseURL  string
+	Active   bool
 	Config   map[string]string // provider-specific config from config_json
 }
 
@@ -67,6 +68,7 @@ func LoadFromDB(ctx context.Context, q *store.Queries) (*Registry, error) {
 			Type:    ProviderType(r.Type),
 			Name:    r.Name,
 			BaseURL: r.BaseUrl,
+			Active:  r.Active == 1,
 			// TODO: parse config_json into map when needed
 		})
 	}

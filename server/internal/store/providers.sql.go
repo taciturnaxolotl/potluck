@@ -102,6 +102,41 @@ func (q *Queries) ListActiveProviders(ctx context.Context) ([]Provider, error) {
 	return items, nil
 }
 
+const listAllProviders = `-- name: ListAllProviders :many
+SELECT id, type, name, base_url, config_json, active, created_at FROM providers ORDER BY id
+`
+
+func (q *Queries) ListAllProviders(ctx context.Context) ([]Provider, error) {
+	rows, err := q.db.QueryContext(ctx, listAllProviders)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Provider{}
+	for rows.Next() {
+		var i Provider
+		if err := rows.Scan(
+			&i.ID,
+			&i.Type,
+			&i.Name,
+			&i.BaseUrl,
+			&i.ConfigJson,
+			&i.Active,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const updateProvider = `-- name: UpdateProvider :exec
 UPDATE providers SET
     type        = ?,

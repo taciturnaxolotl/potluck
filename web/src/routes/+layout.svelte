@@ -184,7 +184,8 @@
 
   const adminNavItems: NavItem[] = [
     { label: 'users', href: '/admin/users', section: 'admin' },
-    { label: 'waitlist', href: '/admin/waitlist', section: 'admin' }
+    { label: 'waitlist', href: '/admin/waitlist', section: 'admin' },
+    { label: 'providers', href: '/admin/providers', section: 'admin' }
   ];
 
   let navItems = $derived(

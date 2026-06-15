@@ -261,8 +261,15 @@ export interface Provider {
   id: string;
   type: string;
   name: string;
+  active: boolean;
 }
 export const listProviders = () => api.get<Provider[]>('/api/providers');
+export const createProvider = (id: string, type: string, name: string, baseUrl: string) =>
+  api.post<Provider>('/api/providers', { id, type, name, base_url: baseUrl });
+export const updateProvider = (id: string, updates: { type?: string; name?: string; base_url?: string; active?: boolean }) =>
+  api.patch<void>(`/api/providers/${id}`, updates);
+export const deleteProvider = (id: string) =>
+  api.delete<void>(`/api/providers/${id}`);
 
 export interface PoolKeyProbe {
   provider_id: string;

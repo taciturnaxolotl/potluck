@@ -86,6 +86,7 @@ type Querier interface {
 	ListAPIKeysForUser(ctx context.Context, userID string) ([]ApiKey, error)
 	// Provider registry queries for multi-provider support.
 	ListActiveProviders(ctx context.Context) ([]Provider, error)
+	ListAllProviders(ctx context.Context) ([]Provider, error)
 	ListAllUsers(ctx context.Context) ([]User, error)
 	// Live spend for ALL users since dayStart, grouped by user.
 	// Used by RunSmartAllocation so it doesn't depend on the stale

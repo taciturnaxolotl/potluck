@@ -37,6 +37,10 @@ import (
 	"github.com/taciturnaxolotl/potluck/internal/stream"
 
 	_ "modernc.org/sqlite"
+
+	// Register provider capabilities via init().
+	_ "github.com/taciturnaxolotl/potluck/internal/pool/providers/generic"
+	_ "github.com/taciturnaxolotl/potluck/internal/pool/providers/pioneer"
 )
 
 // Information set at build time via -ldflags.

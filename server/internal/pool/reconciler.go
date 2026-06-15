@@ -229,7 +229,10 @@ func (r *Reconciler) probeKey(ctx context.Context, key store.PoolKey) {
 		return
 	}
 
-	checker := GetHealthChecker(key.ProviderID)
+	checker := GetProviderCapabilities(key.ProviderID).HealthChecker()
+	if checker == nil {
+		checker = NoopHealthChecker{}
+	}
 	healthResult, err := checker.CheckHealth(ctx, r.httpClient, plaintext)
 	now := time.Now().Unix()
 
@@ -274,7 +277,12 @@ func (r *Reconciler) probeKey(ctx context.Context, key store.PoolKey) {
 	}
 
 	// Successful probe — validate plan and update.
-	if !checker.AcceptedPlan(healthResult.PaymentPlan) {
+	caps := GetProviderCapabilities(key.ProviderID)
+	accepted := true // default for providers without plan restrictions
+	if caps != nil {
+		accepted = caps.AcceptedPlan(healthResult.PaymentPlan)
+	}
+	if !accepted {
 		r.log.Warn("reconciler: unsupported plan, marking unauthorized",
 			"key_id", key.ID, "label", key.Label,
 			"plan", healthResult.PaymentPlan)

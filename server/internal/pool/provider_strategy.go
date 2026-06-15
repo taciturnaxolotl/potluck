@@ -13,24 +13,14 @@ import (
 // implements this differently (pioneer uses /billing/plan-info; others may
 // use /v1/models or have no health check at all).
 type HealthChecker interface {
-	// CheckHealth probes a single key. Returns nil result for transient
-	// errors (caller should retry next tick). Non-nil result with an error
-	// means permanent failure.
 	CheckHealth(ctx context.Context, httpClient *http.Client, apiKey string) (*HealthResult, error)
-
-	// AcceptedPlan reports whether a payment plan is allowed in the pool.
-	// Return true for all plans if the provider doesn't have plan tiers.
 	AcceptedPlan(plan string) bool
 }
 
 // HealthResult holds the outcome of a health check probe.
 type HealthResult struct {
-	// HTTP status flags — checked before other fields.
-	HTTP401 bool // unauthorized / exhausted
-	HTTP503 bool // transient service unavailable
-
-	// Provider-specific metadata. Fields that don't apply to a provider
-	// should be left zero/empty.
+	HTTP401           bool
+	HTTP503           bool
 	PaymentPlan       string
 	CreditLimitMicros int64
 	RemainingMicros   int64
@@ -39,16 +29,12 @@ type HealthResult struct {
 }
 
 // BillingIngestor pulls billing data from an upstream provider and writes
-// it to pool_key_billing_rows with user attribution. Providers without a
-// billing API can return nil (no-op) and rely on token-count estimation.
+// it to pool_key_billing_rows with user attribution.
 type BillingIngestor interface {
-	// IngestBilling fetches new billing rows for a key and writes them to
-	// the database. Called after a successful health check.
 	IngestBilling(ctx context.Context, q *store.Queries, key store.PoolKey, apiKey string, httpClient *http.Client) error
 }
 
-// NoopBillingIngestor is a BillingIngestor that does nothing. Used for
-// providers without a billing API.
+// NoopBillingIngestor does nothing. Used for providers without a billing API.
 type NoopBillingIngestor struct{}
 
 func (NoopBillingIngestor) IngestBilling(context.Context, *store.Queries, store.PoolKey, string, *http.Client) error {
@@ -56,7 +42,7 @@ func (NoopBillingIngestor) IngestBilling(context.Context, *store.Queries, store.
 }
 
 // NoopHealthChecker always reports healthy. Used for providers without
-// a health check endpoint (e.g., self-hosted free models).
+// a health check endpoint.
 type NoopHealthChecker struct{}
 
 func (NoopHealthChecker) CheckHealth(context.Context, *http.Client, string) (*HealthResult, error) {
@@ -97,33 +83,9 @@ func (PioneerHealthChecker) CheckHealth(ctx context.Context, httpClient *http.Cl
 type PioneerBillingIngestor struct{}
 
 func (PioneerBillingIngestor) IngestBilling(ctx context.Context, q *store.Queries, key store.PoolKey, apiKey string, httpClient *http.Client) error {
-	// Pioneer billing ingestion is currently tightly coupled to the Reconciler
-	// (it uses r.q and r.httpClient). This will be fully decoupled when we
-	// refactor billing_ingest.go. For now, return nil and let the reconciler
-	// call ingestBillingRows directly for pioneer keys.
+	// Pioneer billing ingestion is currently tightly coupled to the Reconciler.
+	// This will be fully decoupled in a follow-up.
 	return nil
-}
-
-// GetHealthChecker returns the appropriate health checker for a provider type.
-func GetHealthChecker(providerType string) HealthChecker {
-	switch providerType {
-	case "openai_compat":
-		// Currently only pioneer uses openai_compat; when we add more,
-		// this will need per-provider dispatch (e.g., by provider ID).
-		return PioneerHealthChecker{}
-	default:
-		return NoopHealthChecker{}
-	}
-}
-
-// GetBillingIngestor returns the appropriate billing ingestor for a provider type.
-func GetBillingIngestor(providerType string) BillingIngestor {
-	switch providerType {
-	case "openai_compat":
-		return PioneerBillingIngestor{}
-	default:
-		return NoopBillingIngestor{}
-	}
 }
 
 // nullStr and nullInt helpers for DB params.
