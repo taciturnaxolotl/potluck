@@ -267,7 +267,7 @@ export interface Provider {
 export const listProviders = () => api.get<Provider[]>('/api/providers');
 export const createProvider = (id: string, type: string, name: string, baseUrl: string, isFree: boolean) =>
   api.post<Provider>('/api/providers', { id, type, name, base_url: baseUrl, is_free: isFree });
-export const updateProvider = (id: string, updates: { type?: string; name?: string; base_url?: string; active?: boolean }) =>
+export const updateProvider = (id: string, updates: { type?: string; name?: string; base_url?: string; active?: boolean; is_free?: boolean }) =>
   api.patch<void>(`/api/providers/${id}`, updates);
 export const deleteProvider = (id: string) =>
   api.delete<void>(`/api/providers/${id}`);

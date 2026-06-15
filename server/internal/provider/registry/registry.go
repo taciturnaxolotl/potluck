@@ -26,7 +26,6 @@ const (
 	TypeAnthropic    ProviderType = "anthropic"
 	TypeGoogle       ProviderType = "google"
 	TypeOpenRouter   ProviderType = "openrouter"
-	TypeFree         ProviderType = "free" // no auth, openai-compat shape
 )
 
 // ProviderConfig holds the configuration for a single upstream provider.

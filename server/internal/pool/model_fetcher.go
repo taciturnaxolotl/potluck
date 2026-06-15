@@ -73,17 +73,15 @@ type ModelFetcher interface {
 }
 
 // GetModelFetcher returns the appropriate model fetcher for a provider type.
-// Uses the capabilities registry if available, falls back to defaults.
+// Uses the capabilities registry if available, falls back to pioneer for
+// openai_compat, nil for unknown types.
 func GetModelFetcher(providerType string) ModelFetcher {
 	if caps := GetProviderCapabilities(providerType); caps != nil {
 		return caps.ModelFetcher()
 	}
-	// Fallback for unregistered types.
 	switch providerType {
 	case "openai_compat":
 		return PioneerModelFetcher{}
-	case "free":
-		return OpenAICompatModelFetcher{}
 	default:
 		return nil
 	}

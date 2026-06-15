@@ -19,7 +19,8 @@ UPDATE providers SET
     name        = ?,
     base_url    = ?,
     config_json = ?,
-    active      = ?
+    active      = ?,
+    is_free     = ?
 WHERE id = ?;
 
 -- name: DeleteProvider :exec

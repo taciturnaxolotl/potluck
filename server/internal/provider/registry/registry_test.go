@@ -54,7 +54,7 @@ func TestGet(t *testing.T) {
 func TestList(t *testing.T) {
 	r := New([]ProviderConfig{
 		{ID: "pioneer", Type: TypeOpenAICompat, Name: "Pioneer", BaseURL: "https://api.pioneer.ai"},
-		{ID: "free", Type: TypeFree, Name: "Free", BaseURL: "http://localhost:11434"},
+		{ID: "free", Type: "openai_compat", Name: "Free", BaseURL: "http://localhost:11434"},
 	})
 
 	list := r.List()
@@ -82,7 +82,7 @@ func TestToFantasy_OpenAICompat(t *testing.T) {
 
 func TestToFantasy_Free(t *testing.T) {
 	r := New([]ProviderConfig{
-		{ID: "free", Type: TypeFree, Name: "Free", BaseURL: "http://localhost:11434"},
+		{ID: "free", Type: "openai_compat", Name: "Free", BaseURL: "http://localhost:11434"},
 	})
 
 	fp, err := r.ToFantasy("free", "")

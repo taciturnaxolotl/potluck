@@ -22,14 +22,21 @@
   let adding = $state(false);
   let addErr = $state<string | null>(null);
 
+  // Inline edit state
+  let editingId = $state<string | null>(null);
+  let editName = $state('');
+  let editType = $state('');
+  let editBaseUrl = $state('');
+  let editIsFree = $state(false);
+  let saving = $state(false);
+
   const providerTypes = [
     { value: 'openai_compat', label: 'OpenAI Compatible' },
     { value: 'anthropic', label: 'Anthropic' },
     { value: 'google', label: 'Google / Gemini' },
     { value: 'openrouter', label: 'OpenRouter' },
     { value: 'nvidia', label: 'NVIDIA NIM' },
-    { value: 'generic', label: 'Generic (no billing)' },
-    { value: 'free', label: 'Free / Self-hosted' }
+    { value: 'omlx', label: 'OMLX (self-hosted)' }
   ];
 
   onMount(async () => {
@@ -62,6 +69,36 @@
       addErr = e instanceof Error ? e.message : 'failed to create';
     } finally {
       adding = false;
+    }
+  }
+
+  function startEdit(p: Provider) {
+    editingId = p.id;
+    editName = p.name;
+    editType = p.type;
+    editBaseUrl = (p as any).base_url ?? '';
+    editIsFree = p.is_free;
+  }
+
+  function cancelEdit() {
+    editingId = null;
+  }
+
+  async function saveEdit(id: string) {
+    saving = true;
+    try {
+      await updateProvider(id, {
+        name: editName.trim(),
+        type: editType,
+        base_url: editBaseUrl.trim(),
+        is_free: editIsFree
+      });
+      editingId = null;
+      await reload();
+    } catch (e: unknown) {
+      err = e instanceof Error ? e.message : 'failed to save';
+    } finally {
+      saving = false;
     }
   }
 
@@ -155,29 +192,54 @@
     {:else}
       <div class="provider-list">
         {#each providers as p (p.id)}
-          <div class="provider-row" class:inactive={!p.active}>
-            <div class="provider-info">
-              <span class="provider-name">{p.name}</span>
-              <span class="provider-id mono">{p.id}</span>
-              <span class="provider-type mono">{p.type}</span>
-              {#if p.is_free}
-                <span class="provider-free-badge">free</span>
-              {/if}
+          {#if editingId === p.id}
+            <div class="provider-row editing">
+              <div class="edit-fields">
+                <input class="edit-input" type="text" bind:value={editName} placeholder="name" />
+                <select class="edit-input" bind:value={editType}>
+                  {#each providerTypes as t}
+                    <option value={t.value}>{t.label}</option>
+                  {/each}
+                </select>
+                <input class="edit-input mono" type="url" bind:value={editBaseUrl} placeholder="base url" />
+                <label class="form-check form-check-sm">
+                  <input type="checkbox" bind:checked={editIsFree} />
+                  <span>free</span>
+                </label>
+              </div>
+              <div class="provider-actions">
+                <button class="action-btn approve" onclick={() => saveEdit(p.id)} disabled={saving}>
+                  {saving ? '…' : 'save'}
+                </button>
+                <button class="action-btn" onclick={cancelEdit}>cancel</button>
+              </div>
             </div>
-            <div class="provider-actions">
-              <button
-                class="toggle"
-                class:on={p.active}
-                onclick={() => toggleActive(p)}
-                role="switch"
-                aria-checked={p.active}
-                title={p.active ? 'disable provider' : 'enable provider'}
-              >
-                <span class="toggle-track"><span class="toggle-thumb" /></span>
-              </button>
-              <button class="action-btn danger" onclick={() => handleDelete(p.id)}>delete</button>
+          {:else}
+            <div class="provider-row" class:inactive={!p.active}>
+              <div class="provider-info" onclick={() => startEdit(p)} role="button" tabindex="0"
+                onkeydown={(e) => { if (e.key === 'Enter') startEdit(p); }}>
+                <span class="provider-name">{p.name}</span>
+                <span class="provider-id mono">{p.id}</span>
+                <span class="provider-type mono">{p.type}</span>
+                {#if p.is_free}
+                  <span class="provider-free-badge">free</span>
+                {/if}
+              </div>
+              <div class="provider-actions">
+                <button
+                  class="toggle"
+                  class:on={p.active}
+                  onclick={() => toggleActive(p)}
+                  role="switch"
+                  aria-checked={p.active}
+                  title={p.active ? 'disable provider' : 'enable provider'}
+                >
+                  <span class="toggle-track"><span class="toggle-thumb" /></span>
+                </button>
+                <button class="action-btn danger" onclick={() => handleDelete(p.id)}>delete</button>
+              </div>
             </div>
-          </div>
+          {/if}
         {/each}
       </div>
     {/if}
@@ -312,6 +374,27 @@
     margin-top: 0.4rem;
   }
 
+  .form-row-check {
+    margin-top: 0.25rem;
+  }
+  .form-check {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    cursor: pointer;
+    font-size: 0.82rem;
+    color: var(--text);
+  }
+  .form-check input[type="checkbox"] {
+    accent-color: var(--accent);
+  }
+  .form-check-label {
+    user-select: none;
+  }
+  .form-check-sm {
+    font-size: 0.75rem;
+  }
+
   .loading, .empty {
     padding: 2rem;
     text-align: center;
@@ -336,18 +419,30 @@
   .provider-row.inactive {
     opacity: 0.5;
   }
+  .provider-row.editing {
+    background: var(--bg-sidebar);
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
 
   .provider-info {
     display: flex;
     align-items: baseline;
     gap: 0.6rem;
     flex-wrap: wrap;
+    cursor: pointer;
+    flex: 1;
+    min-width: 0;
+  }
+  .provider-info:hover .provider-name {
+    color: var(--accent);
   }
 
   .provider-name {
     font-size: 0.88rem;
     font-weight: 500;
     color: var(--text);
+    transition: color 80ms;
   }
 
   .provider-id {
@@ -374,27 +469,33 @@
     color: light-dark(oklch(40% 0.1 145), oklch(75% 0.1 145));
   }
 
-  .form-row-check {
-    margin-top: 0.25rem;
-  }
-  .form-check {
+  .edit-fields {
     display: flex;
     align-items: center;
-    gap: 0.4rem;
-    cursor: pointer;
-    font-size: 0.82rem;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    flex: 1;
+    min-width: 0;
+  }
+  .edit-input {
+    padding: 0.3rem 0.5rem;
+    font-size: 0.8rem;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--bg-page);
     color: var(--text);
+    min-width: 0;
+    flex: 1;
   }
-  .form-check input[type="checkbox"] {
-    accent-color: var(--accent);
-  }
-  .form-check-label {
-    user-select: none;
+  .edit-input:focus {
+    outline: none;
+    border-color: var(--accent);
   }
 
   .provider-actions {
     display: flex;
     gap: 0.4rem;
+    flex-shrink: 0;
   }
 
   .action-btn {
@@ -413,6 +514,9 @@
   }
   .action-btn.danger:hover {
     color: var(--danger);
+  }
+  .action-btn.approve:hover {
+    color: light-dark(oklch(40% 0.1 145), oklch(75% 0.1 145));
   }
 
   /* Toggle switch */

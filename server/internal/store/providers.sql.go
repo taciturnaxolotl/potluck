@@ -148,7 +148,8 @@ UPDATE providers SET
     name        = ?,
     base_url    = ?,
     config_json = ?,
-    active      = ?
+    active      = ?,
+    is_free     = ?
 WHERE id = ?
 `
 
@@ -158,6 +159,7 @@ type UpdateProviderParams struct {
 	BaseUrl    string `json:"base_url"`
 	ConfigJson string `json:"config_json"`
 	Active     int64  `json:"active"`
+	IsFree     int64  `json:"is_free"`
 	ID         string `json:"id"`
 }
 
@@ -168,6 +170,7 @@ func (q *Queries) UpdateProvider(ctx context.Context, arg UpdateProviderParams) 
 		arg.BaseUrl,
 		arg.ConfigJson,
 		arg.Active,
+		arg.IsFree,
 		arg.ID,
 	)
 	return err

@@ -101,6 +101,7 @@ func (s *Server) handleUpdateProvider(w http.ResponseWriter, r *http.Request) {
 		Name    *string `json:"name,omitempty"`
 		BaseURL *string `json:"base_url,omitempty"`
 		Active  *bool   `json:"active,omitempty"`
+		IsFree  *bool   `json:"is_free,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeErr(w, 400, "invalid_request", err.Error())
@@ -130,10 +131,18 @@ func (s *Server) handleUpdateProvider(w http.ResponseWriter, r *http.Request) {
 	if req.Active != nil {
 		newActive = *req.Active
 	}
+	newIsFree := current.IsFree == 1
+	if req.IsFree != nil {
+		newIsFree = *req.IsFree
+	}
 
 	activeInt := int64(0)
 	if newActive {
 		activeInt = 1
+	}
+	isFreeInt := int64(0)
+	if newIsFree {
+		isFreeInt = 1
 	}
 	_ = s.Q.UpdateProvider(r.Context(), store.UpdateProviderParams{
 		Type:       newType,
@@ -141,6 +150,7 @@ func (s *Server) handleUpdateProvider(w http.ResponseWriter, r *http.Request) {
 		BaseUrl:    newBaseURL,
 		ConfigJson: current.ConfigJson,
 		Active:     activeInt,
+		IsFree:     isFreeInt,
 		ID:         id,
 	})
 
