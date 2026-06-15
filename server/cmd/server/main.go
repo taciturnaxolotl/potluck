@@ -32,7 +32,6 @@ import (
 	"github.com/taciturnaxolotl/potluck/internal/migrations"
 	"github.com/taciturnaxolotl/potluck/internal/money"
 	"github.com/taciturnaxolotl/potluck/internal/pool"
-	"github.com/taciturnaxolotl/potluck/internal/provider"
 	"github.com/taciturnaxolotl/potluck/internal/provider/registry"
 	"github.com/taciturnaxolotl/potluck/internal/store"
 	"github.com/taciturnaxolotl/potluck/internal/stream"
@@ -97,16 +96,6 @@ func main() {
 		cfg.Spend.MaxConcurrentStreams,
 	)
 	hub := stream.NewHub(q)
-	pioneer := provider.New(cfg.Pioneer.BaseURL)
-
-	var freeProvider *provider.Client
-	if cfg.FreeProvider.Enabled() {
-		// provider.Client appends /v1/chat/completions itself, so strip any trailing
-		// /v1 from the configured URL (e.g. http://host:8000/v1 → http://host:8000).
-		freeBase := strings.TrimSuffix(strings.TrimRight(cfg.FreeProvider.BaseURL, "/"), "/v1")
-		freeProvider = provider.New(freeBase)
-		log.Info("free provider configured", "base_url", cfg.FreeProvider.BaseURL)
-	}
 
 	// Build multi-provider registry from DB. Falls back to a pioneer-only
 	// registry if the providers table hasn't been migrated yet.
@@ -138,12 +127,7 @@ func main() {
 	go reconciler.Run(reconcilerCtx)
 
 	// Start the models refresher: updates models_catalog hourly.
-	go pool.NewModelsRefresher(q, keyPool, log.Default()).Run(reconcilerCtx)
-
-	// Start the free models refresher if a free provider is configured.
-	if cfg.FreeProvider.Enabled() {
-		go pool.NewFreeModelsRefresher(cfg.FreeProvider.BaseURL, q, log.Default()).Run(reconcilerCtx)
-	}
+	go pool.NewModelsRefresher(q, keyPool, reg, log.Default()).Run(reconcilerCtx)
 
 	// Start the allocation recomputer: every N minutes, refresh per-user
 	// daily allowances using smartAllocate so behavior changes (light user
@@ -181,23 +165,19 @@ func main() {
 	r.Post("/auth/logout", hcaLogoutHandler(authSvc, cfg.IsProduction()))
 
 	apiSrv := &web.Server{
-		Q:            q,
-		Auth:         authSvc,
-		Ledger:       ledg,
-		Hub:          hub,
-		Pool:         keyPool,
-		Provider:     pioneer,
-		FreeProvider: freeProvider,
-		Registry:     reg,
+		Q:        q,
+		Auth:     authSvc,
+		Ledger:   ledg,
+		Hub:      hub,
+		Pool:     keyPool,
+		Registry: reg,
 	}
 	v1Srv := &v1.Server{
-		Q:            q,
-		Auth:         authSvc,
-		Ledger:       ledg,
-		Provider:     pioneer,
-		Pool:         keyPool,
-		FreeProvider: freeProvider,
-		Registry:     reg,
+		Q:        q,
+		Auth:     authSvc,
+		Ledger:   ledg,
+		Pool:     keyPool,
+		Registry: reg,
 	}
 
 	// /api/* — cookie-authenticated, internal surface.

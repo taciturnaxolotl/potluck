@@ -229,17 +229,25 @@ func (r *Reconciler) probeKey(ctx context.Context, key store.PoolKey) {
 		return
 	}
 
-	result := probePlanInfo(ctx, r.httpClient, plaintext)
+	checker := GetHealthChecker(key.ProviderID)
+	healthResult, err := checker.CheckHealth(ctx, r.httpClient, plaintext)
 	now := time.Now().Unix()
 
+	if err != nil {
+		// Network/decode error — transient, leave health unchanged, retry next tick.
+		r.log.Warn("reconciler: probe transient error",
+			"key_id", key.ID, "label", key.Label, "err", err)
+		return
+	}
+
 	switch {
-	case result.http503:
-		// Pioneer auth service down — transient, don't touch health.
-		r.log.Warn("reconciler: pioneer auth down (503), skipping key",
+	case healthResult.HTTP503:
+		// Provider auth service down — transient, don't touch health.
+		r.log.Warn("reconciler: provider auth down (503), skipping key",
 			"key_id", key.ID, "label", key.Label)
 		return
 
-	case result.http401:
+	case healthResult.HTTP401:
 		// Key exhausted or revoked — mark unauthorized.
 		var unhealthySince sql.NullInt64
 		if key.PioneerHealth == HealthUnauthorized && key.PioneerUnhealthySince.Valid {
@@ -263,27 +271,21 @@ func (r *Reconciler) probeKey(ctx context.Context, key store.PoolKey) {
 			ID:                       key.ID,
 		})
 		return
-
-	case result.err != nil:
-		// Network/decode error — transient, leave health unchanged, retry next tick.
-		r.log.Warn("reconciler: probe transient error",
-			"key_id", key.ID, "label", key.Label, "err", result.err)
-		return
 	}
 
 	// Successful probe — validate plan and update.
-	if !AcceptedPlan(result.plan.PaymentPlan) {
+	if !checker.AcceptedPlan(healthResult.PaymentPlan) {
 		r.log.Warn("reconciler: unsupported plan, marking unauthorized",
 			"key_id", key.ID, "label", key.Label,
-			"plan", result.plan.PaymentPlan)
+			"plan", healthResult.PaymentPlan)
 		_ = r.q.UpdatePoolKeyHealth(ctx, store.UpdatePoolKeyHealthParams{
 			PioneerHealth:            HealthUnauthorized,
 			PioneerUnhealthySince:    sql.NullInt64{Int64: now, Valid: true},
-			PioneerTeamID:            nullStr(result.teamID),
-			PioneerPaymentPlan:       nullStr(result.plan.PaymentPlan),
-			PioneerCreditLimitMicros: nullInt(result.creditLimitMicros),
-			PioneerRemainingMicros:   nullInt(result.remainingMicros),
-			TodayMicros:              result.todayMicros,
+			PioneerTeamID:            nullStr(healthResult.TeamID),
+			PioneerPaymentPlan:       nullStr(healthResult.PaymentPlan),
+			PioneerCreditLimitMicros: nullInt(healthResult.CreditLimitMicros),
+			PioneerRemainingMicros:   nullInt(healthResult.RemainingMicros),
+			TodayMicros:              healthResult.TodayMicros,
 			LastBillingSyncAt:        sql.NullInt64{Int64: now, Valid: true},
 			ID:                       key.ID,
 		})
@@ -300,37 +302,37 @@ func (r *Reconciler) probeKey(ctx context.Context, key store.PoolKey) {
 	_ = r.q.UpdatePoolKeyHealth(ctx, store.UpdatePoolKeyHealthParams{
 		PioneerHealth:            HealthHealthy,
 		PioneerUnhealthySince:    sql.NullInt64{}, // NULL — clear it
-		PioneerTeamID:            nullStr(result.teamID),
-		PioneerPaymentPlan:       nullStr(result.plan.PaymentPlan),
-		PioneerCreditLimitMicros: nullInt(result.creditLimitMicros),
-		PioneerRemainingMicros:   nullInt(result.remainingMicros),
-		TodayMicros:              result.todayMicros,
+		PioneerTeamID:            nullStr(healthResult.TeamID),
+		PioneerPaymentPlan:       nullStr(healthResult.PaymentPlan),
+		PioneerCreditLimitMicros: nullInt(healthResult.CreditLimitMicros),
+		PioneerRemainingMicros:   nullInt(healthResult.RemainingMicros),
+		TodayMicros:              healthResult.TodayMicros,
 		LastBillingSyncAt:        sql.NullInt64{Int64: now, Valid: true},
 		ID:                       key.ID,
 	})
 
-	// Keep max_micros in sync with pioneer's credit limit so the pool always
+	// Keep max_micros in sync with provider's credit limit so the pool always
 	// knows the real ceiling. shared_micros is clamped to the new max if it
 	// would otherwise exceed it.
-	if result.creditLimitMicros > 0 && result.creditLimitMicros != key.PioneerCreditLimitMicros.Int64 {
+	if healthResult.CreditLimitMicros > 0 && healthResult.CreditLimitMicros != key.PioneerCreditLimitMicros.Int64 {
 		_ = r.q.SyncPoolKeyMaxFromCreditLimit(ctx, store.SyncPoolKeyMaxFromCreditLimitParams{
-			MaxMicros:      result.creditLimitMicros,
-			SharedMicros:   result.creditLimitMicros,
-			SharedMicros_2: result.creditLimitMicros,
+			MaxMicros:      healthResult.CreditLimitMicros,
+			SharedMicros:   healthResult.CreditLimitMicros,
+			SharedMicros_2: healthResult.CreditLimitMicros,
 			ID:             key.ID,
 		})
 		r.log.Info("reconciler: credit limit changed, updated max_micros",
 			"key_id", key.ID, "label", key.Label,
 			"old_micros", key.PioneerCreditLimitMicros.Int64,
-			"new_micros", result.creditLimitMicros,
+			"new_micros", healthResult.CreditLimitMicros,
 		)
 	}
 
 	r.log.Info("reconciler: key synced",
 		"key_id", key.ID,
 		"label", key.Label,
-		"today_usd", fmt.Sprintf("%.2f", float64(result.todayMicros)/1_000_000),
-		"remaining_usd", fmt.Sprintf("%.2f", float64(result.remainingMicros)/1_000_000),
+		"today_usd", fmt.Sprintf("%.2f", float64(healthResult.TodayMicros)/1_000_000),
+		"remaining_usd", fmt.Sprintf("%.2f", float64(healthResult.RemainingMicros)/1_000_000),
 	)
 
 	// Ingest new billing rows and attribute to users.
@@ -344,18 +346,4 @@ func (r *Reconciler) probeKey(ctx context.Context, key store.PoolKey) {
 			ID:          key.ID,
 		})
 	}
-}
-
-func nullStr(s string) sql.NullString {
-	if s == "" {
-		return sql.NullString{}
-	}
-	return sql.NullString{String: s, Valid: true}
-}
-
-func nullInt(v int64) sql.NullInt64 {
-	if v == 0 {
-		return sql.NullInt64{}
-	}
-	return sql.NullInt64{Int64: v, Valid: true}
 }

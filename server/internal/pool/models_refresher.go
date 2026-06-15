@@ -1,39 +1,36 @@
 package pool
 
-// models_refresher.go — hourly refresh of the pioneer model catalog.
-// Fetches /v1/models and /base-models, upserts into models_catalog,
-// rotates through available pool keys on failure.
+// models_refresher.go — hourly refresh of model catalogs across all providers.
+// Dispatches to provider-specific ModelFetcher implementations.
 
 import (
 	"context"
-	"database/sql"
-	"encoding/json"
-	"fmt"
-	"io"
-	"math"
 	"net/http"
 	"time"
 
 	charmlog "charm.land/log/v2"
 
+	"github.com/taciturnaxolotl/potluck/internal/provider/registry"
 	"github.com/taciturnaxolotl/potluck/internal/store"
 )
 
 const ModelsRefreshInterval = time.Hour
 
-// ModelsRefresher fetches the pioneer model catalog on a background ticker.
+// ModelsRefresher fetches model catalogs on a background ticker.
 type ModelsRefresher struct {
 	q          *store.Queries
 	manager    *Manager
+	reg        *registry.Registry
 	httpClient *http.Client
 	log        *charmlog.Logger
 }
 
 // NewModelsRefresher creates a ModelsRefresher.
-func NewModelsRefresher(q *store.Queries, m *Manager, log *charmlog.Logger) *ModelsRefresher {
+func NewModelsRefresher(q *store.Queries, m *Manager, reg *registry.Registry, log *charmlog.Logger) *ModelsRefresher {
 	return &ModelsRefresher{
 		q:          q,
 		manager:    m,
+		reg:        reg,
 		httpClient: &http.Client{Timeout: 20 * time.Second},
 		log:        log,
 	}
@@ -42,7 +39,7 @@ func NewModelsRefresher(q *store.Queries, m *Manager, log *charmlog.Logger) *Mod
 // Run starts the refresh loop. Call in a goroutine.
 func (r *ModelsRefresher) Run(ctx context.Context) {
 	r.log.Info("models refresher starting", "interval", ModelsRefreshInterval)
-	r.refresh(ctx)
+	r.refreshAll(ctx)
 
 	t := time.NewTicker(ModelsRefreshInterval)
 	defer t.Stop()
@@ -51,232 +48,44 @@ func (r *ModelsRefresher) Run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			r.refresh(ctx)
+			r.refreshAll(ctx)
 		}
 	}
 }
 
-type v1Model struct {
-	ID            string `json:"id"`
-	DisplayName   string `json:"display_name"`
-	MaxInputTokens int   `json:"max_input_tokens"`
-	MaxTokens     int    `json:"max_tokens"`
-	IsChatModel   bool   `json:"is_chat_model"` // not in the response but we infer
-	Capabilities  struct {
-		Thinking struct {
-			Supported bool `json:"supported"`
-		} `json:"thinking"`
-		ImageInput struct {
-			Supported bool `json:"supported"`
-		} `json:"image_input"`
-		StructuredOutputs struct {
-			Supported bool `json:"supported"`
-		} `json:"structured_outputs"`
-	} `json:"capabilities"`
-	Tier        string `json:"tier"`
-	Object      string `json:"object"`
-}
-
-type baseModelResp struct {
-	ID                string   `json:"id"`
-	Label             string   `json:"label"`
-	Description       string   `json:"description"`
-	ContextWindow     int64    `json:"context_window"`
-	InputPricePerMil  float64  `json:"input_price_per_million"`
-	OutputPricePerMil *float64 `json:"output_price_per_million"`
-	License           string   `json:"license"`
-	Tier              string   `json:"tier"`
-	IsChatModel       bool     `json:"is_chat_model"`
-}
-
-func (r *ModelsRefresher) refresh(ctx context.Context) {
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-
-	// Pick a key to authenticate. Rotate through keys on error.
-	apiKey := r.pickKey(ctx)
-
-	// Fetch /base-models (no auth required but nice to have for rate limits).
-	baseModels, err := r.fetchBaseModels(ctx)
-	if err != nil {
-		r.log.Warn("models refresher: base-models fetch failed", "err", err)
-		// Non-fatal — we can still upsert from /v1/models.
-	}
-	baseByID := map[string]baseModelResp{}
-	for _, m := range baseModels {
-		baseByID[m.ID] = m
-	}
-
-	// Fetch /v1/models (requires auth).
-	if apiKey == "" {
-		r.log.Warn("models refresher: no healthy key available, skipping /v1/models")
-		return
-	}
-	v1Models, err := r.fetchV1Models(ctx, apiKey)
-	if err != nil {
-		r.log.Warn("models refresher: /v1/models fetch failed", "err", err)
-		return
-	}
-
-	now := time.Now().Unix()
-	upserted := 0
-
-	// Build v1 index for enrichment.
-	v1ByID := map[string]v1Model{}
-	for _, m := range v1Models {
-		v1ByID[m.ID] = m
-	}
-
-	// Primary source: /base-models (includes models not in /v1, e.g. off-plan).
-	for _, bm := range baseModels {
-		vm := v1ByID[bm.ID]
-
-		label := bm.Label
-		desc := bm.Description
-		tier := bm.Tier
-
-		var inputMicros, outputMicros int64
-		if bm.InputPricePerMil > 0 {
-			inputMicros = int64(math.Round(bm.InputPricePerMil * 1_000_000))
-		}
-		if bm.OutputPricePerMil != nil && *bm.OutputPricePerMil > 0 {
-			outputMicros = int64(math.Round(*bm.OutputPricePerMil * 1_000_000))
+// refreshAll iterates over all active providers and refreshes their model catalogs.
+func (r *ModelsRefresher) refreshAll(ctx context.Context) {
+	providers := r.reg.List()
+	for _, p := range providers {
+		fetcher := GetModelFetcher(string(p.Type))
+		if fetcher == nil {
+			continue
 		}
 
-		isChat := int64(0)
-		if bm.IsChatModel {
-			isChat = 1
+		// Pick a key for this provider (needed for auth on some endpoints).
+		var apiKey string
+		sel, err := r.manager.PickForProvider(ctx, p.ID)
+		if err == nil && sel != nil {
+			apiKey = sel.APIKey()
 		}
 
-		// Enrich with /v1 data where available.
-		var ctxWindow, maxOutput int64
-		var rawJSON []byte
-		if vm.ID != "" {
-			if vm.DisplayName != "" {
-				label = vm.DisplayName
+		ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		models, err := fetcher.FetchModels(ctx, r.httpClient, p.BaseURL, apiKey)
+		cancel()
+
+		if err != nil {
+			r.log.Warn("models refresher: fetch failed",
+				"provider", p.ID, "err", err)
+			continue
+		}
+
+		upserted := 0
+		for _, params := range models {
+			if err := r.q.UpsertModelCatalog(ctx, params); err == nil {
+				upserted++
 			}
-			if vm.Tier != "" {
-				tier = vm.Tier
-			}
-			ctxWindow = int64(vm.MaxInputTokens)
-			maxOutput = int64(vm.MaxTokens)
-			rawJSON, _ = json.Marshal(vm)
-		} else {
-			ctxWindow = bm.ContextWindow
-			rawJSON, _ = json.Marshal(bm)
 		}
-
-		_ = r.q.UpsertModelCatalog(ctx, store.UpsertModelCatalogParams{
-			ID:                            bm.ID,
-			Label:                         label,
-			Description:                   desc,
-			ContextWindow:                 nullInt64(ctxWindow),
-			MaxOutputTokens:               nullInt64(maxOutput),
-			IsChat:                        isChat,
-			Tier:                          nullString(tier),
-			InputPricePerMillionMicros:    nullInt64(inputMicros),
-			OutputPricePerMillionMicros:   nullInt64(outputMicros),
-			RawJson:                       string(rawJSON),
-			RefreshedAt:                   now,
-		})
-		upserted++
+		r.log.Info("models refresher: catalog updated",
+			"provider", p.ID, "models", len(models), "upserted", upserted)
 	}
-
-	// Also upsert any models that only exist in /v1 (unlikely but don't lose them).
-	for _, vm := range v1Models {
-		if _, ok := baseByID[vm.ID]; ok {
-			continue // already handled above
-		}
-		label := vm.DisplayName
-		var inputMicros, outputMicros int64
-		isChat := int64(1)
-		rawJSON, _ := json.Marshal(vm)
-
-		_ = r.q.UpsertModelCatalog(ctx, store.UpsertModelCatalogParams{
-			ID:                            vm.ID,
-			Label:                         label,
-			ContextWindow:                 nullInt64(int64(vm.MaxInputTokens)),
-			MaxOutputTokens:               nullInt64(int64(vm.MaxTokens)),
-			IsChat:                        isChat,
-			Tier:                          nullString(vm.Tier),
-			InputPricePerMillionMicros:    nullInt64(inputMicros),
-			OutputPricePerMillionMicros:   nullInt64(outputMicros),
-			RawJson:                       string(rawJSON),
-			RefreshedAt:                   now,
-		})
-		upserted++
-	}
-
-	r.log.Info("models refresher: catalog updated", "base_models", len(baseModels), "v1_models", len(v1Models), "upserted", upserted)
-}
-
-// pickKey returns a decrypted pioneer API key from the pool, or "" if none available.
-func (r *ModelsRefresher) pickKey(ctx context.Context) string {
-	sel, err := r.manager.Pick(ctx)
-	if err != nil {
-		return ""
-	}
-	return sel.APIKey()
-}
-
-func (r *ModelsRefresher) fetchBaseModels(ctx context.Context) ([]baseModelResp, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://api.pioneer.ai/base-models", nil)
-	if err != nil {
-		return nil, err
-	}
-	resp, err := r.httpClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode/100 != 2 {
-		return nil, fmt.Errorf("base-models: HTTP %d", resp.StatusCode)
-	}
-	b, _ := io.ReadAll(resp.Body)
-	var out struct {
-		Models []baseModelResp `json:"models"`
-	}
-	if err := json.Unmarshal(b, &out); err != nil {
-		return nil, err
-	}
-	return out.Models, nil
-}
-
-func (r *ModelsRefresher) fetchV1Models(ctx context.Context, apiKey string) ([]v1Model, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://api.pioneer.ai/v1/models", nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Authorization", "Bearer "+apiKey)
-	resp, err := r.httpClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode/100 != 2 {
-		b, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("v1/models: HTTP %d: %s", resp.StatusCode, b)
-	}
-	b, _ := io.ReadAll(resp.Body)
-	var out struct {
-		Data []v1Model `json:"data"`
-	}
-	if err := json.Unmarshal(b, &out); err != nil {
-		return nil, err
-	}
-	return out.Data, nil
-}
-
-func nullInt64(v int64) sql.NullInt64 {
-	if v == 0 {
-		return sql.NullInt64{}
-	}
-	return sql.NullInt64{Int64: v, Valid: true}
-}
-
-func nullString(s string) sql.NullString {
-	if s == "" {
-		return sql.NullString{}
-	}
-	return sql.NullString{String: s, Valid: true}
 }

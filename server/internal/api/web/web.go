@@ -22,7 +22,6 @@ import (
 	"github.com/taciturnaxolotl/potluck/internal/auth"
 	"github.com/taciturnaxolotl/potluck/internal/ledger"
 	"github.com/taciturnaxolotl/potluck/internal/pool"
-	"github.com/taciturnaxolotl/potluck/internal/provider"
 	"github.com/taciturnaxolotl/potluck/internal/provider/registry"
 	"github.com/taciturnaxolotl/potluck/internal/store"
 	"github.com/taciturnaxolotl/potluck/internal/stream"
@@ -30,14 +29,12 @@ import (
 
 // Server bundles the deps the web handlers need.
 type Server struct {
-	Q            *store.Queries
-	Auth         *auth.Service
-	Ledger       *ledger.Service
-	Hub          *stream.Hub
-	Pool         *pool.Manager
-	Provider     *provider.Client // Pioneer upstream (legacy; being replaced by Registry)
-	FreeProvider *provider.Client // self-hosted free endpoint; nil if not configured
-	Registry     *registry.Registry // multi-provider registry (new)
+	Q        *store.Queries
+	Auth     *auth.Service
+	Ledger   *ledger.Service
+	Hub      *stream.Hub
+	Pool     *pool.Manager
+	Registry *registry.Registry // multi-provider registry
 }
 
 // Mount registers /api/* routes on r. The caller wraps with cookie-auth

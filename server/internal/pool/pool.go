@@ -120,6 +120,23 @@ func (m *Manager) PickForUser(ctx context.Context, userID string) (*Selection, e
 	return &Selection{keyID: key.ID, plaintext: plaintext}, nil
 }
 
+// PickForProvider picks any healthy key for a specific provider.
+// Used by the models refresher to authenticate model listing requests.
+func (m *Manager) PickForProvider(ctx context.Context, providerID string) (*Selection, error) {
+	key, err := m.q.PickPoolKeyForProvider(ctx, providerID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrNoKeys
+		}
+		return nil, fmt.Errorf("pool: pick key for provider %s: %w", providerID, err)
+	}
+	plaintext, err := m.Decrypt(key.KeyCiphertext)
+	if err != nil {
+		return nil, fmt.Errorf("pool: decrypt key %s: %w", key.ID, err)
+	}
+	return &Selection{keyID: key.ID, plaintext: plaintext}, nil
+}
+
 // RecordSpend records spend for the key used in a request.
 // Call this after the upstream call settles (use context.Background() — the
 // request context may already be canceled).
