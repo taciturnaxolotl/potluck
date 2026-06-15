@@ -33,6 +33,7 @@ import (
 	"github.com/taciturnaxolotl/potluck/internal/money"
 	"github.com/taciturnaxolotl/potluck/internal/pool"
 	"github.com/taciturnaxolotl/potluck/internal/provider"
+	"github.com/taciturnaxolotl/potluck/internal/provider/registry"
 	"github.com/taciturnaxolotl/potluck/internal/store"
 	"github.com/taciturnaxolotl/potluck/internal/stream"
 
@@ -107,6 +108,24 @@ func main() {
 		log.Info("free provider configured", "base_url", cfg.FreeProvider.BaseURL)
 	}
 
+	// Build multi-provider registry from DB. Falls back to a pioneer-only
+	// registry if the providers table hasn't been migrated yet.
+	reg, err := registry.LoadFromDB(context.Background(), q)
+	if err != nil {
+		log.Warn("failed to load providers from DB, using pioneer-only fallback", "err", err)
+		configs := []registry.ProviderConfig{
+			{ID: "pioneer", Type: registry.TypeOpenAICompat, Name: "Pioneer", BaseURL: cfg.Pioneer.BaseURL},
+		}
+		if cfg.FreeProvider.Enabled() {
+			freeBase := strings.TrimSuffix(strings.TrimRight(cfg.FreeProvider.BaseURL, "/"), "/v1")
+			configs = append(configs, registry.ProviderConfig{
+				ID: "free", Type: registry.TypeFree, Name: "Free", BaseURL: freeBase,
+			})
+		}
+		reg = registry.New(configs)
+	}
+	log.Info("provider registry loaded", "providers", len(reg.List()))
+
 	keyPool, err := pool.New(q, cfg.PoolKeySecret)
 	if err != nil {
 		log.Fatal("pool: init failed", "err", err)
@@ -169,6 +188,7 @@ func main() {
 		Pool:         keyPool,
 		Provider:     pioneer,
 		FreeProvider: freeProvider,
+		Registry:     reg,
 	}
 	v1Srv := &v1.Server{
 		Q:            q,
@@ -177,6 +197,7 @@ func main() {
 		Provider:     pioneer,
 		Pool:         keyPool,
 		FreeProvider: freeProvider,
+		Registry:     reg,
 	}
 
 	// /api/* — cookie-authenticated, internal surface.

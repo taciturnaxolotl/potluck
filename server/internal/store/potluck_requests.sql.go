@@ -32,7 +32,7 @@ const createPotluckRequest = `-- name: CreatePotluckRequest :one
 INSERT INTO potluck_requests (
     id, user_id, api_key_id, pool_key_id, surface, model, started_at, status
 ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')
-RETURNING id, user_id, api_key_id, pool_key_id, surface, model, started_at, finished_at, prompt_tokens, completion_tokens, total_tokens, status, error_code
+RETURNING id, user_id, api_key_id, pool_key_id, surface, model, started_at, finished_at, prompt_tokens, completion_tokens, total_tokens, status, error_code, provider_id
 `
 
 type CreatePotluckRequestParams struct {
@@ -71,6 +71,7 @@ func (q *Queries) CreatePotluckRequest(ctx context.Context, arg CreatePotluckReq
 		&i.TotalTokens,
 		&i.Status,
 		&i.ErrorCode,
+		&i.ProviderID,
 	)
 	return i, err
 }
@@ -107,7 +108,7 @@ func (q *Queries) FinishPotluckRequest(ctx context.Context, arg FinishPotluckReq
 }
 
 const listUnmatchedRequestsForKey = `-- name: ListUnmatchedRequestsForKey :many
-SELECT pr.id, pr.user_id, pr.api_key_id, pr.pool_key_id, pr.surface, pr.model, pr.started_at, pr.finished_at, pr.prompt_tokens, pr.completion_tokens, pr.total_tokens, pr.status, pr.error_code FROM potluck_requests pr
+SELECT pr.id, pr.user_id, pr.api_key_id, pr.pool_key_id, pr.surface, pr.model, pr.started_at, pr.finished_at, pr.prompt_tokens, pr.completion_tokens, pr.total_tokens, pr.status, pr.error_code, pr.provider_id FROM potluck_requests pr
 WHERE pr.pool_key_id = ?
   AND pr.finished_at >= ?
   AND pr.finished_at <= ?
@@ -150,6 +151,7 @@ func (q *Queries) ListUnmatchedRequestsForKey(ctx context.Context, arg ListUnmat
 			&i.TotalTokens,
 			&i.Status,
 			&i.ErrorCode,
+			&i.ProviderID,
 		); err != nil {
 			return nil, err
 		}

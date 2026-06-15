@@ -23,6 +23,7 @@ import (
 	"github.com/taciturnaxolotl/potluck/internal/ledger"
 	"github.com/taciturnaxolotl/potluck/internal/pool"
 	"github.com/taciturnaxolotl/potluck/internal/provider"
+	"github.com/taciturnaxolotl/potluck/internal/provider/registry"
 	"github.com/taciturnaxolotl/potluck/internal/store"
 	"github.com/taciturnaxolotl/potluck/internal/stream"
 )
@@ -34,8 +35,9 @@ type Server struct {
 	Ledger       *ledger.Service
 	Hub          *stream.Hub
 	Pool         *pool.Manager
-	Provider     *provider.Client // Pioneer upstream
+	Provider     *provider.Client // Pioneer upstream (legacy; being replaced by Registry)
 	FreeProvider *provider.Client // self-hosted free endpoint; nil if not configured
+	Registry     *registry.Registry // multi-provider registry (new)
 }
 
 // Mount registers /api/* routes on r. The caller wraps with cookie-auth

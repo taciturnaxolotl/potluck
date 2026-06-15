@@ -1,0 +1,174 @@
+// Package registry provides a multi-provider registry that maps provider IDs
+// to fantasy.Provider instances. It handles construction of the correct
+// fantasy provider based on the provider type stored in the database.
+package registry
+
+import (
+	"context"
+	"fmt"
+	"strings"
+	"sync"
+
+	"charm.land/fantasy"
+	"charm.land/fantasy/providers/anthropic"
+	"charm.land/fantasy/providers/google"
+	"charm.land/fantasy/providers/openaicompat"
+	"charm.land/fantasy/providers/openrouter"
+
+	"github.com/taciturnaxolotl/potluck/internal/store"
+)
+
+// ProviderType identifies how to construct a fantasy provider.
+type ProviderType string
+
+const (
+	TypeOpenAICompat ProviderType = "openai_compat"
+	TypeAnthropic    ProviderType = "anthropic"
+	TypeGoogle       ProviderType = "google"
+	TypeOpenRouter   ProviderType = "openrouter"
+	TypeFree         ProviderType = "free" // no auth, openai-compat shape
+)
+
+// ProviderConfig holds the configuration for a single upstream provider.
+type ProviderConfig struct {
+	ID       string
+	Type     ProviderType
+	Name     string
+	BaseURL  string
+	Config   map[string]string // provider-specific config from config_json
+}
+
+// Registry manages multiple upstream providers and creates fantasy.Provider
+// instances on demand.
+type Registry struct {
+	mu        sync.RWMutex
+	providers map[string]ProviderConfig
+}
+
+// New creates a registry from a list of provider configs.
+func New(configs []ProviderConfig) *Registry {
+	m := make(map[string]ProviderConfig, len(configs))
+	for _, c := range configs {
+		m[c.ID] = c
+	}
+	return &Registry{providers: m}
+}
+
+// LoadFromDB loads all active providers from the database.
+func LoadFromDB(ctx context.Context, q *store.Queries) (*Registry, error) {
+	rows, err := q.ListActiveProviders(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list providers: %w", err)
+	}
+	configs := make([]ProviderConfig, 0, len(rows))
+	for _, r := range rows {
+		configs = append(configs, ProviderConfig{
+			ID:      r.ID,
+			Type:    ProviderType(r.Type),
+			Name:    r.Name,
+			BaseURL: r.BaseUrl,
+			// TODO: parse config_json into map when needed
+		})
+	}
+	return New(configs), nil
+}
+
+// Get returns the config for a provider ID.
+func (r *Registry) Get(providerID string) (ProviderConfig, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	c, ok := r.providers[providerID]
+	return c, ok
+}
+
+// List returns all registered provider configs.
+func (r *Registry) List() []ProviderConfig {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	out := make([]ProviderConfig, 0, len(r.providers))
+	for _, c := range r.providers {
+		out = append(out, c)
+	}
+	return out
+}
+
+// ToFantasy creates a fantasy.Provider for the given provider ID and API key.
+// For free providers, apiKey is ignored.
+func (r *Registry) ToFantasy(providerID, apiKey string) (fantasy.Provider, error) {
+	cfg, ok := r.Get(providerID)
+	if !ok {
+		return nil, fmt.Errorf("unknown provider: %s", providerID)
+	}
+	return newFantasyProvider(cfg, apiKey)
+}
+
+// ResolveModel splits a prefixed model ID into (providerID, upstreamModel).
+// If no prefix is found, returns ("pioneer", modelID) as the default.
+// Format: "provider_id/model_name" e.g. "openrouter/claude-sonnet-4"
+func (r *Registry) ResolveModel(model string) (providerID, upstreamModel string) {
+	if idx := strings.IndexByte(model, '/'); idx > 0 {
+		prefix := model[:idx]
+		if _, ok := r.Get(prefix); ok {
+			return prefix, model[idx+1:]
+		}
+	}
+	// Default to pioneer for bare model names (backward compat).
+	return "pioneer", model
+}
+
+func newFantasyProvider(cfg ProviderConfig, apiKey string) (fantasy.Provider, error) {
+	switch cfg.Type {
+	case TypeOpenAICompat:
+		opts := []openaicompat.Option{
+			openaicompat.WithBaseURL(cfg.BaseURL),
+			openaicompat.WithName(cfg.Name),
+		}
+		if apiKey != "" {
+			opts = append(opts, openaicompat.WithAPIKey(apiKey))
+		}
+		return openaicompat.New(opts...)
+
+	case TypeAnthropic:
+		opts := []anthropic.Option{
+			anthropic.WithName(cfg.Name),
+		}
+		if cfg.BaseURL != "" {
+			opts = append(opts, anthropic.WithBaseURL(cfg.BaseURL))
+		}
+		if apiKey != "" {
+			opts = append(opts, anthropic.WithAPIKey(apiKey))
+		}
+		return anthropic.New(opts...)
+
+	case TypeGoogle:
+		opts := []google.Option{
+			google.WithName(cfg.Name),
+		}
+		if apiKey != "" {
+			opts = append(opts, google.WithGeminiAPIKey(apiKey))
+		}
+		if cfg.BaseURL != "" {
+			opts = append(opts, google.WithBaseURL(cfg.BaseURL))
+		}
+		return google.New(opts...)
+
+	case TypeOpenRouter:
+		opts := []openrouter.Option{
+			openrouter.WithName(cfg.Name),
+		}
+		if apiKey != "" {
+			opts = append(opts, openrouter.WithAPIKey(apiKey))
+		}
+		return openrouter.New(opts...)
+
+	case TypeFree:
+		// Free providers use openaicompat with no auth.
+		return openaicompat.New(
+			openaicompat.WithBaseURL(cfg.BaseURL),
+			openaicompat.WithName(cfg.Name),
+		)
+
+	default:
+		return nil, fmt.Errorf("unsupported provider type: %s", cfg.Type)
+	}
+}

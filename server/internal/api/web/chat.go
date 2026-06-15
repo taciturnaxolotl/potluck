@@ -9,11 +9,12 @@ import (
 	"strings"
 	"time"
 
+	"charm.land/fantasy"
 	"github.com/google/uuid"
 
 	apimw "github.com/taciturnaxolotl/potluck/internal/api/middleware"
+	fadapter "github.com/taciturnaxolotl/potluck/internal/provider/fantasy"
 	"github.com/taciturnaxolotl/potluck/internal/pool"
-	"github.com/taciturnaxolotl/potluck/internal/provider"
 	"github.com/taciturnaxolotl/potluck/internal/store"
 	"github.com/taciturnaxolotl/potluck/internal/stream"
 	"github.com/taciturnaxolotl/potluck/internal/tools"
@@ -86,8 +87,9 @@ type chatMsg struct {
 // When the model invokes tools, the server executes them and re-prompts in a
 // loop (up to 5 iterations) until finish_reason is "stop" or content-only.
 //
-// Models prefixed "free/" bypass the pool gate; all others go through the
-// shared pool and incur normal spend tracking.
+// Models prefixed "provider_id/" are routed to that provider via the registry.
+// Bare model names default to pioneer. Models prefixed "free/" bypass the pool
+// gate and use the free provider.
 func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	u, _ := currentUser(r)
 
@@ -101,14 +103,22 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Resolve provider and upstream model name.
 	isFree := strings.HasPrefix(req.Model, "free/")
+	var providerID, upstreamModel string
+	if isFree {
+		providerID = "free"
+		upstreamModel = strings.TrimPrefix(req.Model, "free/")
+	} else {
+		providerID, upstreamModel = s.Registry.ResolveModel(req.Model)
+	}
 
 	if !isFree {
 		if gr := apimw.CheckPoolGate(r.Context(), s.Q, s.Pool.HasHealthyKey, u); gr != nil {
 			writeErr(w, gr.Status, gr.Code, gr.Message)
 			return
 		}
-	} else if s.FreeProvider == nil {
+	} else if _, ok := s.Registry.Get("free"); !ok {
 		writeErr(w, 400, "invalid_request", "free provider not configured")
 		return
 	}
@@ -199,15 +209,13 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		StartedAt:          now,
 	})
 
-	// Pick provider and upstream model name.
-	upstreamModel := req.Model
-	var pc *provider.Client
+	// Pick pool key and construct fantasy provider.
 	var sel *pool.Selection
 	var reqID string
+	var apiKey string
 
 	if isFree {
-		pc = s.FreeProvider
-		upstreamModel = strings.TrimPrefix(req.Model, "free/")
+		apiKey = "" // free provider needs no key
 	} else {
 		var err error
 		sel, err = s.Pool.PickForUser(r.Context(), u.ID)
@@ -215,11 +223,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, 503, "no_pool_keys", "no active pool keys available")
 			return
 		}
-		pc = &provider.Client{
-			BaseURL: s.Provider.BaseURL,
-			APIKey:  sel.APIKey(),
-			HTTP:    s.Provider.HTTP,
-		}
+		apiKey = sel.APIKey()
 		reqID = uuid.NewString()
 		_, _ = s.Q.CreatePotluckRequest(r.Context(), store.CreatePotluckRequestParams{
 			ID:        reqID,
@@ -232,16 +236,37 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
+	fp, err := s.Registry.ToFantasy(providerID, apiKey)
+	if err != nil {
+		writeErr(w, 500, "provider_config", err.Error())
+		return
+	}
+	lm, err := fp.LanguageModel(r.Context(), upstreamModel)
+	if err != nil {
+		writeErr(w, 500, "provider_config", err.Error())
+		return
+	}
+
 	memoryRows, err := s.Q.GetUserMemory(r.Context(), u.ID)
 	if err != nil {
 		writeErr(w, 500, "internal", err.Error())
 		return
 	}
 
-	provMsgs := make([]provider.ChatMessage, 1, len(req.Messages)+1)
-	provMsgs[0] = provider.ChatMessage{Role: "system", Content: provider.StringContent(systemPrompt(memoryRows))}
+	// Build fantasy prompt messages.
+	prompt := []fantasy.Message{
+		fantasy.NewSystemMessage(systemPrompt(memoryRows)),
+	}
 	for _, m := range req.Messages {
-		provMsgs = append(provMsgs, provider.ChatMessage{Role: m.Role, Content: provider.StringContent(m.Content)})
+		switch m.Role {
+		case "user":
+			prompt = append(prompt, fantasy.NewUserMessage(m.Content))
+		case "assistant":
+			prompt = append(prompt, fantasy.Message{
+				Role:    fantasy.MessageRoleAssistant,
+				Content: []fantasy.MessagePart{fantasy.TextPart{Text: m.Content}},
+			})
+		}
 	}
 
 	w.Header().Set("Content-Type", "text/event-stream")
@@ -251,7 +276,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	flusher, _ := w.(http.Flusher)
 
 	var full strings.Builder
-	var usage *provider.Usage
+	var accUsage fadapter.AccumulatedUsage
 
 	_ = s.Q.SetStreamStatus(r.Context(), store.SetStreamStatusParams{
 		Status:       "running",
@@ -306,11 +331,12 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 
 	const maxIter = 5
 	for iter := 0; iter < maxIter; iter++ {
-		chunks, errs, err := pc.StreamChat(genCtx, provider.ChatRequest{
-			Model:    upstreamModel,
-			Messages: provMsgs,
-			Tools:    tools.Definitions(),
-		})
+		call := fantasy.Call{
+			Prompt: prompt,
+			Tools:  tools.FantasyDefinitions(),
+		}
+
+		streamResp, err := lm.Stream(genCtx, call)
 		if err != nil {
 			writeErr(w, 502, "provider_down", err.Error())
 			if !isFree && reqID != "" {
@@ -319,63 +345,63 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		toolCalls := make(map[int]*provider.ToolCall)
-		var finishReason string
+		// Accumulate tool calls across the stream.
+		type accumulatedToolCall struct {
+			id        string
+			name      string
+			arguments strings.Builder
+		}
+		activeTools := make(map[string]*accumulatedToolCall)
+		var toolOrder []string // preserve insertion order
+		var finishReason fantasy.FinishReason
 
-		streamDone := false
-		for !streamDone {
+		for part := range streamResp {
+			// Check for client disconnect without stopping generation.
 			select {
 			case <-ctxDone:
 				clientGone = true
 				ctxDone = nil
-				continue
-			case ch, ok := <-chunks:
-				if ch.Usage != nil {
-					usage = ch.Usage
+			default:
+			}
+
+			accUsage.Add(part)
+
+			switch part.Type {
+			case fantasy.StreamPartTypeTextDelta:
+				if part.Delta != "" {
+					full.WriteString(part.Delta)
+					emit("delta", map[string]any{"type": "delta", "content": part.Delta})
 				}
-				if !ok || ch.Done {
-					streamDone = true
-					continue
+
+			case fantasy.StreamPartTypeReasoningDelta:
+				if part.Delta != "" {
+					emit("reasoning", map[string]any{"type": "reasoning", "content": part.Delta})
 				}
-				if ch.ReasoningDelta != "" {
-					emit("reasoning", map[string]any{"type": "reasoning", "content": ch.ReasoningDelta})
+
+			case fantasy.StreamPartTypeToolInputStart:
+				tc := &accumulatedToolCall{
+					id:   part.ID,
+					name: part.ToolCallName,
 				}
-				if ch.Delta != "" {
-					full.WriteString(ch.Delta)
-					emit("delta", map[string]any{"type": "delta", "content": ch.Delta})
+				activeTools[part.ID] = tc
+				toolOrder = append(toolOrder, part.ID)
+
+			case fantasy.StreamPartTypeToolInputDelta:
+				if tc, ok := activeTools[part.ID]; ok {
+					tc.arguments.WriteString(part.ToolCallInput)
 				}
-				for _, tcd := range ch.ToolCalls {
-					if tcd.Index < 0 {
-						continue
-					}
-					tc, exists := toolCalls[tcd.Index]
-					if !exists {
-						tc = &provider.ToolCall{
-							ID:   tcd.ID,
-							Type: tcd.Type,
-						}
-						toolCalls[tcd.Index] = tc
-					}
-					if tcd.ID != "" {
-						tc.ID = tcd.ID
-					}
-					if tc.Type == "" && tcd.Type != "" {
-						tc.Type = tcd.Type
-					}
-					tc.Function.Name += tcd.Function.Name
-					tc.Function.Arguments += tcd.Function.Arguments
-				}
-				if ch.FinishReason != "" {
-					finishReason = ch.FinishReason
-				}
-			case e := <-errs:
-				if e != nil {
-					emit("error", map[string]any{"type": "error", "message": e.Error()})
+
+			case fantasy.StreamPartTypeFinish:
+				finishReason = part.FinishReason
+
+			case fantasy.StreamPartTypeError:
+				if part.Error != nil {
+					emit("error", map[string]any{"type": "error", "message": part.Error.Error()})
 					_ = s.Q.SetStreamStatus(genCtx, store.SetStreamStatusParams{
 						Status:       "error",
 						FinishedAt:   sql.NullInt64{Int64: time.Now().Unix(), Valid: true},
 						ErrorCode:    sql.NullString{String: "provider_down", Valid: true},
-						ErrorMessage: sql.NullString{String: e.Error(), Valid: true},
+						ErrorMessage: sql.NullString{String: part.Error.Error(), Valid: true},
 						ID:           streamID,
 					})
 					if !isFree && reqID != "" {
@@ -387,57 +413,69 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Tool invocation: execute tools, emit events, extend messages, re-stream.
-		if finishReason == "tool_calls" && len(toolCalls) > 0 {
-			for _, tc := range toolCalls {
+		if finishReason == fantasy.FinishReasonToolCalls && len(activeTools) > 0 {
+			// Build assistant message with tool calls.
+			var assistantParts []fantasy.MessagePart
+			if full.Len() > 0 {
+				assistantParts = append(assistantParts, fantasy.TextPart{Text: full.String()})
+			}
+			for _, id := range toolOrder {
+				tc := activeTools[id]
 				emit("tool_call", map[string]any{
 					"type":      "tool_call",
-					"id":        tc.ID,
-					"name":      tc.Function.Name,
-					"arguments": tc.Function.Arguments,
+					"id":        tc.id,
+					"name":      tc.name,
+					"arguments": tc.arguments.String(),
+				})
+				assistantParts = append(assistantParts, fantasy.ToolCallPart{
+					ToolCallID: tc.id,
+					ToolName:   tc.name,
+					Input:      tc.arguments.String(),
 				})
 			}
-
-			// Append the assistant message with tool calls to the growing history.
-			assistantTCs := make([]provider.ToolCall, 0, len(toolCalls))
-			for _, tc := range toolCalls {
-				assistantTCs = append(assistantTCs, *tc)
-			}
-			provMsgs = append(provMsgs, provider.ChatMessage{
-				Role:      "assistant",
-				Content:   nil,
-				ToolCalls: assistantTCs,
+			prompt = append(prompt, fantasy.Message{
+				Role:    fantasy.MessageRoleAssistant,
+				Content: assistantParts,
 			})
 
 			// Execute each tool and append a tool-role message with the result.
-			for _, tc := range toolCalls {
-				result, toolErr := tools.Execute(genCtx, s.Q, u.ID, tc.Function.Name, tc.Function.Arguments)
+			for _, id := range toolOrder {
+				tc := activeTools[id]
+				result, toolErr := tools.Execute(genCtx, s.Q, u.ID, tc.name, tc.arguments.String())
 				if toolErr != nil {
 					result = fmt.Sprintf("error: %v", toolErr)
 				}
 				emit("tool_result", map[string]any{
 					"type":         "tool_result",
-					"tool_call_id": tc.ID,
+					"tool_call_id": tc.id,
 					"content":      result,
 				})
-				provMsgs = append(provMsgs, provider.ChatMessage{
-					Role:       "tool",
-					ToolCallID: tc.ID,
-					Content:    provider.StringContent(result),
+				prompt = append(prompt, fantasy.Message{
+					Role: fantasy.MessageRoleTool,
+					Content: []fantasy.MessagePart{
+						fantasy.ToolResultPart{
+							ToolCallID: tc.id,
+							Output:     fantasy.ToolResultOutputContentText{Text: result},
+						},
+					},
 				})
 			}
+
+			// Reset for next iteration.
+			full.Reset()
 			continue
 		}
 
 		// No tool call or final iteration — done.
-		payload := map[string]any{"type": "done"}
-		if usage != nil {
-			payload["usage"] = map[string]any{
-				"prompt_tokens":     usage.PromptTokens,
-				"completion_tokens": usage.CompletionTokens,
-				"total_tokens":      usage.TotalTokens,
+		donePayload := map[string]any{"type": "done"}
+		if accUsage.HasUsage() {
+			donePayload["usage"] = map[string]any{
+				"prompt_tokens":     accUsage.InputTokens,
+				"completion_tokens": accUsage.OutputTokens,
+				"total_tokens":      accUsage.TotalTokens,
 			}
 		}
-		emit("done", payload)
+		emit("done", donePayload)
 		_ = s.Q.SetStreamStatus(genCtx, store.SetStreamStatusParams{
 			Status:       "done",
 			FinishedAt:   sql.NullInt64{Int64: time.Now().Unix(), Valid: true},
@@ -445,20 +483,20 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 			ErrorMessage: sql.NullString{},
 			ID:           streamID,
 		})
-		go s.finalizeChatMsg(convID, assistantMsgID, full.String(), isFree, sel, reqID, usage, isNewConv, firstUserMsg(req.Messages), pc, upstreamModel)
+		go s.finalizeChatMsg(convID, assistantMsgID, full.String(), isFree, sel, reqID, accUsage, isNewConv, firstUserMsg(req.Messages), fp, upstreamModel)
 		return
 	}
 
 	// Max iterations reached without content finish.
-	payload := map[string]any{"type": "done"}
-	if usage != nil {
-		payload["usage"] = map[string]any{
-			"prompt_tokens":     usage.PromptTokens,
-			"completion_tokens": usage.CompletionTokens,
-			"total_tokens":      usage.TotalTokens,
+	donePayload := map[string]any{"type": "done"}
+	if accUsage.HasUsage() {
+		donePayload["usage"] = map[string]any{
+			"prompt_tokens":     accUsage.InputTokens,
+			"completion_tokens": accUsage.OutputTokens,
+			"total_tokens":      accUsage.TotalTokens,
 		}
 	}
-	emit("done", payload)
+	emit("done", donePayload)
 	_ = s.Q.SetStreamStatus(genCtx, store.SetStreamStatusParams{
 		Status:       "done",
 		FinishedAt:   sql.NullInt64{Int64: time.Now().Unix(), Valid: true},
@@ -466,38 +504,49 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		ErrorMessage: sql.NullString{},
 		ID:           streamID,
 	})
-	go s.finalizeChatMsg(convID, assistantMsgID, full.String(), isFree, sel, reqID, usage, isNewConv, firstUserMsg(req.Messages), pc, upstreamModel)
+	go s.finalizeChatMsg(convID, assistantMsgID, full.String(), isFree, sel, reqID, accUsage, isNewConv, firstUserMsg(req.Messages), fp, upstreamModel)
 }
 
-func (s *Server) finalizeChatMsg(convID, aID, content string, isFree bool, sel *pool.Selection, reqID string, usage *provider.Usage, isNew bool, userMsg string, pc *provider.Client, model string) {
+func (s *Server) finalizeChatMsg(convID, aID, content string, isFree bool, sel *pool.Selection, reqID string, usage fadapter.AccumulatedUsage, isNew bool, userMsg string, fp fantasy.Provider, model string) {
 	ctx := context.Background()
 	_ = s.Q.AppendAssistantContent(ctx, store.AppendAssistantContentParams{Content: content, ID: aID})
 	_ = s.Q.TouchConversation(ctx, store.TouchConversationParams{UpdatedAt: time.Now().Unix(), ID: convID})
 	if !isFree && sel != nil {
-		var p, c, t int64
-		if usage != nil {
-			p, c, t = int64(usage.PromptTokens), int64(usage.CompletionTokens), int64(usage.TotalTokens)
-		}
-		finishWebReq(s.Q, reqID, p, c, t, "done")
+		finishWebReq(s.Q, reqID, usage.InputTokens, usage.OutputTokens, usage.TotalTokens, "done")
 		_ = s.Pool.RecordSpend(ctx, sel, 0)
 	}
-	if isNew && pc != nil && userMsg != "" {
-		go s.generateAndPushTitle(convID, userMsg, content, pc, model)
+	if isNew && userMsg != "" {
+		go s.generateAndPushTitle(convID, userMsg, content, fp, model)
 	}
 }
 
-func (s *Server) generateAndPushTitle(convID, userMsg, assistantMsg string, pc *provider.Client, model string) {
+func (s *Server) generateAndPushTitle(convID, userMsg, assistantMsg string, fp fantasy.Provider, model string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+
+	lm, err := fp.LanguageModel(ctx, model)
+	if err != nil {
+		return
+	}
 
 	uSnip := truncateTitle(userMsg, 300)
 	aSnip := truncateTitle(assistantMsg, 300)
 	prompt := "Generate a short title (3-7 words, no quotes, no trailing punctuation) for this conversation:\n\nUser: " + uSnip + "\nAssistant: " + aSnip + "\n\nReply with ONLY the title."
 
-	title, err := pc.Complete(ctx, model, []provider.ChatMessage{
-		{Role: "user", Content: provider.StringContent(prompt)},
+	resp, err := lm.Generate(ctx, fantasy.Call{
+		Prompt: []fantasy.Message{fantasy.NewUserMessage(prompt)},
 	})
-	if err != nil || title == "" {
+	if err != nil || len(resp.Content) == 0 {
+		return
+	}
+
+	var title string
+	for _, part := range resp.Content {
+		if tp, ok := part.(fantasy.TextPart); ok {
+			title += tp.Text
+		}
+	}
+	if title == "" {
 		return
 	}
 	title = truncateTitle(strings.Trim(title, `"' `), 80)

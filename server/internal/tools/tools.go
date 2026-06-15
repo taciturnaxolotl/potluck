@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"charm.land/fantasy"
+
 	"github.com/taciturnaxolotl/potluck/internal/fetch"
 	"github.com/taciturnaxolotl/potluck/internal/provider"
 	"github.com/taciturnaxolotl/potluck/internal/search"
@@ -106,6 +108,20 @@ func Definitions() []provider.ToolDef {
 			},
 		},
 	}
+}
+
+// FantasyDefinitions returns tool definitions in fantasy's format.
+func FantasyDefinitions() []fantasy.Tool {
+	defs := Definitions()
+	out := make([]fantasy.Tool, len(defs))
+	for i, d := range defs {
+		out[i] = fantasy.FunctionTool{
+			Name:        d.Function.Name,
+			Description: d.Function.Description,
+			InputSchema: d.Function.Parameters,
+		}
+	}
+	return out
 }
 
 // Execute runs a tool call and returns the result string.

@@ -1,7 +1,6 @@
 package v1
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -11,21 +10,20 @@ import (
 	"strings"
 	"time"
 
-	charmlog "charm.land/log/v2"
+	"charm.land/fantasy"
 	"github.com/google/uuid"
 
 	apimw "github.com/taciturnaxolotl/potluck/internal/api/middleware"
+	fadapter "github.com/taciturnaxolotl/potluck/internal/provider/fantasy"
 	"github.com/taciturnaxolotl/potluck/internal/pool"
-	"github.com/taciturnaxolotl/potluck/internal/provider"
 	"github.com/taciturnaxolotl/potluck/internal/store"
 )
 
-// handleChatCompletions proxies POST /v1/chat/completions.
+// handleChatCompletions proxies POST /v1/chat/completions through fantasy.
 //
-// Models prefixed with "free/" are routed to the self-hosted free provider
-// (when configured) and bypass the shared pool gate entirely — no pool key is
-// consumed and no spend is recorded. All other models go through the existing
-// pool-gated Pioneer path.
+// Models prefixed with "provider_id/" are routed to that provider.
+// Bare model names default to pioneer. Models prefixed "free/" bypass
+// the pool gate entirely.
 func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 8<<20))
 	if err != nil {
@@ -34,302 +32,108 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 	defer r.Body.Close()
 
-	var probe struct {
-		Stream bool   `json:"stream"`
-		Model  string `json:"model"`
-	}
-	if err := json.Unmarshal(body, &probe); err != nil {
+	var oaiReq oaiChatRequest
+	if err := json.Unmarshal(body, &oaiReq); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "request body is not valid JSON")
 		return
 	}
-
-	// Route free/ models to the self-hosted provider, bypassing the pool gate.
-	if s.FreeProvider != nil && strings.HasPrefix(probe.Model, "free/") {
-		// Strip the "free/" prefix before forwarding — the upstream doesn't know it.
-		upstreamModel := strings.TrimPrefix(probe.Model, "free/")
-		body = rewriteModelInBody(body, upstreamModel)
-		if probe.Stream {
-			s.streamCompletionFree(w, r, body)
-		} else {
-			s.bufferedCompletionFree(w, r, body)
-		}
+	if oaiReq.Model == "" {
+		writeError(w, http.StatusBadRequest, "invalid_request", "model is required")
 		return
+	}
+
+	// Resolve provider and upstream model name.
+	isFree := strings.HasPrefix(oaiReq.Model, "free/")
+	var providerID, upstreamModel string
+	if isFree {
+		providerID = "free"
+		upstreamModel = strings.TrimPrefix(oaiReq.Model, "free/")
+	} else {
+		providerID, upstreamModel = s.Registry.ResolveModel(oaiReq.Model)
 	}
 
 	// Paid path: enforce pool gate before picking a key.
-	u, _ := apimw.UserFromContext(r.Context())
-	if gr := apimw.CheckPoolGate(r.Context(), s.Q, s.Pool.HasHealthyKey, u); gr != nil {
-		writeError(w, gr.Status, gr.Code, gr.Message)
-		return
-	}
-
-	if probe.Stream {
-		s.streamCompletion(w, r, body, probe.Model)
-		return
-	}
-	s.bufferedCompletion(w, r, body, probe.Model)
-}
-
-// rewriteModelInBody replaces the "model" field in a raw JSON chat-completion
-// body. Returns the original body unchanged on any error.
-func rewriteModelInBody(body []byte, model string) []byte {
-	var req map[string]json.RawMessage
-	if err := json.Unmarshal(body, &req); err != nil {
-		return body
-	}
-	modelJSON, err := json.Marshal(model)
-	if err != nil {
-		return body
-	}
-	req["model"] = modelJSON
-	out, err := json.Marshal(req)
-	if err != nil {
-		return body
-	}
-	return out
-}
-
-// streamCompletionFree forwards a streaming request to the free provider.
-// No pool key is selected and no spend is recorded.
-func (s *Server) streamCompletionFree(w http.ResponseWriter, r *http.Request, body []byte) {
-	var req map[string]json.RawMessage
-	if err := json.Unmarshal(body, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
-		return
-	}
-	req["stream"] = json.RawMessage(`true`)
-	if _, ok := req["stream_options"]; !ok {
-		req["stream_options"] = json.RawMessage(`{"include_usage":true}`)
-	}
-	patchedBody, err := json.Marshal(req)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "server_error", err.Error())
-		return
-	}
-
-	chunks, errs, err := s.FreeProvider.StreamChatRaw(r.Context(), patchedBody)
-	if err != nil {
-		writeError(w, http.StatusBadGateway, "provider_down", err.Error())
-		return
-	}
-
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-	w.WriteHeader(http.StatusOK)
-	flusher, _ := w.(http.Flusher)
-
-	for {
-		select {
-		case <-r.Context().Done():
+	if !isFree {
+		u, _ := apimw.UserFromContext(r.Context())
+		if gr := apimw.CheckPoolGate(r.Context(), s.Q, s.Pool.HasHealthyKey, u); gr != nil {
+			writeError(w, gr.Status, gr.Code, gr.Message)
 			return
-		case ch, ok := <-chunks:
-			if !ok {
-				_, _ = w.Write([]byte("data: [DONE]\n\n"))
-				return
-			}
-			if ch.Done {
-				_, _ = w.Write([]byte("data: [DONE]\n\n"))
-				if flusher != nil {
-					flusher.Flush()
-				}
-				return
-			}
-			_, _ = w.Write([]byte("data: "))
-			_, _ = w.Write(ch.Raw)
-			_, _ = w.Write([]byte("\n\n"))
-			if flusher != nil {
-				flusher.Flush()
-			}
-		case e := <-errs:
-			if e != nil {
-				errJSON, _ := json.Marshal(map[string]any{
-					"error": map[string]any{
-						"message": e.Error(),
-						"type":    "server_error",
-						"code":    "provider_error",
-					},
-				})
-				_, _ = fmt.Fprintf(w, "data: %s\n\ndata: [DONE]\n\n", errJSON)
-				if flusher != nil {
-					flusher.Flush()
-				}
-				return
-			}
 		}
-	}
-}
-
-// bufferedCompletionFree forwards a non-streaming request to the free provider.
-// No pool key is selected and no spend is recorded.
-func (s *Server) bufferedCompletionFree(w http.ResponseWriter, r *http.Request, body []byte) {
-	req, err := http.NewRequestWithContext(r.Context(),
-		http.MethodPost, s.FreeProvider.BaseURL+"/v1/chat/completions", bytes.NewReader(body))
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "server_error", err.Error())
+	} else if _, ok := s.Registry.Get("free"); !ok {
+		writeError(w, http.StatusBadRequest, "invalid_request", "free provider not configured")
 		return
 	}
-	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := s.FreeProvider.HTTP.Do(req)
-	if err != nil {
-		writeError(w, http.StatusBadGateway, "provider_down", err.Error())
-		return
-	}
-	defer resp.Body.Close()
-
-	respBody, _ := io.ReadAll(resp.Body)
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(resp.StatusCode)
-	_, _ = w.Write(respBody)
-}
-
-// bufferedCompletion handles a non-streaming chat completion.
-func (s *Server) bufferedCompletion(w http.ResponseWriter, r *http.Request, body []byte, model string) {
+	// Pick pool key and construct fantasy provider.
+	var sel *pool.Selection
+	var apiKey string
+	var reqID string
 	u, _ := apimw.UserFromContext(r.Context())
-	apiKey, _ := apimw.APIKeyFromContext(r.Context())
+	apiKeyObj, _ := apimw.APIKeyFromContext(r.Context())
 
-	var userID string
-	if u != nil {
-		userID = u.ID
-	}
-	sel, err := s.Pool.PickForUser(r.Context(), userID)
-	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, "no_pool_keys", "no active pool keys available")
-		return
-	}
-
-	// Write request log row immediately.
-	reqID := uuid.NewString()
-	poolKeyID := sql.NullString{String: sel.KeyID(), Valid: sel.KeyID() != ""}
-	apiKeyID := sql.NullString{}
-	if apiKey != nil {
-		apiKeyID = sql.NullString{String: apiKey.ID, Valid: true}
-	}
-	startedAt := time.Now().Unix()
-	if u != nil {
-		_, _ = s.Q.CreatePotluckRequest(r.Context(), store.CreatePotluckRequestParams{
-			ID:        reqID,
-			UserID:    u.ID,
-			ApiKeyID:  apiKeyID,
-			PoolKeyID: poolKeyID,
-			Surface:   "v1",
-			Model:     model,
-			StartedAt: startedAt,
-		})
-	}
-
-	req, err := http.NewRequestWithContext(r.Context(),
-		http.MethodPost, s.Provider.BaseURL+"/v1/chat/completions", bytes.NewReader(body))
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "server_error", err.Error())
-		return
-	}
-	req.Header.Set("Authorization", "Bearer "+sel.APIKey())
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := s.Provider.HTTP.Do(req)
-	if err != nil {
-		writeError(w, http.StatusBadGateway, "provider_down", err.Error())
+	if !isFree {
+		var userID string
 		if u != nil {
-			go finishRequest(s.Q, reqID, 0, 0, 0, "error")
+			userID = u.ID
 		}
-		return
-	}
-	defer resp.Body.Close()
+		sel, err = s.Pool.PickForUser(r.Context(), userID)
+		if err != nil {
+			writeError(w, http.StatusServiceUnavailable, "no_pool_keys", "no active pool keys available")
+			return
+		}
+		apiKey = sel.APIKey()
 
-	// Buffer the response so we can parse usage before returning.
-	respBody, _ := io.ReadAll(resp.Body)
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(resp.StatusCode)
-	_, _ = w.Write(respBody)
-
-	// Parse usage from the response body and settle asynchronously.
-	go func() {
-		var respJSON struct {
-			Usage *provider.Usage `json:"usage"`
-		}
-		_ = json.Unmarshal(respBody, &respJSON)
-		var prompt, completion, total int64
-		if respJSON.Usage != nil {
-			prompt = int64(respJSON.Usage.PromptTokens)
-			completion = int64(respJSON.Usage.CompletionTokens)
-			total = int64(respJSON.Usage.TotalTokens)
-		}
-		status := "done"
-		if resp.StatusCode/100 != 2 {
-			status = "error"
+		// Write request log row.
+		reqID = uuid.NewString()
+		poolKeyID := sql.NullString{String: sel.KeyID(), Valid: sel.KeyID() != ""}
+		apiKeyID := sql.NullString{}
+		if apiKeyObj != nil {
+			apiKeyID = sql.NullString{String: apiKeyObj.ID, Valid: true}
 		}
 		if u != nil {
-			finishRequest(s.Q, reqID, prompt, completion, total, status)
+			_, _ = s.Q.CreatePotluckRequest(r.Context(), store.CreatePotluckRequestParams{
+				ID:        reqID,
+				UserID:    u.ID,
+				ApiKeyID:  apiKeyID,
+				PoolKeyID: poolKeyID,
+				Surface:   "v1",
+				Model:     oaiReq.Model,
+				StartedAt: time.Now().Unix(),
+			})
 		}
-		_ = s.Pool.RecordSpend(context.Background(), sel, 0)
-	}()
-}
-
-// streamCompletion forwards an SSE chat completion straight through.
-func (s *Server) streamCompletion(w http.ResponseWriter, r *http.Request, body []byte, model string) {
-	u, _ := apimw.UserFromContext(r.Context())
-	apiKey, _ := apimw.APIKeyFromContext(r.Context())
-
-	var userID string
-	if u != nil {
-		userID = u.ID
 	}
-	sel, err := s.Pool.PickForUser(r.Context(), userID)
+
+	fp, err := s.Registry.ToFantasy(providerID, apiKey)
 	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, "no_pool_keys", "no active pool keys available")
+		writeError(w, http.StatusInternalServerError, "provider_config", err.Error())
+		return
+	}
+	lm, err := fp.LanguageModel(r.Context(), upstreamModel)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "provider_config", err.Error())
 		return
 	}
 
-	// Write request log row immediately.
-	reqID := uuid.NewString()
-	poolKeyID := sql.NullString{String: sel.KeyID(), Valid: sel.KeyID() != ""}
-	apiKeyID := sql.NullString{}
-	if apiKey != nil {
-		apiKeyID = sql.NullString{String: apiKey.ID, Valid: true}
-	}
-	startedAt := time.Now().Unix()
-	if u != nil {
-		_, _ = s.Q.CreatePotluckRequest(r.Context(), store.CreatePotluckRequestParams{
-			ID:        reqID,
-			UserID:    u.ID,
-			ApiKeyID:  apiKeyID,
-			PoolKeyID: poolKeyID,
-			Surface:   "v1",
-			Model:     model,
-			StartedAt: startedAt,
-		})
-	}
-
-	// Inject stream_options.include_usage into the raw body so we get
-	// accurate usage for settlement. We forward the body as-is otherwise
-	// to preserve tool_calls, tool_call_id, and any other fields that
-	// our typed ChatMessage struct would strip.
-	var req map[string]json.RawMessage
-	if err := json.Unmarshal(body, &req); err != nil {
+	// Translate OpenAI request → fantasy.Call.
+	call, err := translateOAICall(oaiReq)
+	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
-	req["stream"] = json.RawMessage(`true`)
-	if _, ok := req["stream_options"]; !ok {
-		req["stream_options"] = json.RawMessage(`{"include_usage":true}`)
-	}
-	patchedBody, err := json.Marshal(req)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "server_error", err.Error())
-		return
-	}
 
-	pc := &provider.Client{
-		BaseURL: s.Provider.BaseURL,
-		APIKey:  sel.APIKey(),
-		HTTP:    s.Provider.HTTP,
+	if oaiReq.Stream {
+		s.streamCompletion(w, r, lm, call, upstreamModel, oaiReq.StreamOptions.IncludeUsage, sel, reqID, u)
+	} else {
+		s.bufferedCompletion(w, r, lm, call, sel, reqID, u)
 	}
-	chunks, errs, err := pc.StreamChatRaw(r.Context(), patchedBody)
+}
+
+// streamCompletion handles streaming chat completions via fantasy.
+func (s *Server) streamCompletion(w http.ResponseWriter, r *http.Request, lm fantasy.LanguageModel, call fantasy.Call, model string, includeUsage bool, sel *pool.Selection, reqID string, u *store.User) {
+	streamResp, err := lm.Stream(r.Context(), call)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "provider_down", err.Error())
-		if u != nil {
+		if u != nil && reqID != "" {
 			go finishRequest(s.Q, reqID, 0, 0, 0, "error")
 		}
 		return
@@ -341,95 +145,101 @@ func (s *Server) streamCompletion(w http.ResponseWriter, r *http.Request, body [
 	w.WriteHeader(http.StatusOK)
 	flusher, _ := w.(http.Flusher)
 
-	var usage *provider.Usage
-	chunkCount := 0
-	for {
-		select {
-		case <-r.Context().Done():
-			if u != nil {
-				go finishRequest(s.Q, reqID, 0, 0, 0, "canceled")
+	adapter := fadapter.NewV1Adapter(model, includeUsage)
+	var accUsage fadapter.AccumulatedUsage
+
+	for part := range streamResp {
+		accUsage.Add(part)
+
+		if part.Type == fantasy.StreamPartTypeError && part.Error != nil {
+			fadapter.WriteError(w, part.Error.Error(), "provider_error")
+			if u != nil && reqID != "" {
+				go finishRequest(s.Q, reqID, 0, 0, 0, "error")
 			}
 			return
-		case ch, ok := <-chunks:
-			if !ok {
-				// Chunks channel closed — should only happen after errs fires.
-				// If we get here without an error it means the goroutine exited
-				// cleanly (sent [DONE] or hit the no-DONE error path above).
-				_, _ = w.Write([]byte("data: [DONE]\n\n"))
-				go settle(s.Q, s.Pool, sel, reqID, usage, u)
-				return
-			}
-			if ch.Usage != nil {
-				usage = ch.Usage
-			}
-			if ch.Done {
-				_, _ = w.Write([]byte("data: [DONE]\n\n"))
-				if flusher != nil {
-					flusher.Flush()
-				}
-				go settle(s.Q, s.Pool, sel, reqID, usage, u)
-				return
-			}
-			chunkCount++
-			_, _ = w.Write([]byte("data: "))
-			_, _ = w.Write(ch.Raw)
-			_, _ = w.Write([]byte("\n\n"))
+		}
+
+		chunks := adapter.Adapt(part)
+		for _, chunk := range chunks {
+			_, _ = w.Write(chunk)
 			if flusher != nil {
 				flusher.Flush()
 			}
-		case e := <-errs:
-			if e != nil {
-				tokensReceived := 0
-				if usage != nil {
-					tokensReceived = usage.TotalTokens
-				}
-				charmlog.Error("stream error from pioneer",
-					"user_id", func() string {
-						if u != nil { return u.ID }
-						return ""
-					}(),
-					"model", model,
-					"pool_key_id", sel.KeyID(),
-					"req_id", reqID,
-					"chunks_received", chunkCount,
-					"tokens_received", tokensReceived,
-					"err", e,
-				)
-				// Send the error as an SSE event in OpenAI's envelope so the
-				// client (crush, etc.) can display it properly. We've already
-				// committed the 200 header so we can't change the status.
-				errJSON, _ := json.Marshal(map[string]any{
-					"error": map[string]any{
-						"message": e.Error(),
-						"type":    "server_error",
-						"code":    "provider_error",
-					},
-				})
-				_, _ = fmt.Fprintf(w, "data: %s\n\ndata: [DONE]\n\n", errJSON)
-				if flusher != nil {
-					flusher.Flush()
-				}
-				if u != nil {
-					go finishRequest(s.Q, reqID, 0, 0, 0, "error")
-				}
-				return
+		}
+	}
+
+	// Send usage chunk if include_usage was requested.
+	if includeUsage {
+		if usageData := adapter.UsageChunk(accUsage); usageData != nil {
+			_, _ = w.Write(usageData)
+			if flusher != nil {
+				flusher.Flush()
 			}
 		}
 	}
+
+	_, _ = w.Write([]byte("data: [DONE]\n\n"))
+	if flusher != nil {
+		flusher.Flush()
+	}
+
+	go settle(s.Q, s.Pool, sel, reqID, accUsage, u)
+}
+
+// bufferedCompletion handles non-streaming chat completions via fantasy.
+func (s *Server) bufferedCompletion(w http.ResponseWriter, r *http.Request, lm fantasy.LanguageModel, call fantasy.Call, sel *pool.Selection, reqID string, u *store.User) {
+	resp, err := lm.Generate(r.Context(), call)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "provider_down", err.Error())
+		if u != nil && reqID != "" {
+			go finishRequest(s.Q, reqID, 0, 0, 0, "error")
+		}
+		return
+	}
+
+	// Build OpenAI-shaped response.
+	var content string
+	for _, part := range resp.Content {
+		if tp, ok := part.(fantasy.TextPart); ok {
+			content += tp.Text
+		}
+	}
+
+	oaiResp := oaiChatResponse{
+		ID:      fmt.Sprintf("chatcmpl-%d", time.Now().UnixNano()),
+		Object:  "chat.completion",
+		Created: time.Now().Unix(),
+		Model:   lm.Model(),
+		Choices: []oaiResponseChoice{{
+			Index: 0,
+			Message: oaiResponseMessage{
+				Role:    "assistant",
+				Content: content,
+			},
+			FinishReason: string(resp.FinishReason),
+		}},
+		Usage: translateFantasyUsage(resp.Usage),
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(oaiResp)
+
+	go settle(s.Q, s.Pool, sel, reqID, fadapter.AccumulatedUsage{
+		InputTokens:  resp.Usage.InputTokens,
+		OutputTokens: resp.Usage.OutputTokens,
+		TotalTokens:  resp.Usage.TotalTokens,
+	}, u)
 }
 
 // settle fires off the post-stream DB writes. Runs in a goroutine.
-func settle(q *store.Queries, poolMgr *pool.Manager, sel *pool.Selection, reqID string, usage *provider.Usage, u *store.User) {
-	var prompt, completion, total int64
-	if usage != nil {
-		prompt = int64(usage.PromptTokens)
-		completion = int64(usage.CompletionTokens)
-		total = int64(usage.TotalTokens)
-	}
+func settle(q *store.Queries, poolMgr *pool.Manager, sel *pool.Selection, reqID string, usage fadapter.AccumulatedUsage, u *store.User) {
 	if u != nil {
-		finishRequest(q, reqID, prompt, completion, total, "done")
+		finishRequest(q, reqID, usage.InputTokens, usage.OutputTokens, usage.TotalTokens, "done")
 	}
-	_ = poolMgr.RecordSpend(context.Background(), sel, 0)
+	if sel != nil {
+		_ = poolMgr.RecordSpend(context.Background(), sel, 0)
+	}
 }
 
 // finishRequest updates the potluck_requests row after the upstream call ends.
@@ -444,11 +254,3 @@ func finishRequest(q *store.Queries, reqID string, prompt, completion, total int
 		ID:               reqID,
 	})
 }
-
-// asString safely extracts a string from a map[string]any without panicking.
-func asString(v any) string {
-	s, _ := v.(string)
-	return s
-}
-
-

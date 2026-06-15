@@ -16,6 +16,7 @@ import (
 	"github.com/taciturnaxolotl/potluck/internal/ledger"
 	"github.com/taciturnaxolotl/potluck/internal/pool"
 	"github.com/taciturnaxolotl/potluck/internal/provider"
+	"github.com/taciturnaxolotl/potluck/internal/provider/registry"
 	"github.com/taciturnaxolotl/potluck/internal/store"
 )
 
@@ -24,9 +25,10 @@ type Server struct {
 	Q            *store.Queries
 	Auth         *auth.Service
 	Ledger       *ledger.Service
-	Provider     *provider.Client
+	Provider     *provider.Client // legacy; being replaced by Registry
 	Pool         *pool.Manager
 	FreeProvider *provider.Client // nil when free provider is not configured
+	Registry     *registry.Registry // multi-provider registry (new)
 }
 
 // Mount installs the v1 routes onto r. The caller chains the bearer-auth

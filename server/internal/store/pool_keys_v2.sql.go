@@ -27,7 +27,7 @@ func (q *Queries) ActivatePoolKey(ctx context.Context, id string) error {
 }
 
 const listKeysNeedingHealthCheck = `-- name: ListKeysNeedingHealthCheck :many
-SELECT id, user_id, label, key_ciphertext, key_fingerprint, active, daily_limit_micros, today_date, today_micros, total_micros, request_count, created_at, last_used_at, max_micros, shared_micros, pioneer_team_id, pioneer_payment_plan, pioneer_credit_limit_micros, pioneer_remaining_micros, pioneer_health, pioneer_unhealthy_since, pending_validation, last_billing_sync_at, revoked_at FROM pool_keys
+SELECT id, user_id, label, key_ciphertext, key_fingerprint, active, daily_limit_micros, today_date, today_micros, total_micros, request_count, created_at, last_used_at, max_micros, shared_micros, pioneer_team_id, pioneer_payment_plan, pioneer_credit_limit_micros, pioneer_remaining_micros, pioneer_health, pioneer_unhealthy_since, pending_validation, last_billing_sync_at, revoked_at, provider_id FROM pool_keys
 WHERE revoked_at IS NULL
 ORDER BY (last_billing_sync_at IS NOT NULL) ASC, last_billing_sync_at ASC
 `
@@ -68,6 +68,7 @@ func (q *Queries) ListKeysNeedingHealthCheck(ctx context.Context) ([]PoolKey, er
 			&i.PendingValidation,
 			&i.LastBillingSyncAt,
 			&i.RevokedAt,
+			&i.ProviderID,
 		); err != nil {
 			return nil, err
 		}
@@ -83,7 +84,7 @@ func (q *Queries) ListKeysNeedingHealthCheck(ctx context.Context) ([]PoolKey, er
 }
 
 const listUnhealthyKeysOlderThan = `-- name: ListUnhealthyKeysOlderThan :many
-SELECT id, user_id, label, key_ciphertext, key_fingerprint, active, daily_limit_micros, today_date, today_micros, total_micros, request_count, created_at, last_used_at, max_micros, shared_micros, pioneer_team_id, pioneer_payment_plan, pioneer_credit_limit_micros, pioneer_remaining_micros, pioneer_health, pioneer_unhealthy_since, pending_validation, last_billing_sync_at, revoked_at FROM pool_keys
+SELECT id, user_id, label, key_ciphertext, key_fingerprint, active, daily_limit_micros, today_date, today_micros, total_micros, request_count, created_at, last_used_at, max_micros, shared_micros, pioneer_team_id, pioneer_payment_plan, pioneer_credit_limit_micros, pioneer_remaining_micros, pioneer_health, pioneer_unhealthy_since, pending_validation, last_billing_sync_at, revoked_at, provider_id FROM pool_keys
 WHERE pioneer_health = 2
   AND pioneer_unhealthy_since IS NOT NULL
   AND pioneer_unhealthy_since < ?
@@ -126,6 +127,7 @@ func (q *Queries) ListUnhealthyKeysOlderThan(ctx context.Context, pioneerUnhealt
 			&i.PendingValidation,
 			&i.LastBillingSyncAt,
 			&i.RevokedAt,
+			&i.ProviderID,
 		); err != nil {
 			return nil, err
 		}
@@ -158,7 +160,7 @@ func (q *Queries) MarkPoolKeyRevoked(ctx context.Context, arg MarkPoolKeyRevoked
 }
 
 const pickOwnKeyWithPrivateBudget = `-- name: PickOwnKeyWithPrivateBudget :one
-SELECT id, user_id, label, key_ciphertext, key_fingerprint, active, daily_limit_micros, today_date, today_micros, total_micros, request_count, created_at, last_used_at, max_micros, shared_micros, pioneer_team_id, pioneer_payment_plan, pioneer_credit_limit_micros, pioneer_remaining_micros, pioneer_health, pioneer_unhealthy_since, pending_validation, last_billing_sync_at, revoked_at FROM pool_keys
+SELECT id, user_id, label, key_ciphertext, key_fingerprint, active, daily_limit_micros, today_date, today_micros, total_micros, request_count, created_at, last_used_at, max_micros, shared_micros, pioneer_team_id, pioneer_payment_plan, pioneer_credit_limit_micros, pioneer_remaining_micros, pioneer_health, pioneer_unhealthy_since, pending_validation, last_billing_sync_at, revoked_at, provider_id FROM pool_keys
 WHERE user_id = ?
   AND active = 1
   AND revoked_at IS NULL
@@ -207,12 +209,13 @@ func (q *Queries) PickOwnKeyWithPrivateBudget(ctx context.Context, userID string
 		&i.PendingValidation,
 		&i.LastBillingSyncAt,
 		&i.RevokedAt,
+		&i.ProviderID,
 	)
 	return i, err
 }
 
 const pickPoolKeyV2 = `-- name: PickPoolKeyV2 :one
-SELECT id, user_id, label, key_ciphertext, key_fingerprint, active, daily_limit_micros, today_date, today_micros, total_micros, request_count, created_at, last_used_at, max_micros, shared_micros, pioneer_team_id, pioneer_payment_plan, pioneer_credit_limit_micros, pioneer_remaining_micros, pioneer_health, pioneer_unhealthy_since, pending_validation, last_billing_sync_at, revoked_at FROM pool_keys
+SELECT id, user_id, label, key_ciphertext, key_fingerprint, active, daily_limit_micros, today_date, today_micros, total_micros, request_count, created_at, last_used_at, max_micros, shared_micros, pioneer_team_id, pioneer_payment_plan, pioneer_credit_limit_micros, pioneer_remaining_micros, pioneer_health, pioneer_unhealthy_since, pending_validation, last_billing_sync_at, revoked_at, provider_id FROM pool_keys
 WHERE active = 1
   AND revoked_at IS NULL
   AND pending_validation = 0
@@ -259,6 +262,7 @@ func (q *Queries) PickPoolKeyV2(ctx context.Context) (PoolKey, error) {
 		&i.PendingValidation,
 		&i.LastBillingSyncAt,
 		&i.RevokedAt,
+		&i.ProviderID,
 	)
 	return i, err
 }

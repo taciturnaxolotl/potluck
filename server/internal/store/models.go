@@ -107,6 +107,7 @@ type PoolKey struct {
 	PendingValidation        int64          `json:"pending_validation"`
 	LastBillingSyncAt        sql.NullInt64  `json:"last_billing_sync_at"`
 	RevokedAt                sql.NullInt64  `json:"revoked_at"`
+	ProviderID               string         `json:"provider_id"`
 }
 
 type PoolKeyBillingRow struct {
@@ -139,6 +140,17 @@ type PotluckRequest struct {
 	TotalTokens      sql.NullInt64  `json:"total_tokens"`
 	Status           string         `json:"status"`
 	ErrorCode        sql.NullString `json:"error_code"`
+	ProviderID       sql.NullString `json:"provider_id"`
+}
+
+type Provider struct {
+	ID         string `json:"id"`
+	Type       string `json:"type"`
+	Name       string `json:"name"`
+	BaseUrl    string `json:"base_url"`
+	ConfigJson string `json:"config_json"`
+	Active     int64  `json:"active"`
+	CreatedAt  int64  `json:"created_at"`
 }
 
 type Session struct {

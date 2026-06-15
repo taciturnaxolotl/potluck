@@ -32,6 +32,7 @@ type Querier interface {
 	CreatePoolKey(ctx context.Context, arg CreatePoolKeyParams) (PoolKey, error)
 	// potluck_requests: per-request log for attribution and billing join.
 	CreatePotluckRequest(ctx context.Context, arg CreatePotluckRequestParams) (PotluckRequest, error)
+	CreateProvider(ctx context.Context, arg CreateProviderParams) error
 	CreateSession(ctx context.Context, arg CreateSessionParams) (Session, error)
 	CreateStream(ctx context.Context, arg CreateStreamParams) (Stream, error)
 	CreateUser(ctx context.Context, arg CreateUserParams) (User, error)
@@ -39,6 +40,7 @@ type Querier interface {
 	DeleteExpiredIdempotency(ctx context.Context, expiresAt int64) error
 	DeleteExpiredSessions(ctx context.Context, expiresAt int64) error
 	DeletePoolKey(ctx context.Context, arg DeletePoolKeyParams) error
+	DeleteProvider(ctx context.Context, id string) error
 	DeleteSession(ctx context.Context, id string) error
 	DeleteSessionForUser(ctx context.Context, arg DeleteSessionForUserParams) error
 	DeleteUserByID(ctx context.Context, id string) error
@@ -54,6 +56,11 @@ type Querier interface {
 	GetModelCatalogRefreshedAt(ctx context.Context) (interface{}, error)
 	GetModelPrice(ctx context.Context, model string) (ModelPrice, error)
 	GetPoolKey(ctx context.Context, id string) (PoolKey, error)
+	GetProvider(ctx context.Context, id string) (Provider, error)
+	// Returns the most-recently-started stream for a conversation that is
+	// currently running. Used by handleConversationEvents to bootstrap
+	// observers who connect after the stream has already started.
+	GetRunningStreamForConversation(ctx context.Context, conversationID string) (Stream, error)
 	GetSession(ctx context.Context, arg GetSessionParams) (Session, error)
 	GetStream(ctx context.Context, id string) (Stream, error)
 	GetStreamByIdempotencyKey(ctx context.Context, arg GetStreamByIdempotencyKeyParams) (Stream, error)
@@ -70,11 +77,15 @@ type Querier interface {
 	GetUserLiveSpendToday(ctx context.Context, arg GetUserLiveSpendTodayParams) (GetUserLiveSpendTodayRow, error)
 	GetUserMemory(ctx context.Context, userID string) ([]UserMemory, error)
 	GetUserMemoryKey(ctx context.Context, arg GetUserMemoryKeyParams) (UserMemory, error)
+	// Check if there's at least one healthy key for a provider.
+	HasHealthyKeyForProvider(ctx context.Context, providerID string) (int64, error)
 	// Most recent pioneer_created_at for a key.
 	// COALESCE(SUM(pioneer_created_at*0) + MAX(...)) is a workaround for
 	// sqlc's sqlite parser rejecting bare COALESCE(MAX(...), 0).
 	LatestBillingRowTime(ctx context.Context, poolKeyID string) (interface{}, error)
 	ListAPIKeysForUser(ctx context.Context, userID string) ([]ApiKey, error)
+	// Provider registry queries for multi-provider support.
+	ListActiveProviders(ctx context.Context) ([]Provider, error)
 	ListAllUsers(ctx context.Context) ([]User, error)
 	// Live spend for ALL users since dayStart, grouped by user.
 	// Used by RunSmartAllocation so it doesn't depend on the stale
@@ -88,6 +99,7 @@ type Querier interface {
 	ListContributionsForUser(ctx context.Context, arg ListContributionsForUserParams) ([]Contribution, error)
 	ListConversationsForUser(ctx context.Context, arg ListConversationsForUserParams) ([]Conversation, error)
 	ListEstimatedSpends(ctx context.Context, limit int64) ([]Spend, error)
+	ListKeysByProvider(ctx context.Context, providerID string) ([]PoolKey, error)
 	// Keys the reconciler should probe on each tick.
 	// Excludes permanently revoked keys.
 	ListKeysNeedingHealthCheck(ctx context.Context) ([]PoolKey, error)
@@ -121,6 +133,8 @@ type Querier interface {
 	ListUserDailySpendForDay(ctx context.Context, day int64) ([]UserDailySpend, error)
 	MarkPoolKeyRevoked(ctx context.Context, arg MarkPoolKeyRevokedParams) error
 	MaxStreamChunkSeq(ctx context.Context, streamID string) (interface{}, error)
+	// User's own key with private budget for a specific provider.
+	PickOwnKeyForProvider(ctx context.Context, arg PickOwnKeyForProviderParams) (PoolKey, error)
 	// First leg of user-aware picking: try to find the user's own key that
 	// still has private reservation room (max_micros > shared_micros).
 	// If this returns no rows, fall back to PickPoolKeyV2.
@@ -135,6 +149,10 @@ type Querier interface {
 	// (compare today_date to current UTC day and update if stale).
 	// ?1 = current UTC day (unix / 86400)
 	PickPoolKey(ctx context.Context, todayDate int64) (PoolKey, error)
+	// Multi-provider pool key queries.
+	// These extend the v2 queries with provider_id filtering.
+	// Best active healthy key for a specific provider.
+	PickPoolKeyForProvider(ctx context.Context, providerID string) (PoolKey, error)
 	// Best active healthy key for a request:
 	//   active=1, not revoked, not pending validation
 	//   pioneer_health=1 (healthy)
@@ -207,6 +225,7 @@ type Querier interface {
 	// Updates the two-budget limits. Server enforces 0 <= shared <= max.
 	UpdatePoolKeyLimits(ctx context.Context, arg UpdatePoolKeyLimitsParams) error
 	UpdatePoolKeyTotalMicros(ctx context.Context, arg UpdatePoolKeyTotalMicrosParams) error
+	UpdateProvider(ctx context.Context, arg UpdateProviderParams) error
 	// pool_key_billing_rows: ingested pioneer billing log entries.
 	//
 	// attribution integer enum:

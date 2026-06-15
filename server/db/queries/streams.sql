@@ -31,3 +31,12 @@ ORDER BY seq ASC;
 
 -- name: MaxStreamChunkSeq :one
 SELECT COALESCE(MAX(seq), 0) FROM stream_chunks WHERE stream_id = ?;
+
+-- name: GetRunningStreamForConversation :one
+-- Returns the most-recently-started stream for a conversation that is
+-- currently running. Used by handleConversationEvents to bootstrap
+-- observers who connect after the stream has already started.
+SELECT * FROM streams
+WHERE conversation_id = ? AND status = 'running'
+ORDER BY started_at DESC
+LIMIT 1;
