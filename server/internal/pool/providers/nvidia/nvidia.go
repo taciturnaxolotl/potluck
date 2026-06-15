@@ -15,6 +15,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/taciturnaxolotl/potluck/internal/pool"
@@ -89,10 +90,19 @@ func (NvidiaModelFetcher) FetchModels(ctx context.Context, httpClient *http.Clie
 		return nil, fmt.Errorf("fetch models list: %w", err)
 	}
 
+	// Probe each model to check if it's accessible with this API key.
+	// NVIDIA has no entitlement API — the only way to know is to try.
+	accessible := probeModels(ctx, httpClient, baseURL, apiKey, models)
+
 	now := time.Now().Unix()
 	var out []store.UpsertModelCatalogParams
 
 	for _, m := range models {
+		// Skip models that aren't accessible on this account.
+		if !accessible[m.ID] {
+			continue
+		}
+
 		// Namespace all NVIDIA model IDs with "nvidia/" prefix so they don't
 		// collide with other providers and the UI can filter by provider.
 		modelID := m.ID
@@ -101,7 +111,7 @@ func (NvidiaModelFetcher) FetchModels(ctx context.Context, httpClient *http.Clie
 		}
 		params := store.UpsertModelCatalogParams{
 			ID:          modelID,
-			Label:       m.ID,
+			Label:       prettifyModelLabel(m.ID),
 			Description: "",
 			IsChat:      1,
 			RawJson:     "{}",
@@ -131,6 +141,57 @@ func (NvidiaModelFetcher) FetchModels(ctx context.Context, httpClient *http.Clie
 
 type nvidiaModel struct {
 	ID string `json:"id"`
+}
+
+// probeModels checks which models are accessible with the given API key by
+// sending a minimal chat completion request to each. Returns a set of
+// accessible model IDs. Uses bounded concurrency (10 workers) to avoid
+// hammering the API. Models returning 200 or 429 are considered accessible;
+// 403/404/402 are not.
+func probeModels(ctx context.Context, httpClient *http.Client, baseURL, apiKey string, models []nvidiaModel) map[string]bool {
+	const maxWorkers = 10
+	accessible := make(map[string]bool, len(models))
+	var mu sync.Mutex
+
+	sem := make(chan struct{}, maxWorkers)
+	var wg sync.WaitGroup
+
+	for _, m := range models {
+		wg.Add(1)
+		sem <- struct{}{} // acquire worker slot
+		go func(modelID string) {
+			defer wg.Done()
+			defer func() { <-sem }() // release worker slot
+
+			probeCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
+			defer cancel()
+
+			body := []byte(fmt.Sprintf(`{"model":%q,"messages":[{"role":"user","content":"hi"}],"max_tokens":1}`, modelID))
+			req, err := http.NewRequestWithContext(probeCtx, http.MethodPost, baseURL+"/chat/completions", strings.NewReader(string(body)))
+			if err != nil {
+				return
+			}
+			req.Header.Set("Authorization", "Bearer "+apiKey)
+			req.Header.Set("Content-Type", "application/json")
+
+			resp, err := httpClient.Do(req)
+			if err != nil {
+				return
+			}
+			io.Copy(io.Discard, resp.Body)
+			resp.Body.Close()
+
+			// 200 = accessible, 429 = rate limited but accessible
+			if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusTooManyRequests {
+				mu.Lock()
+				accessible[modelID] = true
+				mu.Unlock()
+			}
+		}(m.ID)
+	}
+
+	wg.Wait()
+	return accessible
 }
 
 func fetchNvidiaModels(ctx context.Context, httpClient *http.Client, baseURL, apiKey string) ([]nvidiaModel, error) {
@@ -315,4 +376,31 @@ func cleanDescription(desc string) string {
 	text = strings.TrimSpace(text)
 
 	return truncate(text, 200)
+}
+
+// prettifyModelLabel converts slug-style model IDs into human-readable labels.
+// e.g. "meta/llama-3.1-8b-instruct" → "Llama 3.1 8B Instruct"
+//      "deepseek-ai/deepseek-v4-flash" → "Deepseek V4 Flash"
+//      "google/gemma-3n-e4b-it" → "Gemma 3n E4b IT"
+func prettifyModelLabel(id string) string {
+	// Strip org prefix (e.g. "meta/", "deepseek-ai/").
+	if idx := strings.IndexByte(id, '/'); idx > 0 {
+		id = id[idx+1:]
+	}
+
+	// Split on hyphens and underscores.
+	parts := strings.FieldsFunc(id, func(r rune) bool {
+		return r == '-' || r == '_'
+	})
+
+	var words []string
+	for _, p := range parts {
+		if p == "" {
+			continue
+		}
+		// Capitalize first letter, keep rest as-is (preserves "3.1", "8B", "V4").
+		words = append(words, strings.ToUpper(p[:1])+p[1:])
+	}
+
+	return strings.Join(words, " ")
 }

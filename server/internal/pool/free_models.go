@@ -99,7 +99,7 @@ func (r *FreeModelsRefresher) refresh(ctx context.Context) {
 		catalogID := "free/" + m.ID
 		_ = r.q.UpsertModelCatalog(ctx, store.UpsertModelCatalogParams{
 			ID:          catalogID,
-			Label:       catalogID,
+			Label:       prettifyFreeLabel(m.ID),
 			IsChat:      1,
 			Tier:        nullString("free"),
 			RawJson:     "{}",
@@ -109,4 +109,21 @@ func (r *FreeModelsRefresher) refresh(ctx context.Context) {
 		upserted++
 	}
 	r.log.Info("free provider: models refreshed", "count", upserted)
+}
+
+// prettifyFreeLabel converts slug-style model IDs into readable labels.
+// Same logic as nvidia's prettifyModelLabel but without org prefix stripping
+// since free model IDs don't have org prefixes.
+func prettifyFreeLabel(id string) string {
+	parts := strings.FieldsFunc(id, func(r rune) bool {
+		return r == '-' || r == '_'
+	})
+	var words []string
+	for _, p := range parts {
+		if p == "" {
+			continue
+		}
+		words = append(words, strings.ToUpper(p[:1])+p[1:])
+	}
+	return strings.Join(words, " ")
 }

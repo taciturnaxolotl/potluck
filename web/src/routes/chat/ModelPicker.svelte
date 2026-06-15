@@ -17,25 +17,47 @@
   let search = $state('');
   let pickerEl = $state<HTMLElement | null>(null);
 
-  let freeModels = $derived(models.filter((m) => m.id.startsWith('free/')));
-  let paidModels = $derived(models.filter((m) => !m.id.startsWith('free/')));
+  function modelProvider(id: string): string {
+    const idx = id.indexOf('/');
+    return idx > 0 ? id.slice(0, idx) : 'pioneer';
+  }
 
-  let filteredFree = $derived(
-    search.trim()
-      ? freeModels.filter((m) => (m.label || m.id).toLowerCase().includes(search.toLowerCase()))
-      : freeModels
-  );
-  let filteredPaid = $derived(
-    search.trim()
-      ? paidModels.filter((m) => (m.label || m.id).toLowerCase().includes(search.toLowerCase()))
-      : paidModels
-  );
+  // Group models by provider, preserving a stable order.
+  let providerGroups = $derived.by(() => {
+    const map = new Map<string, Model[]>();
+    for (const m of models) {
+      const p = modelProvider(m.id);
+      if (!map.has(p)) map.set(p, []);
+      map.get(p)!.push(m);
+    }
+    // Sort groups: pioneer first, then alphabetical.
+    const entries = [...map.entries()].sort(([a], [b]) => {
+      if (a === 'pioneer') return -1;
+      if (b === 'pioneer') return 1;
+      return a.localeCompare(b);
+    });
+    return entries;
+  });
+
+  let filteredGroups = $derived.by(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return providerGroups;
+    return providerGroups
+      .map(([provider, ms]) => [provider, ms.filter((m) =>
+        (m.label || m.id).toLowerCase().includes(q)
+      )] as [string, Model[]])
+      .filter(([, ms]) => ms.length > 0);
+  });
 
   function display(id: string) {
     if (!id) return 'pick model';
     const m = models.find((x) => x.id === id);
-    if (m) return m.label || id.replace(/^free\//, '');
-    return id.replace(/^free\//, '');
+    return m?.label || stripProvider(id);
+  }
+
+  function stripProvider(id: string): string {
+    const idx = id.indexOf('/');
+    return idx > 0 ? id.slice(idx + 1) : id;
   }
 
   function pick(id: string) {
@@ -70,10 +92,8 @@
     aria-haspopup="menu"
     aria-expanded={open}
   >
-    {#if selectedModel?.startsWith('free/')}
-      <span class="tier-dot free" aria-hidden="true"></span>
-    {:else if selectedModel}
-      <span class="tier-dot pool" aria-hidden="true"></span>
+    {#if selectedModel}
+      <span class="provider-badge">{modelProvider(selectedModel)}</span>
     {/if}
     <span class="chip-label">{display(selectedModel)}</span>
     <svg class="chip-caret" width="8" height="5" viewBox="0 0 8 5" fill="none" aria-hidden="true">
@@ -93,32 +113,21 @@
           use:focusEl
         />
       </div>
-      {#if filteredFree.length > 0}
-        <div class="model-group-hdr">free</div>
-        {#each filteredFree as m (m.id)}
-          <button
-            class="model-opt"
-            class:sel={selectedModel === m.id}
-            aria-pressed={selectedModel === m.id}
-            onclick={() => pick(m.id)}
-          >{m.label || m.id.replace('free/', '')}</button>
-        {/each}
-      {/if}
-      {#if filteredPaid.length > 0}
-        <div class="model-group-hdr">pool</div>
-        {#each filteredPaid as m (m.id)}
+      {#each filteredGroups as [provider, groupModels]}
+        <div class="model-group-hdr">{provider}</div>
+        {#each groupModels as m (m.id)}
           <button
             class="model-opt"
             class:sel={selectedModel === m.id}
             role="option"
             aria-selected={selectedModel === m.id}
             onclick={() => pick(m.id)}
-          >{m.label || m.id}</button>
+          >{m.label || stripProvider(m.id)}</button>
         {/each}
-      {/if}
+      {/each}
       {#if models.length === 0}
         <span class="model-opt" style="opacity:0.5;cursor:default">loading…</span>
-      {:else if filteredFree.length === 0 && filteredPaid.length === 0}
+      {:else if filteredGroups.length === 0}
         <span class="model-opt" style="opacity:0.5;cursor:default">no matches</span>
       {/if}
     </div>
@@ -154,14 +163,16 @@
     cursor: default;
   }
 
-  .tier-dot {
-    width: 5px;
-    height: 5px;
-    border-radius: 50%;
-    flex-shrink: 0;
+  .provider-badge {
+    font-size: 0.6rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding: 0.1em 0.35em;
+    border-radius: 3px;
+    background: var(--bg-sidebar);
+    color: var(--text-muted);
   }
-  .tier-dot.free  { background: #4ade80; }
-  .tier-dot.pool  { background: var(--accent); }
 
   .chip-label {
     max-width: 180px;
@@ -205,42 +216,40 @@
     text-align: left;
     background: none;
     border: none;
-    border-radius: var(--radius-sm);
-    padding: 0.32rem 0.5rem;
+    border-radius: 4px;
+    padding: 0.3rem 0.5rem;
     font-family: var(--font-mono);
     font-size: 0.75rem;
     color: var(--text);
     cursor: pointer;
-    transition: background 60ms;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
   }
-  .model-opt:hover { background: var(--bg-page); }
+  .model-opt:hover {
+    background: var(--bg-sidebar);
+  }
   .model-opt.sel {
     color: var(--accent);
-    font-weight: 500;
+    font-weight: 600;
   }
 
   .model-search-wrap {
-    padding: 0.3rem 0.3rem 0.2rem;
-    border-bottom: 1px solid var(--border);
-    margin-bottom: 0.2rem;
+    padding: 0.2rem 0.2rem 0.3rem;
   }
-
   .model-search {
-    display: block;
     width: 100%;
-    box-sizing: border-box;
-    background: var(--bg-page);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    padding: 0.28rem 0.5rem;
-    font-family: var(--font-mono);
+    padding: 0.3rem 0.5rem;
     font-size: 0.75rem;
+    font-family: var(--font-mono);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--bg-page);
     color: var(--text);
-    outline: none;
+    box-sizing: border-box;
   }
-  .model-search::placeholder { color: var(--text-faint); }
-  .model-search:focus { border-color: var(--accent); }
+  .model-search:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
 </style>
