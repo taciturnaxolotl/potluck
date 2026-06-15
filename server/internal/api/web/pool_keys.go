@@ -18,6 +18,20 @@ import (
 	"github.com/taciturnaxolotl/potluck/internal/store"
 )
 
+// handleListProviders returns all active providers from the registry.
+func (s *Server) handleListProviders(w http.ResponseWriter, r *http.Request) {
+	providers := s.Registry.List()
+	out := make([]map[string]any, 0, len(providers))
+	for _, p := range providers {
+		out = append(out, map[string]any{
+			"id":   p.ID,
+			"type": string(p.Type),
+			"name": p.Name,
+		})
+	}
+	writeJSON(w, 200, out)
+}
+
 // handleListPoolKeys returns all pool keys visible to any authenticated user.
 // Ciphertexts are never returned; fingerprints are omitted from the response.
 func (s *Server) handleListPoolKeys(w http.ResponseWriter, r *http.Request) {
@@ -34,6 +48,7 @@ func (s *Server) handleListPoolKeys(w http.ResponseWriter, r *http.Request) {
 			"user_id":                  k.UserID,
 			"label":                    k.Label,
 			"active":                   k.Active == 1,
+			"provider_id":              k.ProviderID,
 			"max_micros":               k.MaxMicros,
 			"shared_micros":            k.SharedMicros,
 			"private_micros":           k.MaxMicros - k.SharedMicros,
@@ -46,6 +61,7 @@ func (s *Server) handleListPoolKeys(w http.ResponseWriter, r *http.Request) {
 			"pioneer_credit_limit_micros": k.PioneerCreditLimitMicros.Int64,
 			"pioneer_remaining_micros": k.PioneerRemainingMicros.Int64,
 			"pending_validation":       k.PendingValidation == 1,
+			"revoked":                  k.RevokedAt.Valid,
 			"created_at":               k.CreatedAt,
 			"last_used_at":             k.LastUsedAt.Int64,
 			"last_billing_sync_at":     k.LastBillingSyncAt.Int64,
@@ -60,6 +76,7 @@ func (s *Server) handleListPoolKeys(w http.ResponseWriter, r *http.Request) {
 type addPoolKeyReq struct {
 	Label        string `json:"label"`
 	APIKey       string `json:"api_key"`
+	ProviderID   string `json:"provider_id,omitempty"` // defaults to "pioneer"
 	SharedMicros *int64 `json:"shared_micros,omitempty"` // how much to donate to pool; defaults to full credit limit
 }
 
@@ -159,46 +176,106 @@ func probePioneerBilling(ctx context.Context, apiKey string) (pioneerBillingResu
 	}, nil
 }
 
-// handleProbePoolKey probes a pioneer key's billing info without storing it.
+// handleProbePoolKey probes a key's billing info without storing it.
 // Used by the two-stage add flow: probe first, show plan/credit/spend to the
 // user, then let them confirm with shared_micros before calling handleAddPoolKey.
 func (s *Server) handleProbePoolKey(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		APIKey string `json:"api_key"`
+		APIKey     string `json:"api_key"`
+		ProviderID string `json:"provider_id,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.APIKey == "" {
 		writeErr(w, 400, "invalid_request", "api_key is required")
 		return
 	}
+	providerID := req.ProviderID
+	if providerID == "" {
+		providerID = "pioneer"
+	}
 
-	billing, err := probePioneerBilling(r.Context(), req.APIKey)
+	// Validate the provider exists.
+	provCfg, ok := s.Registry.Get(providerID)
+	if !ok {
+		writeErr(w, 400, "invalid_provider", fmt.Sprintf("unknown provider: %s", providerID))
+		return
+	}
+
+	if providerID == "pioneer" {
+		billing, err := probePioneerBilling(r.Context(), req.APIKey)
+		if err != nil {
+			writeErr(w, 422, "probe_failed", err.Error())
+			return
+		}
+		if billing.HTTP401 {
+			writeErr(w, 422, "unauthorized", "pioneer returned 401 — key may be exhausted or not yet active")
+			return
+		}
+		if billing.HTTP503 {
+			writeErr(w, 503, "provider_down", "pioneer auth service is temporarily down; try again shortly")
+			return
+		}
+		if billing.PaymentPlan != "" && !pool.AcceptedPlan(billing.PaymentPlan) {
+			writeErr(w, 422, "invalid_plan",
+				fmt.Sprintf("unsupported pioneer plan %q (accepted: pro, pro_legacy, partner)", billing.PaymentPlan))
+			return
+		}
+		writeJSON(w, 200, map[string]any{
+			"provider_id":         "pioneer",
+			"payment_plan":        billing.PaymentPlan,
+			"credit_limit_micros": billing.CreditLimitMicros,
+			"remaining_micros":    billing.RemainingMicros,
+			"today_micros":        billing.TodayMicros,
+		})
+		return
+	}
+
+	// Generic probe for non-pioneer providers: validate key via /v1/models.
+	valid, err := probeGenericKey(r.Context(), provCfg.BaseURL, req.APIKey)
 	if err != nil {
 		writeErr(w, 422, "probe_failed", err.Error())
 		return
 	}
-	if billing.HTTP401 {
-		writeErr(w, 422, "unauthorized", "pioneer returned 401 — key may be exhausted or not yet active")
-		return
-	}
-	if billing.HTTP503 {
-		writeErr(w, 503, "provider_down", "pioneer auth service is temporarily down; try again shortly")
-		return
-	}
-	if billing.PaymentPlan != "" && !pool.AcceptedPlan(billing.PaymentPlan) {
-		writeErr(w, 422, "invalid_plan",
-			fmt.Sprintf("unsupported pioneer plan %q (accepted: pro, pro_legacy, partner)", billing.PaymentPlan))
+	if !valid {
+		writeErr(w, 422, "unauthorized", "key validation failed — check your API key")
 		return
 	}
 
 	writeJSON(w, 200, map[string]any{
-		"payment_plan":        billing.PaymentPlan,
-		"credit_limit_micros": billing.CreditLimitMicros,
-		"remaining_micros":    billing.RemainingMicros,
-		"today_micros":        billing.TodayMicros,
+		"provider_id":         providerID,
+		"credit_limit_micros": int64(0), // unknown for generic providers
+		"remaining_micros":    int64(0),
+		"today_micros":        int64(0),
 	})
 }
 
-// handleAddPoolKey validates a key against pioneer, then encrypts and stores it.
+// probeGenericKey validates an API key by calling /v1/models on the provider.
+// Returns true if the key is valid (200 response), false for 401/403.
+func probeGenericKey(ctx context.Context, baseURL, apiKey string) (bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, 12*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/v1/models", nil)
+	if err != nil {
+		return false, err
+	}
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return false, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	switch resp.StatusCode {
+	case http.StatusOK:
+		return true, nil
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return false, nil
+	default:
+		return false, fmt.Errorf("provider returned HTTP %d", resp.StatusCode)
+	}
+}
+
+// handleAddPoolKey validates a key against its provider, then encrypts and stores it.
 // If pioneer returns 401 (key exhausted or not yet active), we save it as
 // pending_validation and let the reconciler activate it when it comes back.
 // If pioneer returns 503 (auth service down), we also save as pending.
@@ -211,26 +288,54 @@ func (s *Server) handleAddPoolKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	billing, err := probePioneerBilling(r.Context(), req.APIKey)
-	if err != nil {
-		writeErr(w, 422, "invalid_key", err.Error())
+	providerID := req.ProviderID
+	if providerID == "" {
+		providerID = "pioneer"
+	}
+
+	// Validate the provider exists.
+	if _, ok := s.Registry.Get(providerID); !ok {
+		writeErr(w, 400, "invalid_provider", fmt.Sprintf("unknown provider: %s", providerID))
 		return
 	}
 
-	// Determine whether we can activate immediately.
-	pendingValidation := int64(0)
+	var billing pioneerBillingResult
+	var pendingValidation int64
 	var pendingReason string
-	switch {
-	case billing.HTTP401:
-		pendingValidation = 1
-		pendingReason = "pioneer returned 401 — key may be exhausted or not yet active; we'll retry automatically"
-	case billing.HTTP503:
-		pendingValidation = 1
-		pendingReason = "pioneer auth service is temporarily down; we'll retry automatically"
-	case billing.PaymentPlan != "" && !pool.AcceptedPlan(billing.PaymentPlan):
-		writeErr(w, 422, "invalid_plan",
-			fmt.Sprintf("unsupported pioneer plan %q (accepted: pro, pro_legacy, partner)", billing.PaymentPlan))
-		return
+
+	if providerID == "pioneer" {
+		var err error
+		billing, err = probePioneerBilling(r.Context(), req.APIKey)
+		if err != nil {
+			writeErr(w, 422, "invalid_key", err.Error())
+			return
+		}
+		switch {
+		case billing.HTTP401:
+			pendingValidation = 1
+			pendingReason = "pioneer returned 401 — key may be exhausted or not yet active; we'll retry automatically"
+		case billing.HTTP503:
+			pendingValidation = 1
+			pendingReason = "pioneer auth service is temporarily down; we'll retry automatically"
+		case billing.PaymentPlan != "" && !pool.AcceptedPlan(billing.PaymentPlan):
+			writeErr(w, 422, "invalid_plan",
+				fmt.Sprintf("unsupported pioneer plan %q (accepted: pro, pro_legacy, partner)", billing.PaymentPlan))
+			return
+		}
+	} else {
+		// Generic provider: validate via /v1/models.
+		provCfg, _ := s.Registry.Get(providerID)
+		valid, err := probeGenericKey(r.Context(), provCfg.BaseURL, req.APIKey)
+		if err != nil {
+			writeErr(w, 422, "invalid_key", err.Error())
+			return
+		}
+		if !valid {
+			writeErr(w, 422, "unauthorized", "key validation failed — check your API key")
+			return
+		}
+		// Generic providers start healthy with no billing info.
+		billing = pioneerBillingResult{}
 	}
 
 	fingerprint := pool.Fingerprint(req.APIKey)
@@ -262,6 +367,7 @@ func (s *Server) handleAddPoolKey(w http.ResponseWriter, r *http.Request) {
 		KeyFingerprint:   fingerprint,
 		DailyLimitMicros: maxMicros,
 		CreatedAt:        now,
+		ProviderID:       providerID,
 	})
 	if err != nil {
 		if isUniqueConstraintErr(err) {

@@ -256,20 +256,33 @@ export type PoolKey = {
 };
 
 export const listPoolKeys = () => api.get<PoolKey[]>('/api/pool-keys');
+
+export interface Provider {
+  id: string;
+  type: string;
+  name: string;
+}
+export const listProviders = () => api.get<Provider[]>('/api/providers');
+
 export interface PoolKeyProbe {
+  provider_id: string;
   payment_plan: string;
   credit_limit_micros: number;
   remaining_micros: number;
   today_micros: number;
 }
-export const probePoolKey = (apiKey: string) =>
-  api.post<PoolKeyProbe>('/api/pool-keys/probe', { api_key: apiKey });
+export const probePoolKey = (apiKey: string, providerId?: string) =>
+  api.post<PoolKeyProbe>('/api/pool-keys/probe', {
+    api_key: apiKey,
+    ...(providerId ? { provider_id: providerId } : {})
+  });
 
-export const addPoolKey = (label: string, apiKey: string, sharedMicros?: number) =>
+export const addPoolKey = (label: string, apiKey: string, sharedMicros?: number, providerId?: string) =>
   api.post<PoolKey & { pending_validation?: boolean; pending_reason?: string }>('/api/pool-keys', {
     label,
     api_key: apiKey,
-    ...(sharedMicros != null ? { shared_micros: sharedMicros } : {})
+    ...(sharedMicros != null ? { shared_micros: sharedMicros } : {}),
+    ...(providerId ? { provider_id: providerId } : {})
   });
 export const setPoolKeyActive = (id: string, active: boolean) =>
   api.patch<void>(`/api/pool-keys/${id}/active`, { active });

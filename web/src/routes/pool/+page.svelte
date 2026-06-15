@@ -3,7 +3,9 @@
     listPoolKeys,
     addPoolKey,
     probePoolKey,
+    listProviders,
     type PoolKeyProbe,
+    type Provider,
     setPoolKeyActive,
     updatePoolKeyLabel,
     updatePoolKeyLimits,
@@ -14,6 +16,7 @@
   import { onMount } from 'svelte';
 
   let keys = $state<PoolKey[]>([]);
+  let providers = $state<Provider[]>([]);
   let loading = $state(true);
   let err = $state<string | null>(null);
 
@@ -23,6 +26,7 @@
   let addStage = $state<AddStage>('input');
   let newLabel = $state('');
   let newAPIKey = $state('');
+  let selectedProvider = $state('pioneer');
   let probeResult = $state<PoolKeyProbe | null>(null);
   let probeSharedDollars = $state(0); // shared split chosen by user in confirm stage
   let probing = $state(false);
@@ -60,7 +64,9 @@
 
   async function reload() {
     try {
-      keys = await listPoolKeys();
+      const [k, p] = await Promise.all([listPoolKeys(), listProviders()]);
+      keys = k;
+      providers = p;
     } catch (e: unknown) {
       err = e instanceof Error ? e.message : 'failed to load';
     } finally {
@@ -72,6 +78,7 @@
     addStage = 'input';
     newLabel = '';
     newAPIKey = '';
+    selectedProvider = providers.length > 0 ? providers[0].id : 'pioneer';
     probeResult = null;
     probeSharedDollars = 0;
     addErr = null;
@@ -85,7 +92,7 @@
     probing = true;
     addErr = null;
     try {
-      const result = await probePoolKey(newAPIKey.trim());
+      const result = await probePoolKey(newAPIKey.trim(), selectedProvider);
       probeResult = result;
       probeSharedDollars = Math.round(result.credit_limit_micros / 1_000_000); // default 100% shared
       addStage = 'confirm';
@@ -108,7 +115,8 @@
       const result = await addPoolKey(
         newLabel.trim() || 'unnamed key',
         newAPIKey.trim(),
-        sharedMicros < creditLimitMicros ? sharedMicros : undefined
+        sharedMicros < creditLimitMicros ? sharedMicros : undefined,
+        selectedProvider
       );
       if (result.pending_validation) {
         addPending = true;
@@ -304,14 +312,24 @@
       {#if showAddForm}
         {#if addStage === 'input'}
           <form class="add-form" onsubmit={handleProbe}>
+            {#if providers.length > 1}
+              <div class="form-row">
+                <label class="form-label" for="new-provider">provider</label>
+                <select id="new-provider" class="form-input" bind:value={selectedProvider}>
+                  {#each providers as p}
+                    <option value={p.id}>{p.name}</option>
+                  {/each}
+                </select>
+              </div>
+            {/if}
             <div class="form-row">
               <label class="form-label" for="new-label">label</label>
-              <input id="new-label" class="form-input" type="text" placeholder="my pioneer key"
+              <input id="new-label" class="form-input" type="text" placeholder="my key"
                 bind:value={newLabel} maxlength={64} />
             </div>
             <div class="form-row">
               <label class="form-label" for="new-key">api key</label>
-              <input id="new-key" class="form-input mono" type="password" placeholder="pio_sk_…"
+              <input id="new-key" class="form-input mono" type="password" placeholder="sk-…"
                 bind:value={newAPIKey} required autocomplete="off" />
             </div>
             {#if addErr}
@@ -321,18 +339,24 @@
               <button class="btn-primary" type="submit" disabled={probing || !newAPIKey.trim()}>
                 {probing ? 'checking key…' : 'check key'}
               </button>
-              <div class="form-hint">pro/partner plan keys · encrypted at rest</div>
+              <div class="form-hint">encrypted at rest · validated against provider</div>
             </div>
           </form>
         {:else if addStage === 'confirm' && probeResult}
           <form class="add-form" onsubmit={handleAdd}>
-            <div class="probe-summary mono">
-              <span class="probe-plan">{probeResult.payment_plan}</span>
-              <span class="probe-sep"> · </span>
-              <span>${Math.round(probeResult.credit_limit_micros / 1_000_000)} credit limit</span>
-              <span class="probe-sep"> · </span>
-              <span class="probe-spent">${(probeResult.today_micros / 1_000_000).toFixed(2)} spent today</span>
-            </div>
+            {#if probeResult.credit_limit_micros > 0}
+              <div class="probe-summary mono">
+                <span class="probe-plan">{probeResult.payment_plan}</span>
+                <span class="probe-sep"> · </span>
+                <span>${Math.round(probeResult.credit_limit_micros / 1_000_000)} credit limit</span>
+                <span class="probe-sep"> · </span>
+                <span class="probe-spent">${(probeResult.today_micros / 1_000_000).toFixed(2)} spent today</span>
+              </div>
+            {:else}
+              <div class="probe-summary mono">
+                <span class="probe-plan">key validated ✓</span>
+              </div>
+            {/if}
             <div class="form-row slider-row">
               <label class="form-label" for="probe-share">share with pool</label>
               <div class="slider-wrap">
@@ -396,6 +420,9 @@
                       <button class="label-btn" onclick={() => key.mine && startEdit(key)} disabled={!key.mine} title={key.mine ? 'click to rename' : undefined}>
                         {key.label || 'unnamed'}
                       </button>
+                    {/if}
+                    {#if key.provider_id && key.provider_id !== 'pioneer'}
+                      <span class="provider-badge">{key.provider_id}</span>
                     {/if}
                   </div>
                 </td>
@@ -908,6 +935,18 @@
   .key-label-row {
     display: flex;
     align-items: center;
+  }
+
+  .provider-badge {
+    margin-left: 0.4rem;
+    font-size: 0.65rem;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    padding: 0.1em 0.4em;
+    border-radius: 3px;
+    background: var(--bg-sidebar);
+    color: var(--text-muted);
   }
 
   /* pending row dim */

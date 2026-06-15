@@ -9,8 +9,8 @@
 INSERT INTO pool_keys (
     id, user_id, label, key_ciphertext, key_fingerprint,
     active, daily_limit_micros, today_date, today_micros,
-    total_micros, request_count, created_at
-) VALUES (?, ?, ?, ?, ?, 1, ?, 0, 0, 0, 0, ?)
+    total_micros, request_count, created_at, provider_id
+) VALUES (?, ?, ?, ?, ?, 1, ?, 0, 0, 0, 0, ?, ?)
 RETURNING *;
 
 -- name: GetPoolKey :one

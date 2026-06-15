@@ -15,8 +15,8 @@ const createPoolKey = `-- name: CreatePoolKey :one
 INSERT INTO pool_keys (
     id, user_id, label, key_ciphertext, key_fingerprint,
     active, daily_limit_micros, today_date, today_micros,
-    total_micros, request_count, created_at
-) VALUES (?, ?, ?, ?, ?, 1, ?, 0, 0, 0, 0, ?)
+    total_micros, request_count, created_at, provider_id
+) VALUES (?, ?, ?, ?, ?, 1, ?, 0, 0, 0, 0, ?, ?)
 RETURNING id, user_id, label, key_ciphertext, key_fingerprint, active, daily_limit_micros, today_date, today_micros, total_micros, request_count, created_at, last_used_at, max_micros, shared_micros, pioneer_team_id, pioneer_payment_plan, pioneer_credit_limit_micros, pioneer_remaining_micros, pioneer_health, pioneer_unhealthy_since, pending_validation, last_billing_sync_at, revoked_at, provider_id
 `
 
@@ -28,6 +28,7 @@ type CreatePoolKeyParams struct {
 	KeyFingerprint   string `json:"key_fingerprint"`
 	DailyLimitMicros int64  `json:"daily_limit_micros"`
 	CreatedAt        int64  `json:"created_at"`
+	ProviderID       string `json:"provider_id"`
 }
 
 // Pool key queries.
@@ -45,6 +46,7 @@ func (q *Queries) CreatePoolKey(ctx context.Context, arg CreatePoolKeyParams) (P
 		arg.KeyFingerprint,
 		arg.DailyLimitMicros,
 		arg.CreatedAt,
+		arg.ProviderID,
 	)
 	var i PoolKey
 	err := row.Scan(
