@@ -10,8 +10,8 @@ SELECT * FROM providers ORDER BY id;
 SELECT * FROM providers WHERE id = ?;
 
 -- name: CreateProvider :exec
-INSERT INTO providers (id, type, name, base_url, config_json, active, created_at)
-VALUES (?, ?, ?, ?, ?, ?, ?);
+INSERT INTO providers (id, type, name, base_url, config_json, active, is_free, created_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?);
 
 -- name: UpdateProvider :exec
 UPDATE providers SET

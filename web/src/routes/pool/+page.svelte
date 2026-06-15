@@ -58,6 +58,10 @@
   let confirmingDelete = $state<Set<string>>(new Set());
   let confirmTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
+  let selectedProviderIsFree = $derived(
+    providers.find((p) => p.id === selectedProvider)?.is_free ?? false
+  );
+
   onMount(async () => {
     await reload();
   });
@@ -344,7 +348,7 @@
           </form>
         {:else if addStage === 'confirm' && probeResult}
           <form class="add-form" onsubmit={handleAdd}>
-            {#if probeResult.credit_limit_micros > 0}
+            {#if !selectedProviderIsFree && probeResult.credit_limit_micros > 0}
               <div class="probe-summary mono">
                 <span class="probe-plan">{probeResult.payment_plan}</span>
                 <span class="probe-sep"> · </span>
@@ -357,7 +361,7 @@
                 <span class="probe-plan">key validated ✓</span>
               </div>
             {/if}
-            {#if probeResult.credit_limit_micros > 0}
+            {#if !selectedProviderIsFree && probeResult.credit_limit_micros > 0}
               <div class="form-row slider-row">
                 <label class="form-label" for="probe-share">share with pool</label>
                 <div class="slider-wrap">

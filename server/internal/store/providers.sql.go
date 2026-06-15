@@ -10,8 +10,8 @@ import (
 )
 
 const createProvider = `-- name: CreateProvider :exec
-INSERT INTO providers (id, type, name, base_url, config_json, active, created_at)
-VALUES (?, ?, ?, ?, ?, ?, ?)
+INSERT INTO providers (id, type, name, base_url, config_json, active, is_free, created_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type CreateProviderParams struct {
@@ -21,6 +21,7 @@ type CreateProviderParams struct {
 	BaseUrl    string `json:"base_url"`
 	ConfigJson string `json:"config_json"`
 	Active     int64  `json:"active"`
+	IsFree     int64  `json:"is_free"`
 	CreatedAt  int64  `json:"created_at"`
 }
 
@@ -32,6 +33,7 @@ func (q *Queries) CreateProvider(ctx context.Context, arg CreateProviderParams) 
 		arg.BaseUrl,
 		arg.ConfigJson,
 		arg.Active,
+		arg.IsFree,
 		arg.CreatedAt,
 	)
 	return err
@@ -47,7 +49,7 @@ func (q *Queries) DeleteProvider(ctx context.Context, id string) error {
 }
 
 const getProvider = `-- name: GetProvider :one
-SELECT id, type, name, base_url, config_json, active, created_at FROM providers WHERE id = ?
+SELECT id, type, name, base_url, config_json, active, created_at, is_free FROM providers WHERE id = ?
 `
 
 func (q *Queries) GetProvider(ctx context.Context, id string) (Provider, error) {
@@ -61,13 +63,14 @@ func (q *Queries) GetProvider(ctx context.Context, id string) (Provider, error) 
 		&i.ConfigJson,
 		&i.Active,
 		&i.CreatedAt,
+		&i.IsFree,
 	)
 	return i, err
 }
 
 const listActiveProviders = `-- name: ListActiveProviders :many
 
-SELECT id, type, name, base_url, config_json, active, created_at FROM providers WHERE active = 1 ORDER BY id
+SELECT id, type, name, base_url, config_json, active, created_at, is_free FROM providers WHERE active = 1 ORDER BY id
 `
 
 // Provider registry queries for multi-provider support.
@@ -88,6 +91,7 @@ func (q *Queries) ListActiveProviders(ctx context.Context) ([]Provider, error) {
 			&i.ConfigJson,
 			&i.Active,
 			&i.CreatedAt,
+			&i.IsFree,
 		); err != nil {
 			return nil, err
 		}
@@ -103,7 +107,7 @@ func (q *Queries) ListActiveProviders(ctx context.Context) ([]Provider, error) {
 }
 
 const listAllProviders = `-- name: ListAllProviders :many
-SELECT id, type, name, base_url, config_json, active, created_at FROM providers ORDER BY id
+SELECT id, type, name, base_url, config_json, active, created_at, is_free FROM providers ORDER BY id
 `
 
 func (q *Queries) ListAllProviders(ctx context.Context) ([]Provider, error) {
@@ -123,6 +127,7 @@ func (q *Queries) ListAllProviders(ctx context.Context) ([]Provider, error) {
 			&i.ConfigJson,
 			&i.Active,
 			&i.CreatedAt,
+			&i.IsFree,
 		); err != nil {
 			return nil, err
 		}

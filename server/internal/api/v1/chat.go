@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
 	"time"
 
 	"charm.land/fantasy"
@@ -43,13 +42,12 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Resolve provider and upstream model name.
-	isFree := strings.HasPrefix(oaiReq.Model, "free/")
-	var providerID, upstreamModel string
-	if isFree {
-		providerID = "free"
-		upstreamModel = strings.TrimPrefix(oaiReq.Model, "free/")
-	} else {
-		providerID, upstreamModel = s.Registry.ResolveModel(oaiReq.Model)
+	providerID, upstreamModel := s.Registry.ResolveModel(oaiReq.Model)
+
+	// Check if this provider is free (bypasses pool gate).
+	isFree := false
+	if cfg, ok := s.Registry.Get(providerID); ok {
+		isFree = cfg.IsFree
 	}
 
 	// Paid path: enforce pool gate before picking a key.
@@ -59,8 +57,8 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			writeError(w, gr.Status, gr.Code, gr.Message)
 			return
 		}
-	} else if _, ok := s.Registry.Get("free"); !ok {
-		writeError(w, http.StatusBadRequest, "invalid_request", "free provider not configured")
+	} else if _, ok := s.Registry.Get(providerID); !ok {
+		writeError(w, http.StatusBadRequest, "invalid_request", "provider not configured")
 		return
 	}
 

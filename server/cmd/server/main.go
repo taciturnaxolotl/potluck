@@ -14,7 +14,6 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"strings"
 	"syscall"
 	"time"
 
@@ -109,12 +108,6 @@ func main() {
 		log.Warn("failed to load providers from DB, using pioneer-only fallback", "err", err)
 		configs := []registry.ProviderConfig{
 			{ID: "pioneer", Type: registry.TypeOpenAICompat, Name: "Pioneer", BaseURL: cfg.Pioneer.BaseURL},
-		}
-		if cfg.FreeProvider.Enabled() {
-			freeBase := strings.TrimSuffix(strings.TrimRight(cfg.FreeProvider.BaseURL, "/"), "/v1")
-			configs = append(configs, registry.ProviderConfig{
-				ID: "free", Type: registry.TypeFree, Name: "Free", BaseURL: freeBase,
-			})
 		}
 		reg = registry.New(configs)
 	}

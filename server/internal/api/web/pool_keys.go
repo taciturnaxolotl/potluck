@@ -28,10 +28,11 @@ func (s *Server) handleListProviders(w http.ResponseWriter, r *http.Request) {
 	out := make([]map[string]any, 0, len(rows))
 	for _, p := range rows {
 		out = append(out, map[string]any{
-			"id":     p.ID,
-			"type":   p.Type,
-			"name":   p.Name,
-			"active": p.Active == 1,
+			"id":      p.ID,
+			"type":    p.Type,
+			"name":    p.Name,
+			"active":  p.Active == 1,
+			"is_free": p.IsFree == 1,
 		})
 	}
 	writeJSON(w, 200, out)
@@ -44,6 +45,7 @@ func (s *Server) handleCreateProvider(w http.ResponseWriter, r *http.Request) {
 		Type    string `json:"type"`
 		Name    string `json:"name"`
 		BaseURL string `json:"base_url"`
+		IsFree  bool   `json:"is_free"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeErr(w, 400, "invalid_request", err.Error())
@@ -54,6 +56,11 @@ func (s *Server) handleCreateProvider(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	isFreeInt := int64(0)
+	if req.IsFree {
+		isFreeInt = 1
+	}
+
 	now := time.Now().Unix()
 	err := s.Q.CreateProvider(r.Context(), store.CreateProviderParams{
 		ID:         req.ID,
@@ -62,6 +69,7 @@ func (s *Server) handleCreateProvider(w http.ResponseWriter, r *http.Request) {
 		BaseUrl:    req.BaseURL,
 		ConfigJson: "{}",
 		Active:     1,
+		IsFree:     isFreeInt,
 		CreatedAt:  now,
 	})
 	if err != nil {

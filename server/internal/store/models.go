@@ -151,6 +151,7 @@ type Provider struct {
 	ConfigJson string `json:"config_json"`
 	Active     int64  `json:"active"`
 	CreatedAt  int64  `json:"created_at"`
+	IsFree     int64  `json:"is_free"`
 }
 
 type Session struct {

@@ -104,13 +104,12 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Resolve provider and upstream model name.
-	isFree := strings.HasPrefix(req.Model, "free/")
-	var providerID, upstreamModel string
-	if isFree {
-		providerID = "free"
-		upstreamModel = strings.TrimPrefix(req.Model, "free/")
-	} else {
-		providerID, upstreamModel = s.Registry.ResolveModel(req.Model)
+	providerID, upstreamModel := s.Registry.ResolveModel(req.Model)
+
+	// Check if this provider is free (bypasses pool gate).
+	isFree := false
+	if cfg, ok := s.Registry.Get(providerID); ok {
+		isFree = cfg.IsFree
 	}
 
 	if !isFree {
@@ -118,8 +117,8 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, gr.Status, gr.Code, gr.Message)
 			return
 		}
-	} else if _, ok := s.Registry.Get("free"); !ok {
-		writeErr(w, 400, "invalid_request", "free provider not configured")
+	} else if _, ok := s.Registry.Get(providerID); !ok {
+		writeErr(w, 400, "invalid_request", "provider not configured")
 		return
 	}
 

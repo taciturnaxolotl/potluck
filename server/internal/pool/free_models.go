@@ -96,7 +96,7 @@ func (r *FreeModelsRefresher) refresh(ctx context.Context) {
 	now := time.Now().Unix()
 	upserted := 0
 	for _, m := range out.Data {
-		catalogID := "free/" + m.ID
+		catalogID := "omlx/" + m.ID
 		_ = r.q.UpsertModelCatalog(ctx, store.UpsertModelCatalogParams{
 			ID:          catalogID,
 			Label:       prettifyFreeLabel(m.ID),

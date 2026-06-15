@@ -18,6 +18,7 @@
   let newType = $state('openai_compat');
   let newName = $state('');
   let newBaseUrl = $state('');
+  let newIsFree = $state(false);
   let adding = $state(false);
   let addErr = $state<string | null>(null);
 
@@ -50,11 +51,12 @@
     adding = true;
     addErr = null;
     try {
-      await createProvider(newId.trim(), newType, newName.trim(), newBaseUrl.trim());
+      await createProvider(newId.trim(), newType, newName.trim(), newBaseUrl.trim(), newIsFree);
       showAddForm = false;
       newId = '';
       newName = '';
       newBaseUrl = '';
+      newIsFree = false;
       await reload();
     } catch (e: unknown) {
       addErr = e instanceof Error ? e.message : 'failed to create';
@@ -129,6 +131,12 @@
           <input id="prov-url" class="form-input mono" type="url" placeholder="https://openrouter.ai/api/v1"
             bind:value={newBaseUrl} required />
         </div>
+        <div class="form-row form-row-check">
+          <label class="form-check">
+            <input type="checkbox" bind:checked={newIsFree} />
+            <span class="form-check-label">free provider (no pool key required)</span>
+          </label>
+        </div>
         {#if addErr}
           <div class="form-err mono">{addErr}</div>
         {/if}
@@ -152,6 +160,9 @@
               <span class="provider-name">{p.name}</span>
               <span class="provider-id mono">{p.id}</span>
               <span class="provider-type mono">{p.type}</span>
+              {#if p.is_free}
+                <span class="provider-free-badge">free</span>
+              {/if}
             </div>
             <div class="provider-actions">
               <button
@@ -350,6 +361,35 @@
     background: var(--bg-sidebar);
     padding: 0.1em 0.4em;
     border-radius: 3px;
+  }
+
+  .provider-free-badge {
+    font-size: 0.62rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding: 0.1em 0.4em;
+    border-radius: 3px;
+    background: light-dark(oklch(92% 0.05 145), oklch(30% 0.05 145));
+    color: light-dark(oklch(40% 0.1 145), oklch(75% 0.1 145));
+  }
+
+  .form-row-check {
+    margin-top: 0.25rem;
+  }
+  .form-check {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    cursor: pointer;
+    font-size: 0.82rem;
+    color: var(--text);
+  }
+  .form-check input[type="checkbox"] {
+    accent-color: var(--accent);
+  }
+  .form-check-label {
+    user-select: none;
   }
 
   .provider-actions {
