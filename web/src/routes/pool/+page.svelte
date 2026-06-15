@@ -220,13 +220,15 @@
   }
 
   // Health dot helpers
-  function healthLabel(h: number, pending: boolean): string {
+  function healthLabel(h: number, pending: boolean, revoked: boolean): string {
+    if (revoked) return 'revoked';
     if (pending) return 'pending validation';
     if (h === 1) return 'healthy';
-    if (h === 2) return 'unauthorized — exhausted or hit limit; retrying daily';
+    if (h === 2) return 'unauthorized — retrying daily';
     return 'unknown — not yet probed';
   }
-  function healthClass(h: number, pending: boolean): string {
+  function healthClass(h: number, pending: boolean, revoked: boolean): string {
+    if (revoked) return 'health-revoked';
     if (pending) return 'health-pending';
     if (h === 1) return 'health-healthy';
     if (h === 2) return 'health-unauth';
@@ -382,10 +384,10 @@
           </thead>
           <tbody>
             {#each keys as key (key.id)}
-              <tr class:inactive={!key.active} class:mine={key.mine} class:pending={key.pending_validation}>
+              <tr class:mine={key.mine} class:pending={key.pending_validation}>
                 <td class="key-cell">
                   <div class="key-label-row">
-                    <span class="health-dot {healthClass(key.pioneer_health, key.pending_validation)}" title={healthLabel(key.pioneer_health, key.pending_validation)}>●</span>
+                    <span class="health-dot {healthClass(key.pioneer_health, key.pending_validation, key.revoked)}" title={healthLabel(key.pioneer_health, key.pending_validation, key.revoked)}>●</span>
                     {#if editingId === key.id}
                       <input class="label-edit" type="text" bind:value={editLabel}
                         onblur={() => saveLabel(key.id)}
@@ -401,7 +403,11 @@
                   <span class="owner-name">{key.owner_name || key.owner_email}</span>
                 </td>
                 <td class="num mono">
-                  <span class:over={(key.today_micros / (key.max_micros || 1)) > 0.8} class:syncing={syncing.has(key.id)}>{syncing.has(key.id) ? '…' : fmtMicros(key.today_micros)}</span>
+                  {#if key.pioneer_health === 2 || key.revoked}
+                    <span class="stale-val" title="key unavailable — spend data is stale">—</span>
+                  {:else}
+                    <span class:over={(key.today_micros / (key.max_micros || 1)) > 0.8} class:syncing={syncing.has(key.id)}>{syncing.has(key.id) ? '…' : fmtMicros(key.today_micros)}</span>
+                  {/if}
                 </td>
                 <td class="num mono limits-td" onclick={(e) => editingLimitsId === key.id && e.stopPropagation()}>
                   {#if key.mine && editingLimitsId === key.id && limitsPos}
@@ -745,9 +751,6 @@
   .keys-table td.num { text-align: right; font-feature-settings: "tnum" 1; }
   .keys-table td.actions-cell { text-align: right; }
 
-  .keys-table tr.inactive td {
-    opacity: 0.5;
-  }
   .keys-table tr.mine {
     background: light-dark(oklch(98% 0.005 350), oklch(22% 0.01 350));
   }
@@ -790,8 +793,11 @@
   }
 
   .over {
-    color: var(--danger, #f87171);
+    color: var(--danger);
     font-weight: 600;
+  }
+  .stale-val {
+    color: var(--text-muted);
   }
 
   .menu-wrap {
@@ -895,6 +901,7 @@
   }
   .health-healthy  { color: #4ade80; }
   .health-unauth   { color: light-dark(#f59e0b, #fbbf24); }
+  .health-revoked  { color: var(--danger); }
   .health-pending  { color: light-dark(#60a5fa, #93c5fd); }
   .health-unknown  { color: var(--text-muted); }
 

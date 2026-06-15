@@ -45,6 +45,9 @@
   --border: light-dark(rgba(48, 52, 63, 0.1), rgba(255, 217, 218, 0.08));
   --border-on-code: light-dark(rgba(48, 52, 63, 0.08), rgba(255, 217, 218, 0.08));
   --accent: light-dark(var(--dark-raspberry), var(--blush-rose));
+  /* Danger / error state — distinct from accent. Warm red that reads as
+     "something is wrong" rather than "this is a link." */
+  --danger: light-dark(#dc2626, #f87171);
   /* Eyebrow / accent label colour — slightly different on each side: dark
      prefers blush-rose for legibility on carbon, light wants the deep
      raspberry for contrast on cream. */
