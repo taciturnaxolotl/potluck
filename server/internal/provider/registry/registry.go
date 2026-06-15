@@ -120,16 +120,6 @@ func (r *Registry) ResolveModel(model string) (providerID, upstreamModel string)
 
 func newFantasyProvider(cfg ProviderConfig, apiKey string) (fantasy.Provider, error) {
 	switch cfg.Type {
-	case TypeOpenAICompat:
-		opts := []openaicompat.Option{
-			openaicompat.WithBaseURL(cfg.BaseURL),
-			openaicompat.WithName(cfg.Name),
-		}
-		if apiKey != "" {
-			opts = append(opts, openaicompat.WithAPIKey(apiKey))
-		}
-		return openaicompat.New(opts...)
-
 	case TypeAnthropic:
 		opts := []anthropic.Option{
 			anthropic.WithName(cfg.Name),
@@ -163,14 +153,17 @@ func newFantasyProvider(cfg ProviderConfig, apiKey string) (fantasy.Provider, er
 		}
 		return openrouter.New(opts...)
 
-	case TypeFree:
-		// Free providers use openaicompat with no auth.
-		return openaicompat.New(
+	default:
+		// Everything else (openai_compat, nvidia, free, generic, any future
+		// OpenAI-shaped provider) uses the openaicompat constructor. This is
+		// the safe default since most LLM providers speak OpenAI-compatible API.
+		opts := []openaicompat.Option{
 			openaicompat.WithBaseURL(cfg.BaseURL),
 			openaicompat.WithName(cfg.Name),
-		)
-
-	default:
-		return nil, fmt.Errorf("unsupported provider type: %s", cfg.Type)
+		}
+		if apiKey != "" {
+			opts = append(opts, openaicompat.WithAPIKey(apiKey))
+		}
+		return openaicompat.New(opts...)
 	}
 }
