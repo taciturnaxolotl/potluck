@@ -119,6 +119,15 @@
     if (n == null || n <= 0) return 'no data';
     return n.toFixed(1) + ' t/s';
   }
+
+  let copiedId = $state<string | null>(null);
+  async function copyId(id: string) {
+    try {
+      await navigator.clipboard.writeText(id);
+      copiedId = id;
+      setTimeout(() => { if (copiedId === id) copiedId = null; }, 1500);
+    } catch { /* ignore */ }
+  }
 </script>
 
 <article>
@@ -185,7 +194,9 @@
       {#each sorted as m (m.id)}
         <div class="table-row">
           <div class="model-info">
-            <span class="model-label">{m.label}</span>
+            <button class="model-label" onclick={() => copyId(m.id)} title="click to copy model id">
+              {copiedId === m.id ? '✓ copied' : m.label}
+            </button>
             <span class="model-desc muted">{m.description}</span>
             <span class="model-meta muted">
               {m.license} · {m.tier}
@@ -339,11 +350,24 @@
     min-width: 0;
   }
   .model-label {
+    background: none;
+    border: none;
+    padding: 0;
+    color: var(--text);
+    font-family: inherit;
     font-size: 0.9rem;
     font-weight: 500;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    cursor: pointer;
+    text-align: left;
+  }
+  .model-label:hover {
+    color: var(--accent);
+    text-decoration: underline;
+    text-decoration-style: dotted;
+    text-underline-offset: 2px;
   }
   .model-desc {
     font-size: 0.78rem;
