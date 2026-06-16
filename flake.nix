@@ -23,7 +23,7 @@
             pname = "potluck";
             version = "0.0.1";
             src = ./server;
-            vendorHash = "sha256-9Bf8ao2Adf6deib9YgeL5UlNclmYUgUQ0MZFN5A5UFQ=";
+            vendorHash = "sha256-gWeY3ZoOZNObT9LjWEuRijY2S48Gm36bGpK88mohmSE=";
             subPackages = [ "cmd/server" ];
             ldflags = [
               "-s"
