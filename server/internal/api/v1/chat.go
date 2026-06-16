@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -126,11 +127,22 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// upstreamError extracts the HTTP status code from a fantasy ProviderError,
+// defaulting to 502 if the error isn't a provider error.
+func upstreamError(err error) (int, string) {
+	var pe *fantasy.ProviderError
+	if errors.As(err, &pe) && pe.StatusCode > 0 {
+		return pe.StatusCode, err.Error()
+	}
+	return http.StatusBadGateway, err.Error()
+}
+
 // streamCompletion handles streaming chat completions via fantasy.
 func (s *Server) streamCompletion(w http.ResponseWriter, r *http.Request, lm fantasy.LanguageModel, call fantasy.Call, model string, includeUsage bool, sel *pool.Selection, reqID string, u *store.User) {
 	streamResp, err := lm.Stream(r.Context(), call)
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "provider_down", err.Error())
+		status, msg := upstreamError(err)
+		writeError(w, status, "provider_error", msg)
 		if u != nil && reqID != "" {
 			go finishRequest(s.Q, reqID, 0, 0, 0, "error")
 		}
@@ -188,7 +200,8 @@ func (s *Server) streamCompletion(w http.ResponseWriter, r *http.Request, lm fan
 func (s *Server) bufferedCompletion(w http.ResponseWriter, r *http.Request, lm fantasy.LanguageModel, call fantasy.Call, sel *pool.Selection, reqID string, u *store.User) {
 	resp, err := lm.Generate(r.Context(), call)
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "provider_down", err.Error())
+		status, msg := upstreamError(err)
+		writeError(w, status, "provider_error", msg)
 		if u != nil && reqID != "" {
 			go finishRequest(s.Q, reqID, 0, 0, 0, "error")
 		}

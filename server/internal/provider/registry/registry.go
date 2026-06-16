@@ -145,6 +145,12 @@ func (r *Registry) ResolveModel(model string) (providerID, upstreamModel string)
 		if _, ok := r.Get(prefix); ok {
 			return prefix, model[idx+1:]
 		}
+		// Backward compat: "free/" maps to "omlx"
+		if prefix == "free" {
+			if _, ok := r.Get("omlx"); ok {
+				return "omlx", model[idx+1:]
+			}
+		}
 	}
 	// Default to pioneer for bare model names (backward compat).
 	return "pioneer", model
