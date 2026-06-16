@@ -192,11 +192,16 @@ func newFantasyProvider(cfg ProviderConfig, apiKey string) (fantasy.Provider, er
 		return openrouter.New(opts...)
 
 	default:
-		// Everything else (openai_compat, nvidia, free, generic, any future
+		// Everything else (openai_compat, nvidia, omlx, free, generic, any future
 		// OpenAI-shaped provider) uses the openaicompat constructor. This is
 		// the safe default since most LLM providers speak OpenAI-compatible API.
+		// Fantasy expects the base URL to include /v1, so append it if missing.
+		baseURL := cfg.BaseURL
+		if !strings.HasSuffix(baseURL, "/v1") {
+			baseURL = strings.TrimRight(baseURL, "/") + "/v1"
+		}
 		opts := []openaicompat.Option{
-			openaicompat.WithBaseURL(cfg.BaseURL),
+			openaicompat.WithBaseURL(baseURL),
 			openaicompat.WithName(cfg.Name),
 		}
 		if apiKey != "" {
