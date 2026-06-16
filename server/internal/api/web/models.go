@@ -23,10 +23,39 @@ func (s *Server) handleListModels(w http.ResponseWriter, r *http.Request) {
 		refreshedAt = toInt64(ts)
 	}
 
-	// Stats cover the last 48h.
-	statsRows, _ := s.Q.ListModelStats(r.Context(), time.Now().Add(-48*time.Hour).Unix())
-	statsMap := make(map[string]any, len(statsRows))
-	for _, st := range statsRows {
+	// Stats cover the last 48h. Merge billing-row stats (pioneer) with
+	// potluck_requests stats (all providers). Request-based stats take
+	// precedence since they use the full prefixed model ID that matches
+	// the catalog.
+	since := time.Now().Add(-48 * time.Hour).Unix()
+	statsMap := make(map[string]any)
+
+	// First: billing-row stats (legacy pioneer, unprefixed model names).
+	billingRows, _ := s.Q.ListModelStats(r.Context(), since)
+	for _, st := range billingRows {
+		var avgTps *float64
+		if st.AvgTps.Valid {
+			avgTps = &st.AvgTps.Float64
+		}
+		var totalIn, totalOut float64
+		if st.TotalInputTokens.Valid {
+			totalIn = st.TotalInputTokens.Float64
+		}
+		if st.TotalOutputTokens.Valid {
+			totalOut = st.TotalOutputTokens.Float64
+		}
+		statsMap[st.Model] = map[string]any{
+			"request_count":       st.RequestCount,
+			"total_input_tokens":  totalIn,
+			"total_output_tokens": totalOut,
+			"avg_tps":             avgTps,
+		}
+	}
+
+	// Second: request-based stats (all providers, prefixed model names).
+	// These override billing-row stats when keys match.
+	reqRows, _ := s.Q.ListModelStatsFromRequests(r.Context(), since)
+	for _, st := range reqRows {
 		var avgTps *float64
 		if st.AvgTps.Valid {
 			avgTps = &st.AvgTps.Float64

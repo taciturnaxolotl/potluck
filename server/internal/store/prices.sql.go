@@ -120,6 +120,68 @@ func (q *Queries) ListModelStats(ctx context.Context, startedAt int64) ([]ListMo
 	return items, nil
 }
 
+const listModelStatsFromRequests = `-- name: ListModelStatsFromRequests :many
+SELECT
+    model,
+    COUNT(*)                                          AS request_count,
+    SUM(COALESCE(prompt_tokens, 0))                   AS total_input_tokens,
+    SUM(COALESCE(completion_tokens, 0))               AS total_output_tokens,
+    AVG(
+        CASE
+            WHEN finished_at IS NOT NULL
+             AND finished_at > started_at
+             AND started_at >= ?
+            THEN CAST(COALESCE(completion_tokens, 0) AS REAL)
+                 / (finished_at - started_at)
+            ELSE NULL
+        END
+    )                                                 AS avg_tps
+FROM potluck_requests
+WHERE status = 'done'
+GROUP BY model
+ORDER BY request_count DESC
+`
+
+type ListModelStatsFromRequestsRow struct {
+	Model             string          `json:"model"`
+	RequestCount      int64           `json:"request_count"`
+	TotalInputTokens  sql.NullFloat64 `json:"total_input_tokens"`
+	TotalOutputTokens sql.NullFloat64 `json:"total_output_tokens"`
+	AvgTps            sql.NullFloat64 `json:"avg_tps"`
+}
+
+// Per-model aggregate directly from potluck_requests.
+// Covers all providers (including those without billing rows).
+// since scopes the TPS window (48h); token counts are all-time.
+func (q *Queries) ListModelStatsFromRequests(ctx context.Context, startedAt int64) ([]ListModelStatsFromRequestsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listModelStatsFromRequests, startedAt)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListModelStatsFromRequestsRow{}
+	for rows.Next() {
+		var i ListModelStatsFromRequestsRow
+		if err := rows.Scan(
+			&i.Model,
+			&i.RequestCount,
+			&i.TotalInputTokens,
+			&i.TotalOutputTokens,
+			&i.AvgTps,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const upsertModelPrice = `-- name: UpsertModelPrice :exec
 INSERT INTO model_prices (model, input_micros_per_1k, output_micros_per_1k, updated_at)
 VALUES (?, ?, ?, ?)

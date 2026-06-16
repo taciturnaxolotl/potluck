@@ -110,6 +110,10 @@ type Querier interface {
 	// Per-model aggregate from billing rows + potluck_requests.
 	// since scopes the TPS window (48h); cost/token counts are all-time.
 	ListModelStats(ctx context.Context, startedAt int64) ([]ListModelStatsRow, error)
+	// Per-model aggregate directly from potluck_requests.
+	// Covers all providers (including those without billing rows).
+	// since scopes the TPS window (48h); token counts are all-time.
+	ListModelStatsFromRequests(ctx context.Context, startedAt int64) ([]ListModelStatsFromRequestsRow, error)
 	// All users with their pool key stats (if any).
 	// Users without keys appear with zero contributions.
 	// private_reservation_micros = sum(max_micros - shared_micros) for active keys.

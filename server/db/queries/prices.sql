@@ -35,3 +35,27 @@ LEFT JOIN potluck_requests pr ON pr.id = pkbr.matched_request_id
 WHERE pkbr.is_duplicate = 0
 GROUP BY pkbr.model
 ORDER BY request_count DESC;
+
+-- name: ListModelStatsFromRequests :many
+-- Per-model aggregate directly from potluck_requests.
+-- Covers all providers (including those without billing rows).
+-- since scopes the TPS window (48h); token counts are all-time.
+SELECT
+    model,
+    COUNT(*)                                          AS request_count,
+    SUM(COALESCE(prompt_tokens, 0))                   AS total_input_tokens,
+    SUM(COALESCE(completion_tokens, 0))               AS total_output_tokens,
+    AVG(
+        CASE
+            WHEN finished_at IS NOT NULL
+             AND finished_at > started_at
+             AND started_at >= ?
+            THEN CAST(COALESCE(completion_tokens, 0) AS REAL)
+                 / (finished_at - started_at)
+            ELSE NULL
+        END
+    )                                                 AS avg_tps
+FROM potluck_requests
+WHERE status = 'done'
+GROUP BY model
+ORDER BY request_count DESC;
