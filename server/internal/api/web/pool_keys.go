@@ -28,11 +28,12 @@ func (s *Server) handleListProviders(w http.ResponseWriter, r *http.Request) {
 	out := make([]map[string]any, 0, len(rows))
 	for _, p := range rows {
 		out = append(out, map[string]any{
-			"id":      p.ID,
-			"type":    p.Type,
-			"name":    p.Name,
-			"active":  p.Active == 1,
-			"is_free": p.IsFree == 1,
+			"id":       p.ID,
+			"type":     p.Type,
+			"name":     p.Name,
+			"base_url": p.BaseUrl,
+			"active":   p.Active == 1,
+			"is_free":  p.IsFree == 1,
 		})
 	}
 	writeJSON(w, 200, out)
@@ -81,6 +82,7 @@ func (s *Server) handleCreateProvider(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	_ = s.Registry.Reload(r.Context())
 	writeJSON(w, 201, map[string]any{
 		"id":   req.ID,
 		"type": req.Type,
@@ -154,6 +156,7 @@ func (s *Server) handleUpdateProvider(w http.ResponseWriter, r *http.Request) {
 		ID:         id,
 	})
 
+	_ = s.Registry.Reload(r.Context())
 	writeJSON(w, 200, map[string]any{"ok": true})
 }
 
@@ -177,6 +180,7 @@ func (s *Server) handleDeleteProvider(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	_ = s.Registry.Reload(r.Context())
 	writeJSON(w, 200, map[string]any{"ok": true})
 }
 

@@ -44,6 +44,7 @@ type ProviderConfig struct {
 type Registry struct {
 	mu        sync.RWMutex
 	providers map[string]ProviderConfig
+	q         *store.Queries // set when loaded from DB, enables Reload
 }
 
 // New creates a registry from a list of provider configs.
@@ -73,7 +74,37 @@ func LoadFromDB(ctx context.Context, q *store.Queries) (*Registry, error) {
 			// TODO: parse config_json into map when needed
 		})
 	}
-	return New(configs), nil
+	m := make(map[string]ProviderConfig, len(configs))
+	for _, c := range configs {
+		m[c.ID] = c
+	}
+	return &Registry{providers: m, q: q}, nil
+}
+
+// Reload refreshes the registry from the database. Safe to call concurrently.
+func (r *Registry) Reload(ctx context.Context) error {
+	if r.q == nil {
+		return fmt.Errorf("registry not loaded from DB")
+	}
+	rows, err := r.q.ListActiveProviders(ctx)
+	if err != nil {
+		return fmt.Errorf("list providers: %w", err)
+	}
+	m := make(map[string]ProviderConfig, len(rows))
+	for _, row := range rows {
+		m[row.ID] = ProviderConfig{
+			ID:      row.ID,
+			Type:    ProviderType(row.Type),
+			Name:    row.Name,
+			BaseURL: row.BaseUrl,
+			Active:  row.Active == 1,
+			IsFree:  row.IsFree == 1,
+		}
+	}
+	r.mu.Lock()
+	r.providers = m
+	r.mu.Unlock()
+	return nil
 }
 
 // Get returns the config for a provider ID.

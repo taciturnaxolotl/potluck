@@ -76,7 +76,7 @@
     editingId = p.id;
     editName = p.name;
     editType = p.type;
-    editBaseUrl = (p as any).base_url ?? '';
+    editBaseUrl = p.base_url ?? '';
     editIsFree = p.is_free;
   }
 
