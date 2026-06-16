@@ -120,6 +120,30 @@ func (m *Manager) PickForUser(ctx context.Context, userID string) (*Selection, e
 	return &Selection{keyID: key.ID, plaintext: plaintext}, nil
 }
 
+// PickForUserAndProvider picks a key for a specific user and provider.
+// Tries the user's own key for that provider first, falls back to any
+// healthy key for that provider.
+func (m *Manager) PickForUserAndProvider(ctx context.Context, userID, providerID string) (*Selection, error) {
+	if userID != "" {
+		key, err := m.q.PickOwnKeyForProvider(ctx, store.PickOwnKeyForProviderParams{
+			UserID:     userID,
+			ProviderID: providerID,
+		})
+		if err == nil {
+			plaintext, err := m.Decrypt(key.KeyCiphertext)
+			if err != nil {
+				return nil, fmt.Errorf("pool: decrypt key %s: %w", key.ID, err)
+			}
+			return &Selection{keyID: key.ID, plaintext: plaintext}, nil
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("pool: pick own key for provider %s: %w", providerID, err)
+		}
+	}
+	// Fall back to any healthy key for this provider.
+	return m.PickForProvider(ctx, providerID)
+}
+
 // PickForProvider picks any healthy key for a specific provider.
 // Used by the models refresher to authenticate model listing requests.
 func (m *Manager) PickForProvider(ctx context.Context, providerID string) (*Selection, error) {

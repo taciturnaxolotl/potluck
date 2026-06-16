@@ -75,7 +75,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		if u != nil {
 			userID = u.ID
 		}
-		sel, err = s.Pool.PickForUser(r.Context(), userID)
+		sel, err = s.Pool.PickForUserAndProvider(r.Context(), userID, providerID)
 		if err != nil {
 			writeError(w, http.StatusServiceUnavailable, "no_pool_keys", "no active pool keys available")
 			return

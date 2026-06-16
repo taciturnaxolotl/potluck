@@ -217,7 +217,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		apiKey = "" // free provider needs no key
 	} else {
 		var err error
-		sel, err = s.Pool.PickForUser(r.Context(), u.ID)
+		sel, err = s.Pool.PickForUserAndProvider(r.Context(), u.ID, providerID)
 		if err != nil {
 			writeErr(w, 503, "no_pool_keys", "no active pool keys available")
 			return
