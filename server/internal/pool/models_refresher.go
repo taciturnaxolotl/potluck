@@ -70,6 +70,7 @@ func (r *ModelsRefresher) refreshAll(ctx context.Context) {
 		}
 
 		fetchCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		now := time.Now().Unix()
 		models, err := fetcher.FetchModels(fetchCtx, r.httpClient, p.BaseURL, apiKey)
 		cancel()
 
@@ -85,7 +86,14 @@ func (r *ModelsRefresher) refreshAll(ctx context.Context) {
 				upserted++
 			}
 		}
+
+		// Prune models that no longer exist on this provider.
+		pruned, _ := r.q.PruneStaleModels(context.Background(), store.PruneStaleModelsParams{
+			ID:          p.ID + "/%",
+			RefreshedAt: now,
+		})
+
 		r.log.Info("models refresher: catalog updated",
-			"provider", p.ID, "models", len(models), "upserted", upserted)
+			"provider", p.ID, "models", len(models), "upserted", upserted, "pruned", pruned)
 	}
 }

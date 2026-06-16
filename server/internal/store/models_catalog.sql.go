@@ -63,6 +63,27 @@ func (q *Queries) ListModelCatalog(ctx context.Context) ([]ModelsCatalog, error)
 	return items, nil
 }
 
+const pruneStaleModels = `-- name: PruneStaleModels :execrows
+g;
+
+DELETE FROM models_catalog WHERE id LIKE ? AND refreshed_at <
+`
+
+type PruneStaleModelsParams struct {
+	ID          string `json:"id"`
+	RefreshedAt int64  `json:"refreshed_at"`
+}
+
+// Delete models for a provider prefix that weren't refreshed in the current cycle.
+// The first arg is the LIKE pattern (e.g. "nvidia/%").
+func (q *Queries) PruneStaleModels(ctx context.Context, arg PruneStaleModelsParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, pruneStaleModels, arg.ID, arg.RefreshedAt)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const upsertModelCatalog = `-- name: UpsertModelCatalog :exec
 
 INSERT INTO models_catalog (

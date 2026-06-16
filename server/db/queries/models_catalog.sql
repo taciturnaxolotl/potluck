@@ -27,3 +27,8 @@ ORDER BY tier ASC, label ASC;
 -- name: GetModelCatalogRefreshedAt :one
 -- Oldest refreshed_at across all models — tells us when the catalog is stale.
 SELECT COALESCE(MIN(refreshed_at), 0) FROM models_catalog;
+
+-- name: PruneStaleModels :execrows
+-- Delete models for a provider prefix that weren't refreshed in the current cycle.
+-- The first arg is the LIKE pattern (e.g. "nvidia/%").
+DELETE FROM models_catalog WHERE id LIKE ? AND refreshed_at < ?;

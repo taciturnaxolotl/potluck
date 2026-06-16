@@ -174,6 +174,9 @@ type Querier interface {
 	// Total pioneer credit limit across all active pool keys.
 	PoolTotalBalance(ctx context.Context) (interface{}, error)
 	PoolUserCount(ctx context.Context) (int64, error)
+	// Delete models for a provider prefix that weren't refreshed in the current cycle.
+	// The first arg is the LIKE pattern (e.g. "nvidia/%").
+	PruneStaleModels(ctx context.Context, arg PruneStaleModelsParams) (int64, error)
 	PutIdempotency(ctx context.Context, arg PutIdempotencyParams) error
 	// Called after a request settles. Resets daily counter if the day rolled over.
 	// today_day is the current UTC day (unix / 86400).
