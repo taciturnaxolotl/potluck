@@ -153,19 +153,6 @@ tasks:
     cmds:
       - goose -dir db/migrations sqlite3 ../data/potluck.db down
 
-  # ---- deploy -------------------------------------------------------------
-
-  deploy:server:
-    desc: Deploy backend to terebithia (TODO)
-    cmds:
-      - 'echo "TODO scp dist/server to terebithia and systemctl restart"'
-
-  deploy:web:
-    desc: Deploy SPA to Cloudflare
-    dir: web
-    cmds:
-      - bunx wrangler deploy
-
   # ---- housekeeping -------------------------------------------------------
 
   clean:

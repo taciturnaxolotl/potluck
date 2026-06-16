@@ -229,9 +229,10 @@ func (r *Reconciler) probeKey(ctx context.Context, key store.PoolKey) {
 		return
 	}
 
-	checker := GetProviderCapabilities(key.ProviderID).HealthChecker()
-	if checker == nil {
-		checker = NoopHealthChecker{}
+	caps := GetProviderCapabilities(key.ProviderID)
+	var checker HealthChecker = NoopHealthChecker{}
+	if caps != nil {
+		checker = caps.HealthChecker()
 	}
 	healthResult, err := checker.CheckHealth(ctx, r.httpClient, plaintext)
 	now := time.Now().Unix()
@@ -277,7 +278,6 @@ func (r *Reconciler) probeKey(ctx context.Context, key store.PoolKey) {
 	}
 
 	// Successful probe — validate plan and update.
-	caps := GetProviderCapabilities(key.ProviderID)
 	accepted := true // default for providers without plan restrictions
 	if caps != nil {
 		accepted = caps.AcceptedPlan(healthResult.PaymentPlan)
