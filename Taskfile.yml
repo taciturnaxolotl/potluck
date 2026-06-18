@@ -36,14 +36,20 @@ tasks:
   fmt:
     desc: Format Go and web sources
     cmds:
-      - cd server && gofmt -w .
+      - cd server && golangci-lint fmt
       - cd web && bun run fmt
 
   lint:
-    desc: Lint
+    desc: Lint Go and web sources
     cmds:
-      - cd server && go vet ./...
+      - cd server && golangci-lint run --timeout=5m
       - cd web && bun run lint
+
+  lint:fix:
+    desc: Lint and auto-fix Go issues
+    dir: server
+    cmds:
+      - golangci-lint run --timeout=5m --fix
 
   # ---- dev: parallel watchers ---------------------------------------------
 
