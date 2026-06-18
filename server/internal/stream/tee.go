@@ -30,7 +30,7 @@ import (
 // Event is the wire shape we publish to subscribers and persist as JSON.
 type Event struct {
 	Seq     int64           `json:"seq"`
-	Type    string          `json:"type"`             // "delta" | "usage" | "error" | "done"
+	Type    string          `json:"type"` // "delta" | "usage" | "error" | "done"
 	Content string          `json:"content,omitempty"`
 	Usage   *UsageEvent     `json:"usage,omitempty"`
 	Error   *ErrorEvent     `json:"error,omitempty"`

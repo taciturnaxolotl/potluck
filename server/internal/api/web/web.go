@@ -405,8 +405,8 @@ func (s *Server) handleListMessages(w http.ResponseWriter, r *http.Request) {
 // ---- API keys ----------------------------------------------------------
 
 type createKeyReq struct {
-	Name             string `json:"name"`
-	MaxBudgetMicros  *int64 `json:"max_budget_micros,omitempty"`
+	Name            string `json:"name"`
+	MaxBudgetMicros *int64 `json:"max_budget_micros,omitempty"`
 }
 
 // handleCreateKey mints an api key, returns the plaintext exactly once.
@@ -420,7 +420,7 @@ func (s *Server) handleCreateKey(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 500, "internal", err.Error())
 		return
 	}
-	var maxBudget = sqlNullInt64Ptr(req.MaxBudgetMicros)
+	maxBudget := sqlNullInt64Ptr(req.MaxBudgetMicros)
 	row, err := s.Q.CreateAPIKey(r.Context(), store.CreateAPIKeyParams{
 		ID:              uuid.NewString(),
 		UserID:          u.ID,
@@ -456,16 +456,16 @@ func (s *Server) handleListKeys(w http.ResponseWriter, r *http.Request) {
 	out := make([]map[string]any, 0, len(rows))
 	for _, k := range rows {
 		out = append(out, map[string]any{
-			"id":             k.ID,
-			"name":           k.Name,
-			"word":           k.KeyWord,
-			"last4":          k.KeyLast4,
-			"masked":         "pot_" + k.KeyWord + "_••••••••••••••••••_" + k.KeyLast4,
-			"spent_micros":   k.SpentMicros,
-			"created_at":     k.CreatedAt,
-			"last_used_at":   k.LastUsedAt.Int64,
-			"revoked_at":     k.RevokedAt.Int64,
-			"revoked":        k.RevokedAt.Valid,
+			"id":           k.ID,
+			"name":         k.Name,
+			"word":         k.KeyWord,
+			"last4":        k.KeyLast4,
+			"masked":       "pot_" + k.KeyWord + "_••••••••••••••••••_" + k.KeyLast4,
+			"spent_micros": k.SpentMicros,
+			"created_at":   k.CreatedAt,
+			"last_used_at": k.LastUsedAt.Int64,
+			"revoked_at":   k.RevokedAt.Int64,
+			"revoked":      k.RevokedAt.Valid,
 		})
 	}
 	writeJSON(w, 200, out)

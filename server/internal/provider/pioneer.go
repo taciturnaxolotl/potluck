@@ -32,11 +32,11 @@ func New(baseURL string) *Client {
 
 // ChatRequest is the subset of the OpenAI chat-completions body we send.
 type ChatRequest struct {
-	Model    string          `json:"model"`
-	Messages []ChatMessage   `json:"messages"`
-	Tools    []ToolDef       `json:"tools,omitempty"`
-	Stream   bool            `json:"stream"`
-	StreamOptions *StreamOpts `json:"stream_options,omitempty"`
+	Model         string        `json:"model"`
+	Messages      []ChatMessage `json:"messages"`
+	Tools         []ToolDef     `json:"tools,omitempty"`
+	Stream        bool          `json:"stream"`
+	StreamOptions *StreamOpts   `json:"stream_options,omitempty"`
 }
 
 type StreamOpts struct {
@@ -92,21 +92,21 @@ type ToolResult struct {
 
 // Chunk is one decoded SSE event from the provider.
 type Chunk struct {
-	Raw              []byte          // the verbatim JSON for re-emission to clients
-	Delta            string          // assistant content delta, if any
-	ReasoningDelta   string          // reasoning/thinking content delta, if any
-	ToolCalls        []ToolCallDelta // tool call deltas, if any
-	FinishReason     string          // "stop", "tool_calls", etc.
-	Usage            *Usage          // populated on the final chunk when include_usage is on
-	Done             bool            // true once we see "[DONE]"
-	Extra            map[string]any  // anything else we care to inspect later
+	Raw            []byte          // the verbatim JSON for re-emission to clients
+	Delta          string          // assistant content delta, if any
+	ReasoningDelta string          // reasoning/thinking content delta, if any
+	ToolCalls      []ToolCallDelta // tool call deltas, if any
+	FinishReason   string          // "stop", "tool_calls", etc.
+	Usage          *Usage          // populated on the final chunk when include_usage is on
+	Done           bool            // true once we see "[DONE]"
+	Extra          map[string]any  // anything else we care to inspect later
 }
 
 // ToolCallDelta represents an incremental tool call from a streaming response.
 type ToolCallDelta struct {
-	Index    int              `json:"index"`
-	ID       string           `json:"id,omitempty"`
-	Type     string           `json:"type,omitempty"`
+	Index    int               `json:"index"`
+	ID       string            `json:"id,omitempty"`
+	Type     string            `json:"type,omitempty"`
 	Function FunctionCallDelta `json:"function,omitempty"`
 }
 
@@ -173,7 +173,7 @@ func (c *Client) StreamChatRaw(ctx context.Context, body []byte) (<-chan Chunk, 
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Accept", "text/event-stream")
 
-	resp, err := c.HTTP.Do(httpReq)
+	resp, err := c.HTTP.Do(httpReq) //nolint:bodyclose // closed in goroutine below or on error path
 	if err != nil {
 		return nil, nil, err
 	}
@@ -238,7 +238,7 @@ type rawChunk struct {
 		} `json:"delta"`
 		FinishReason *string `json:"finish_reason,omitempty"`
 	} `json:"choices"`
-	Usage *Usage    `json:"usage,omitempty"`
+	Usage *Usage `json:"usage,omitempty"`
 	Error *struct {
 		Message string `json:"message"`
 		Type    string `json:"type"`

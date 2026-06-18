@@ -22,7 +22,7 @@ import (
 	chimw "github.com/go-chi/chi/v5/middleware"
 
 	"github.com/taciturnaxolotl/potluck/internal/api/middleware"
-	"github.com/taciturnaxolotl/potluck/internal/api/v1"
+	v1 "github.com/taciturnaxolotl/potluck/internal/api/v1"
 	"github.com/taciturnaxolotl/potluck/internal/api/web"
 	"github.com/taciturnaxolotl/potluck/internal/auth"
 	"github.com/taciturnaxolotl/potluck/internal/config"

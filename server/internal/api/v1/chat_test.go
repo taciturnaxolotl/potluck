@@ -121,7 +121,7 @@ func TestChatCompletions_StreamToolCalls_EndToEnd(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	reqBody := `{"model":"gpt-4o","stream":true,"messages":[{"role":"user","content":"search for potluck"}],"tools":[{"type":"function","function":{"name":"web_search","description":"search","parameters":{"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}}}]}`
-	req, err := http.NewRequest(http.MethodPost, srv.URL+"/v1/chat/completions", strings.NewReader(reqBody))
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, srv.URL+"/v1/chat/completions", strings.NewReader(reqBody))
 	if err != nil {
 		t.Fatal(err)
 	}

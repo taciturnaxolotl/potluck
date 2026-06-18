@@ -30,13 +30,13 @@ const (
 
 // ProviderConfig holds the configuration for a single upstream provider.
 type ProviderConfig struct {
-	ID       string
-	Type     ProviderType
-	Name     string
-	BaseURL  string
-	Active   bool
-	IsFree   bool
-	Config   map[string]string // provider-specific config from config_json
+	ID      string
+	Type    ProviderType
+	Name    string
+	BaseURL string
+	Active  bool
+	IsFree  bool
+	Config  map[string]string // provider-specific config from config_json
 }
 
 // Registry manages multiple upstream providers and creates fantasy.Provider

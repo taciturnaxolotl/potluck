@@ -13,8 +13,8 @@ import (
 	"github.com/google/uuid"
 
 	apimw "github.com/taciturnaxolotl/potluck/internal/api/middleware"
-	fadapter "github.com/taciturnaxolotl/potluck/internal/provider/fantasy"
 	"github.com/taciturnaxolotl/potluck/internal/pool"
+	fadapter "github.com/taciturnaxolotl/potluck/internal/provider/fantasy"
 	"github.com/taciturnaxolotl/potluck/internal/store"
 	"github.com/taciturnaxolotl/potluck/internal/stream"
 	"github.com/taciturnaxolotl/potluck/internal/tools"

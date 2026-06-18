@@ -35,7 +35,7 @@ func init() {
 // Nvidia implements pool.ProviderCapabilities for NVIDIA NIM.
 type Nvidia struct{}
 
-func (Nvidia) HealthChecker() pool.HealthChecker    { return pool.NoopHealthChecker{} }
+func (Nvidia) HealthChecker() pool.HealthChecker     { return pool.NoopHealthChecker{} }
 func (Nvidia) BillingIngestor() pool.BillingIngestor { return pool.NoopBillingIngestor{} }
 func (Nvidia) AcceptedPlan(string) bool              { return true }
 
@@ -326,10 +326,11 @@ func parseNGCResponse(b []byte, modelID string) (*ngcDetail, error) {
 }
 
 // contextLengthRe matches patterns like:
-//   "Context Length: 256K tokens"
-//   "Context length up to 131,072 tokens"
-//   "Input Context Length (ISL): 256K"
-//   "128k context"
+//
+//	"Context Length: 256K tokens"
+//	"Context length up to 131,072 tokens"
+//	"Input Context Length (ISL): 256K"
+//	"128k context"
 var contextLengthRe = regexp.MustCompile(`(?i)(?:context\s*(?:length)?|ISL)[:\s]*(?:up\s+to\s+)?(\d[\d,]*)\s*([kK]?)`)
 
 func parseContextLength(text string) int64 {
@@ -380,8 +381,9 @@ func cleanDescription(desc string) string {
 
 // prettifyModelLabel converts slug-style model IDs into human-readable labels.
 // e.g. "meta/llama-3.1-8b-instruct" → "Llama 3.1 8B Instruct"
-//      "deepseek-ai/deepseek-v4-flash" → "Deepseek V4 Flash"
-//      "google/gemma-3n-e4b-it" → "Gemma 3n E4b IT"
+//
+//	"deepseek-ai/deepseek-v4-flash" → "Deepseek V4 Flash"
+//	"google/gemma-3n-e4b-it" → "Gemma 3n E4b IT"
 func prettifyModelLabel(id string) string {
 	// Strip org prefix (e.g. "meta/", "deepseek-ai/").
 	if idx := strings.IndexByte(id, '/'); idx > 0 {

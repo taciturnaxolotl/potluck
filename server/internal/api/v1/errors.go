@@ -38,16 +38,16 @@ var codeMap = map[string]struct {
 	Type string
 	Code string
 }{
-	"invalid_request":   {"invalid_request_error", "invalid_request"},
-	"unauthenticated":   {"authentication_error", "unauthenticated"},
-	"invalid_api_key":   {"authentication_error", "invalid_api_key"},
-	"forbidden":         {"permission_error", "forbidden"},
+	"invalid_request":    {"invalid_request_error", "invalid_request"},
+	"unauthenticated":    {"authentication_error", "unauthenticated"},
+	"invalid_api_key":    {"authentication_error", "invalid_api_key"},
+	"forbidden":          {"permission_error", "forbidden"},
 	"insufficient_funds": {"insufficient_quota", "insufficient_funds"},
-	"too_many_streams":  {"rate_limit_error", "too_many_streams"},
-	"rate_limited":      {"rate_limit_error", "rate_limited"},
-	"provider_down":     {"api_error", "provider_down"},
-	"provider_error":    {"api_error", "provider_error"},
-	"not_implemented":   {"server_error", "not_implemented"},
+	"too_many_streams":   {"rate_limit_error", "too_many_streams"},
+	"rate_limited":       {"rate_limit_error", "rate_limited"},
+	"provider_down":      {"api_error", "provider_down"},
+	"provider_error":     {"api_error", "provider_error"},
+	"not_implemented":    {"server_error", "not_implemented"},
 }
 
 // WriteError serializes an error in the OpenAI envelope. Exposed so main

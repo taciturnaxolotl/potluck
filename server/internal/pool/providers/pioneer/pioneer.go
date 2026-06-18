@@ -20,7 +20,7 @@ func init() {
 // Pioneer implements pool.ProviderCapabilities for pioneer.ai keys.
 type Pioneer struct{}
 
-func (Pioneer) HealthChecker() pool.HealthChecker    { return pool.PioneerHealthChecker{} }
+func (Pioneer) HealthChecker() pool.HealthChecker     { return pool.PioneerHealthChecker{} }
 func (Pioneer) BillingIngestor() pool.BillingIngestor { return pool.PioneerBillingIngestor{} }
 func (Pioneer) ModelFetcher() pool.ModelFetcher       { return pool.PioneerModelFetcher{} }
 

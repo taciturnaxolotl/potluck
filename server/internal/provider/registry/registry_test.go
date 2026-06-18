@@ -11,9 +11,9 @@ func TestResolveModel_WithPrefix(t *testing.T) {
 	})
 
 	tests := []struct {
-		model          string
-		wantProvider   string
-		wantUpstream   string
+		model        string
+		wantProvider string
+		wantUpstream string
 	}{
 		{"openrouter/claude-sonnet-4", "openrouter", "claude-sonnet-4"},
 		{"pioneer/gpt-4o", "pioneer", "gpt-4o"},

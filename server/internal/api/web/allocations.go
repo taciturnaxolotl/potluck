@@ -243,22 +243,22 @@ func (s *Server) buildAllocations(r *http.Request) map[string]any {
 	}
 
 	type userEntry struct {
-		UserID                       string  `json:"user_id"`
-		DisplayName                  string  `json:"display_name"`
-		Email                        string  `json:"email"`
-		KeyCount                     int64   `json:"key_count"`
-		SharedContributionMicros     int64   `json:"shared_contribution_micros"`
-		PrivateReservationMicros     int64   `json:"private_reservation_micros"`
-		SharedAllowanceTodayMicros   int64   `json:"shared_allowance_today_micros"`
-		SharedAllowanceFloorMicros   int64   `json:"shared_allowance_floor_micros"`
-		SharedAllowanceBonusMicros   int64   `json:"shared_allowance_bonus_micros"`
-		PredictedTotalTodayMicros    int64   `json:"predicted_total_today_micros"`
-		HistoryDaysUsed              int64   `json:"history_days_used"`
-		IsDonating                   bool    `json:"is_donating"`
-		SharedSpentTodayMicros       int64   `json:"shared_spent_today_micros"`
-		PrivateSpentTodayMicros      int64   `json:"private_spent_today_micros"`
-		SharedRemainingTodayMicros   int64   `json:"shared_remaining_today_micros"`
-		ShareFraction                float64 `json:"share_fraction"`
+		UserID                     string  `json:"user_id"`
+		DisplayName                string  `json:"display_name"`
+		Email                      string  `json:"email"`
+		KeyCount                   int64   `json:"key_count"`
+		SharedContributionMicros   int64   `json:"shared_contribution_micros"`
+		PrivateReservationMicros   int64   `json:"private_reservation_micros"`
+		SharedAllowanceTodayMicros int64   `json:"shared_allowance_today_micros"`
+		SharedAllowanceFloorMicros int64   `json:"shared_allowance_floor_micros"`
+		SharedAllowanceBonusMicros int64   `json:"shared_allowance_bonus_micros"`
+		PredictedTotalTodayMicros  int64   `json:"predicted_total_today_micros"`
+		HistoryDaysUsed            int64   `json:"history_days_used"`
+		IsDonating                 bool    `json:"is_donating"`
+		SharedSpentTodayMicros     int64   `json:"shared_spent_today_micros"`
+		PrivateSpentTodayMicros    int64   `json:"private_spent_today_micros"`
+		SharedRemainingTodayMicros int64   `json:"shared_remaining_today_micros"`
+		ShareFraction              float64 `json:"share_fraction"`
 	}
 
 	// Live smart-allocation estimate for users with no stored allowance yet.
@@ -317,11 +317,11 @@ func (s *Server) buildAllocations(r *http.Request) map[string]any {
 		live := liveAllocations[i]
 
 		var (
-			allowance      int64
-			floor          int64
-			bonus          int64
-			predicted      int64
-			historyDays    int64
+			allowance   int64
+			floor       int64
+			bonus       int64
+			predicted   int64
+			historyDays int64
 		)
 		if hasStored {
 			allowance = stored.SharedAllowanceMicros
@@ -339,22 +339,22 @@ func (s *Server) buildAllocations(r *http.Request) map[string]any {
 
 		spend := spendByUser[row.UserID]
 		out = append(out, userEntry{
-			UserID:                       row.UserID,
-			DisplayName:                  row.DisplayName,
-			Email:                        row.Email,
-			KeyCount:                     toInt64(row.KeyCount),
-			SharedContributionMicros:     shared,
-			PrivateReservationMicros:     toInt64(row.PrivateReservationMicros),
-			SharedAllowanceTodayMicros:   allowance,
-			SharedAllowanceFloorMicros:   floor,
-			SharedAllowanceBonusMicros:   bonus,
-			PredictedTotalTodayMicros:    predicted,
-			HistoryDaysUsed:              historyDays,
-			IsDonating:                   live.IsDonating,
-			SharedSpentTodayMicros:       spend.shared,
-			PrivateSpentTodayMicros:      spend.private,
-			SharedRemainingTodayMicros:   allowance - spend.shared,
-			ShareFraction:                frac,
+			UserID:                     row.UserID,
+			DisplayName:                row.DisplayName,
+			Email:                      row.Email,
+			KeyCount:                   toInt64(row.KeyCount),
+			SharedContributionMicros:   shared,
+			PrivateReservationMicros:   toInt64(row.PrivateReservationMicros),
+			SharedAllowanceTodayMicros: allowance,
+			SharedAllowanceFloorMicros: floor,
+			SharedAllowanceBonusMicros: bonus,
+			PredictedTotalTodayMicros:  predicted,
+			HistoryDaysUsed:            historyDays,
+			IsDonating:                 live.IsDonating,
+			SharedSpentTodayMicros:     spend.shared,
+			PrivateSpentTodayMicros:    spend.private,
+			SharedRemainingTodayMicros: allowance - spend.shared,
+			ShareFraction:              frac,
 		})
 	}
 
@@ -378,12 +378,12 @@ func (s *Server) buildAllocations(r *http.Request) map[string]any {
 
 	return map[string]any{
 		"pool": map[string]any{
-			"total_shared_micros":            totalShared,
-			"spent_today_shared_micros":      spentTodayShared,
-			"remaining_pool_today_micros":    remaining,
-			"active_key_count":               activeKeyCount,
-			"active_team_count":              activeKeyCount, // TODO: dedupe by team_id
-			"redistribution_surplus_micros":  redistributionSurplus,
+			"total_shared_micros":           totalShared,
+			"spent_today_shared_micros":     spentTodayShared,
+			"remaining_pool_today_micros":   remaining,
+			"active_key_count":              activeKeyCount,
+			"active_team_count":             activeKeyCount, // TODO: dedupe by team_id
+			"redistribution_surplus_micros": redistributionSurplus,
 		},
 		"users":          out,
 		"last_recompute": lastRecompute,

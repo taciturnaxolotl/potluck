@@ -34,17 +34,17 @@ func (s *Server) handleUsage(w http.ResponseWriter, r *http.Request) {
 
 	// Flatten sql.NullFloat64 aggregates to plain numbers for JSON.
 	type dailyRow struct {
-		Day          int64   `json:"day"`
-		AmountMicros int64   `json:"amount_micros"`
-		InputTokens  int64   `json:"input_tokens"`
-		OutputTokens int64   `json:"output_tokens"`
+		Day          int64 `json:"day"`
+		AmountMicros int64 `json:"amount_micros"`
+		InputTokens  int64 `json:"input_tokens"`
+		OutputTokens int64 `json:"output_tokens"`
 	}
 	type modelRow struct {
-		Day          int64   `json:"day"`
-		Model        string  `json:"model"`
-		AmountMicros int64   `json:"amount_micros"`
-		InputTokens  int64   `json:"input_tokens"`
-		OutputTokens int64   `json:"output_tokens"`
+		Day          int64  `json:"day"`
+		Model        string `json:"model"`
+		AmountMicros int64  `json:"amount_micros"`
+		InputTokens  int64  `json:"input_tokens"`
+		OutputTokens int64  `json:"output_tokens"`
 	}
 
 	flatDaily := make([]dailyRow, len(daily))

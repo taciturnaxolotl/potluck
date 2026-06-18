@@ -259,7 +259,6 @@ func PoolGate(q *store.Queries, poolAvailable func(ctx context.Context) bool, er
 	}
 }
 
-
 // ---- per-user rate limiter --------------------------------------------
 
 // toI64 unboxes the interface{} sqlc emits for aggregate columns.

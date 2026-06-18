@@ -18,7 +18,7 @@ func init() {
 // Generic implements pool.ProviderCapabilities for standard OpenAI-compatible APIs.
 type Generic struct{}
 
-func (Generic) HealthChecker() pool.HealthChecker    { return pool.NoopHealthChecker{} }
+func (Generic) HealthChecker() pool.HealthChecker     { return pool.NoopHealthChecker{} }
 func (Generic) BillingIngestor() pool.BillingIngestor { return pool.NoopBillingIngestor{} }
 func (Generic) ModelFetcher() pool.ModelFetcher       { return pool.OpenAICompatModelFetcher{} }
 func (Generic) AcceptedPlan(string) bool              { return true }

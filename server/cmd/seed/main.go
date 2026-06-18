@@ -20,8 +20,8 @@ import (
 )
 
 var models = []struct {
-	id    string
-	inPPM float64 // price per million input tokens
+	id     string
+	inPPM  float64 // price per million input tokens
 	outPPM float64
 }{
 	{"claude-sonnet-4-6", 4.62, 23.1},
@@ -59,6 +59,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "query users: %v\n", err)
 		os.Exit(1)
 	}
+	defer rows.Close()
 	var userIDs []string
 	for rows.Next() {
 		var id string
@@ -66,7 +67,10 @@ func main() {
 			userIDs = append(userIDs, id)
 		}
 	}
-	rows.Close()
+	if err := rows.Err(); err != nil {
+		fmt.Fprintf(os.Stderr, "rows iteration: %v\n", err)
+		os.Exit(1)
+	}
 	if len(userIDs) == 0 {
 		fmt.Fprintf(os.Stderr, "no users found — sign in first, then seed\n")
 		os.Exit(1)

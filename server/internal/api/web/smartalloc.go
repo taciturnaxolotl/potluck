@@ -31,9 +31,10 @@ package web
 const minHistoryDays = 3
 
 // UserHistory is the per-user historical profile feeding the predictor.
-//   AvgActiveDaySpend = total spend over the window / days with any spend
-//   ActivityRate      = days with any spend / window length in days
-//   DaysWithSpend     = raw count (so we know if we have enough signal)
+//
+//	AvgActiveDaySpend = total spend over the window / days with any spend
+//	ActivityRate      = days with any spend / window length in days
+//	DaysWithSpend     = raw count (so we know if we have enough signal)
 type UserHistory struct {
 	AvgActiveDaySpend int64
 	ActivityRate      float64

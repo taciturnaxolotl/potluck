@@ -36,8 +36,8 @@ func DeltaChunk(content string) string {
 // UsageChunk produces a final chunk that carries usage.
 func UsageChunk(in, out int) string {
 	b, _ := json.Marshal(map[string]any{
-		"id":    "fake",
-		"model": "fake-model",
+		"id":      "fake",
+		"model":   "fake-model",
 		"choices": []map[string]any{{"delta": map[string]any{}, "index": 0, "finish_reason": "stop"}},
 		"usage": map[string]any{
 			"prompt_tokens":     in,

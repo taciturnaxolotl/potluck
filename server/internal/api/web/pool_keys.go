@@ -196,30 +196,30 @@ func (s *Server) handleListPoolKeys(w http.ResponseWriter, r *http.Request) {
 	out := make([]map[string]any, 0, len(rows))
 	for _, k := range rows {
 		out = append(out, map[string]any{
-			"id":                       k.ID,
-			"user_id":                  k.UserID,
-			"label":                    k.Label,
-			"active":                   k.Active == 1,
-			"provider_id":              k.ProviderID,
-			"max_micros":               k.MaxMicros,
-			"shared_micros":            k.SharedMicros,
-			"private_micros":           k.MaxMicros - k.SharedMicros,
-			"today_micros":             k.TodayMicros,
-			"total_micros":             k.TotalMicros,
-			"request_count":            k.RequestCount,
-			"pioneer_health":           k.PioneerHealth,
-			"pioneer_team_id":          k.PioneerTeamID.String,
-			"pioneer_payment_plan":     k.PioneerPaymentPlan.String,
+			"id":                          k.ID,
+			"user_id":                     k.UserID,
+			"label":                       k.Label,
+			"active":                      k.Active == 1,
+			"provider_id":                 k.ProviderID,
+			"max_micros":                  k.MaxMicros,
+			"shared_micros":               k.SharedMicros,
+			"private_micros":              k.MaxMicros - k.SharedMicros,
+			"today_micros":                k.TodayMicros,
+			"total_micros":                k.TotalMicros,
+			"request_count":               k.RequestCount,
+			"pioneer_health":              k.PioneerHealth,
+			"pioneer_team_id":             k.PioneerTeamID.String,
+			"pioneer_payment_plan":        k.PioneerPaymentPlan.String,
 			"pioneer_credit_limit_micros": k.PioneerCreditLimitMicros.Int64,
-			"pioneer_remaining_micros": k.PioneerRemainingMicros.Int64,
-			"pending_validation":       k.PendingValidation == 1,
-			"revoked":                  k.RevokedAt.Valid,
-			"created_at":               k.CreatedAt,
-			"last_used_at":             k.LastUsedAt.Int64,
-			"last_billing_sync_at":     k.LastBillingSyncAt.Int64,
-			"owner_name":               k.OwnerName,
-			"owner_email":              k.OwnerEmail,
-			"mine":                     k.UserID == u.ID,
+			"pioneer_remaining_micros":    k.PioneerRemainingMicros.Int64,
+			"pending_validation":          k.PendingValidation == 1,
+			"revoked":                     k.RevokedAt.Valid,
+			"created_at":                  k.CreatedAt,
+			"last_used_at":                k.LastUsedAt.Int64,
+			"last_billing_sync_at":        k.LastBillingSyncAt.Int64,
+			"owner_name":                  k.OwnerName,
+			"owner_email":                 k.OwnerEmail,
+			"mine":                        k.UserID == u.ID,
 		})
 	}
 	writeJSON(w, 200, out)
@@ -228,7 +228,7 @@ func (s *Server) handleListPoolKeys(w http.ResponseWriter, r *http.Request) {
 type addPoolKeyReq struct {
 	Label        string `json:"label"`
 	APIKey       string `json:"api_key"`
-	ProviderID   string `json:"provider_id,omitempty"` // defaults to "pioneer"
+	ProviderID   string `json:"provider_id,omitempty"`   // defaults to "pioneer"
 	SharedMicros *int64 `json:"shared_micros,omitempty"` // how much to donate to pool; defaults to full credit limit
 }
 
@@ -236,13 +236,13 @@ const pioneerBillingTimeseriesURL = "https://api.pioneer.ai/billing/usage/timese
 
 // pioneerBillingResult holds the result of probing pioneer's billing timeseries.
 type pioneerBillingResult struct {
-	TodayMicros      int64  // today's spend in micros
-	RemainingMicros  int64  // remaining credits in micros
+	TodayMicros       int64 // today's spend in micros
+	RemainingMicros   int64 // remaining credits in micros
 	CreditLimitMicros int64 // credit limit in micros
-	TeamID           string
-	PaymentPlan      string
-	HTTP401          bool   // key exhausted or invalid — don't reject, save as pending
-	HTTP503          bool   // pioneer auth down — transient
+	TeamID            string
+	PaymentPlan       string
+	HTTP401           bool // key exhausted or invalid — don't reject, save as pending
+	HTTP503           bool // pioneer auth down — transient
 }
 
 // probePioneerBilling calls pioneer's billing endpoints to validate the key
@@ -561,17 +561,17 @@ func (s *Server) handleAddPoolKey(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := map[string]any{
-		"id":                  row.ID,
-		"user_id":             row.UserID,
-		"label":               row.Label,
-		"active":              row.Active == 1 && pendingValidation == 0,
-		"max_micros":          maxMicros,
-		"shared_micros":       sharedMicros,
-		"today_micros":        billing.TodayMicros,
-		"pioneer_health":      health,
-		"pending_validation":  pendingValidation == 1,
-		"created_at":          row.CreatedAt,
-		"mine":                true,
+		"id":                 row.ID,
+		"user_id":            row.UserID,
+		"label":              row.Label,
+		"active":             row.Active == 1 && pendingValidation == 0,
+		"max_micros":         maxMicros,
+		"shared_micros":      sharedMicros,
+		"today_micros":       billing.TodayMicros,
+		"pioneer_health":     health,
+		"pending_validation": pendingValidation == 1,
+		"created_at":         row.CreatedAt,
+		"mine":               true,
 	}
 	if pendingReason != "" {
 		resp["pending_reason"] = pendingReason
@@ -658,7 +658,7 @@ func (s *Server) handleUpdatePoolKeyLimits(w http.ResponseWriter, r *http.Reques
 		writeErr(w, 400, "invalid_request", err.Error())
 		return
 	}
-	const minMicros = 100_000_000  // $100
+	const minMicros = 100_000_000   // $100
 	const maxMicros = 1_000_000_000 // $1000
 	if body.MaxMicros < minMicros {
 		body.MaxMicros = minMicros

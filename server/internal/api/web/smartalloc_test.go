@@ -75,7 +75,9 @@ func TestSmartAllocate_LightUserSpike(t *testing.T) {
 		// user 0: typically spends $20/day, 5 of 30 days active
 		{AvgActiveDaySpend: 20, ActivityRate: 5.0 / 30.0, DaysWithSpend: 5},
 		// user 1-3: no history
-		{}, {}, {},
+		{},
+		{},
+		{},
 	}
 	got := smartAllocate(pool, spends, histories, 0.5)
 
@@ -110,7 +112,8 @@ func TestSmartAllocate_AllowanceNeverBelowFairShare(t *testing.T) {
 			histories: []UserHistory{
 				{AvgActiveDaySpend: 800, ActivityRate: 0.9, DaysWithSpend: 27},
 				{AvgActiveDaySpend: 50, ActivityRate: 0.2, DaysWithSpend: 6},
-				{}, {},
+				{},
+				{},
 			},
 		},
 	}
@@ -150,7 +153,8 @@ func TestSmartAllocate_DayFractionDecay(t *testing.T) {
 	histories := []UserHistory{
 		{AvgActiveDaySpend: 800, ActivityRate: 0.9, DaysWithSpend: 27},
 		{AvgActiveDaySpend: 50, ActivityRate: 0.2, DaysWithSpend: 6},
-		{}, {},
+		{},
+		{},
 	}
 
 	earlyBonus := smartAllocate(pool, spends, histories, 0.0)[0].Bonus
@@ -170,7 +174,9 @@ func TestSmartAllocate_NewUserNeutral(t *testing.T) {
 	spends := []int64{0, 0, 0, 0}
 	histories := []UserHistory{
 		{AvgActiveDaySpend: 500, ActivityRate: 0.8, DaysWithSpend: 24},
-		{}, {}, {}, // three new users
+		{},
+		{},
+		{}, // three new users
 	}
 	got := smartAllocate(pool, spends, histories, 0.3)
 

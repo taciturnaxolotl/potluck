@@ -24,7 +24,7 @@ func init() {
 // Omlx implements pool.ProviderCapabilities for the OMLX endpoint.
 type Omlx struct{}
 
-func (Omlx) HealthChecker() pool.HealthChecker    { return pool.NoopHealthChecker{} }
+func (Omlx) HealthChecker() pool.HealthChecker     { return pool.NoopHealthChecker{} }
 func (Omlx) BillingIngestor() pool.BillingIngestor { return pool.NoopBillingIngestor{} }
 func (Omlx) AcceptedPlan(string) bool              { return true }
 
