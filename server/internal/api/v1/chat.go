@@ -14,8 +14,8 @@ import (
 	"github.com/google/uuid"
 
 	apimw "github.com/taciturnaxolotl/potluck/internal/api/middleware"
-	fadapter "github.com/taciturnaxolotl/potluck/internal/provider/fantasy"
 	"github.com/taciturnaxolotl/potluck/internal/pool"
+	fadapter "github.com/taciturnaxolotl/potluck/internal/provider/fantasy"
 	"github.com/taciturnaxolotl/potluck/internal/store"
 )
 
@@ -120,8 +120,13 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	includeUsage := false
+	if oaiReq.StreamOptions != nil {
+		includeUsage = oaiReq.StreamOptions.IncludeUsage
+	}
+
 	if oaiReq.Stream {
-		s.streamCompletion(w, r, lm, call, upstreamModel, oaiReq.StreamOptions.IncludeUsage, sel, reqID, u)
+		s.streamCompletion(w, r, lm, call, upstreamModel, includeUsage, sel, reqID, u)
 	} else {
 		s.bufferedCompletion(w, r, lm, call, sel, reqID, u)
 	}
@@ -208,29 +213,7 @@ func (s *Server) bufferedCompletion(w http.ResponseWriter, r *http.Request, lm f
 		return
 	}
 
-	// Build OpenAI-shaped response.
-	var content string
-	for _, part := range resp.Content {
-		if tp, ok := part.(fantasy.TextPart); ok {
-			content += tp.Text
-		}
-	}
-
-	oaiResp := oaiChatResponse{
-		ID:      fmt.Sprintf("chatcmpl-%d", time.Now().UnixNano()),
-		Object:  "chat.completion",
-		Created: time.Now().Unix(),
-		Model:   lm.Model(),
-		Choices: []oaiResponseChoice{{
-			Index: 0,
-			Message: oaiResponseMessage{
-				Role:    "assistant",
-				Content: content,
-			},
-			FinishReason: string(resp.FinishReason),
-		}},
-		Usage: translateFantasyUsage(resp.Usage),
-	}
+	oaiResp := buildChatCompletionResponse(lm.Model(), resp)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
@@ -241,6 +224,50 @@ func (s *Server) bufferedCompletion(w http.ResponseWriter, r *http.Request, lm f
 		OutputTokens: resp.Usage.OutputTokens,
 		TotalTokens:  resp.Usage.TotalTokens,
 	}, u)
+}
+
+func buildChatCompletionResponse(model string, resp *fantasy.Response) oaiChatResponse {
+	if resp == nil {
+		resp = &fantasy.Response{}
+	}
+
+	var contentText string
+	var toolCalls []oaiToolCall
+	for _, part := range resp.Content {
+		switch p := part.(type) {
+		case fantasy.TextPart:
+			contentText += p.Text
+		case fantasy.ToolCallContent:
+			toolCalls = append(toolCalls, oaiToolCall{
+				ID:   p.ToolCallID,
+				Type: "function",
+				Function: oaiToolFunction{
+					Name:      p.ToolName,
+					Arguments: p.Input,
+				},
+			})
+		}
+	}
+	var content *string
+	if contentText != "" {
+		content = &contentText
+	}
+	return oaiChatResponse{
+		ID:      fmt.Sprintf("chatcmpl-%d", time.Now().UnixNano()),
+		Object:  "chat.completion",
+		Created: time.Now().Unix(),
+		Model:   model,
+		Choices: []oaiResponseChoice{{
+			Index: 0,
+			Message: oaiResponseMessage{
+				Role:      "assistant",
+				Content:   content,
+				ToolCalls: toolCalls,
+			},
+			FinishReason: translateFantasyFinishReason(resp.FinishReason),
+		}},
+		Usage: translateFantasyUsage(resp.Usage),
+	}
 }
 
 // settle fires off the post-stream DB writes. Runs in a goroutine.
