@@ -23,7 +23,7 @@ type oaiChunk struct {
 type oaiChoice struct {
 	Index        int       `json:"index"`
 	Delta        *oaiDelta `json:"delta,omitempty"`
-	FinishReason *string   `json:"finish_reason"`
+	FinishReason *string   `json:"finish_reason,omitempty"`
 }
 
 type oaiDelta struct {
