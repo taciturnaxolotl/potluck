@@ -1,27 +1,24 @@
 <script lang="ts">
-  import { listKeys, listModels, type APIKey, type Model } from '$lib/api';
+  import { listModels, type Model } from '$lib/api';
   import { highlight, type Lang } from '$lib/highlight';
   import { onMount } from 'svelte';
   import Copy from '@lucide/svelte/icons/copy';
   import Check from '@lucide/svelte/icons/check';
 
   let baseURL = $state('https://potluck.dunkirk.sh');
-  let keys = $state<APIKey[]>([]);
   let models = $state<Model[]>([]);
 
   onMount(async () => {
     baseURL = window.location.origin;
     try {
-      const [k, m] = await Promise.all([listKeys(), listModels()]);
-      keys = k;
+      const m = await listModels();
       models = m.models;
     } catch {
       // best-effort — page still works without them
     }
   });
 
-  let activeKey = $derived(keys.find(k => !k.revoked) ?? null);
-  let keyExample = $derived(activeKey?.masked ?? 'pot_mist_\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022_0jgPu');
+  let keyExample = 'pot_mist_\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022_0jgPu';
   let firstModel = $derived(models[0]?.id ?? 'claude-haiku-4-5');
 
   // ---- copy-button state ------------------------------------------------

@@ -179,6 +179,9 @@ func main() {
 		Registry: reg,
 	}
 
+	// /api/models — public model catalog; no user-specific data.
+	r.Get("/api/models", apiSrv.HandleListModelsPublic)
+
 	// /api/* — cookie-authenticated, internal surface.
 	r.Route("/api", func(r chi.Router) {
 		r.Use(authSvc.Middleware)

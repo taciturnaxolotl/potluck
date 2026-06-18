@@ -6,6 +6,13 @@ import (
 	"time"
 )
 
+// HandleListModelsPublic is the exported form of handleListModels for use
+// as a public (no-auth) route. The model catalog contains no user-specific
+// data so it's safe to serve without authentication.
+func (s *Server) HandleListModelsPublic(w http.ResponseWriter, r *http.Request) {
+	s.handleListModels(w, r)
+}
+
 // handleListModels returns the model catalog from the DB.
 // The catalog is populated (and refreshed hourly) by pool.ModelsRefresher.
 // We never do live pioneer fetches here — that keeps the endpoint fast and
