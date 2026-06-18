@@ -21,23 +21,23 @@ type oaiChunk struct {
 }
 
 type oaiChoice struct {
-	Index        int            `json:"index"`
-	Delta        *oaiDelta      `json:"delta,omitempty"`
-	FinishReason *string        `json:"finish_reason"`
+	Index        int       `json:"index"`
+	Delta        *oaiDelta `json:"delta,omitempty"`
+	FinishReason *string   `json:"finish_reason"`
 }
 
 type oaiDelta struct {
-	Role             string          `json:"role,omitempty"`
-	Content          string          `json:"content,omitempty"`
-	ReasoningContent string          `json:"reasoning_content,omitempty"`
-	ToolCalls        []oaiToolCall   `json:"tool_calls,omitempty"`
+	Role             string        `json:"role,omitempty"`
+	Content          string        `json:"content,omitempty"`
+	ReasoningContent string        `json:"reasoning_content,omitempty"`
+	ToolCalls        []oaiToolCall `json:"tool_calls,omitempty"`
 }
 
 type oaiToolCall struct {
-	Index    int              `json:"index"`
-	ID       string           `json:"id,omitempty"`
-	Type     string           `json:"type,omitempty"`
-	Function oaiToolFunction  `json:"function"`
+	Index    int             `json:"index"`
+	ID       string          `json:"id,omitempty"`
+	Type     string          `json:"type,omitempty"`
+	Function oaiToolFunction `json:"function"`
 }
 
 type oaiToolFunction struct {
@@ -46,11 +46,11 @@ type oaiToolFunction struct {
 }
 
 type oaiUsage struct {
-	PromptTokens            int64                    `json:"prompt_tokens"`
-	CompletionTokens         int64                    `json:"completion_tokens"`
-	TotalTokens             int64                    `json:"total_tokens"`
-	PromptTokensDetails     *oaiPromptTokensDetails  `json:"prompt_tokens_details,omitempty"`
-	CompletionTokensDetails *oaiCompletionDetails    `json:"completion_tokens_details,omitempty"`
+	PromptTokens            int64                   `json:"prompt_tokens"`
+	CompletionTokens        int64                   `json:"completion_tokens"`
+	TotalTokens             int64                   `json:"total_tokens"`
+	PromptTokensDetails     *oaiPromptTokensDetails `json:"prompt_tokens_details,omitempty"`
+	CompletionTokensDetails *oaiCompletionDetails   `json:"completion_tokens_details,omitempty"`
 }
 
 type oaiPromptTokensDetails struct {
@@ -63,11 +63,11 @@ type oaiCompletionDetails struct {
 
 // V1Adapter converts fantasy StreamParts into OpenAI-compatible SSE chunks.
 type V1Adapter struct {
-	chunkID     string
-	model       string
-	created     int64
-	roleSent    bool
-	toolIdx     int
+	chunkID      string
+	model        string
+	created      int64
+	roleSent     bool
+	toolIdx      int
 	includeUsage bool
 }
 
@@ -114,7 +114,7 @@ func (a *V1Adapter) Adapt(part fantasy.StreamPart) [][]byte {
 		return [][]byte{a.makeChunk(&oaiDelta{ReasoningContent: part.Delta}, nil)}
 
 	case fantasy.StreamPartTypeToolInputStart:
-		a.ensureRoleSent()
+		chunks := a.emitRoleIfNeeded()
 		tc := oaiToolCall{
 			Index: a.toolIdx,
 			ID:    part.ID,
@@ -123,29 +123,27 @@ func (a *V1Adapter) Adapt(part fantasy.StreamPart) [][]byte {
 				Name: part.ToolCallName,
 			},
 		}
-		return [][]byte{a.makeChunk(&oaiDelta{ToolCalls: []oaiToolCall{tc}}, nil)}
+		return append(chunks, a.makeChunk(&oaiDelta{ToolCalls: []oaiToolCall{tc}}, nil))
 
 	case fantasy.StreamPartTypeToolInputDelta:
 		if part.ToolCallInput == "" {
 			return nil
 		}
+		chunks := a.emitRoleIfNeeded()
 		tc := oaiToolCall{
 			Index: a.toolIdx,
 			Function: oaiToolFunction{
 				Arguments: part.ToolCallInput,
 			},
 		}
-		return [][]byte{a.makeChunk(&oaiDelta{ToolCalls: []oaiToolCall{tc}}, nil)}
+		return append(chunks, a.makeChunk(&oaiDelta{ToolCalls: []oaiToolCall{tc}}, nil))
 
 	case fantasy.StreamPartTypeToolInputEnd:
 		a.toolIdx++
 		return nil
 
 	case fantasy.StreamPartTypeFinish:
-		reason := string(part.FinishReason)
-		if reason == "" {
-			reason = "stop"
-		}
+		reason := translateFinishReason(part.FinishReason)
 		chunks := [][]byte{a.makeChunk(nil, &reason)}
 		// If include_usage was not requested, attach usage to the finish chunk.
 		if !a.includeUsage && part.Usage.TotalTokens > 0 {
@@ -170,9 +168,9 @@ func (a *V1Adapter) UsageChunk(usage AccumulatedUsage) []byte {
 		return nil
 	}
 	oaiU := &oaiUsage{
-		PromptTokens:    usage.InputTokens,
+		PromptTokens:     usage.InputTokens,
 		CompletionTokens: usage.OutputTokens,
-		TotalTokens:     usage.TotalTokens,
+		TotalTokens:      usage.TotalTokens,
 	}
 	if usage.CacheReadTokens > 0 {
 		oaiU.PromptTokensDetails = &oaiPromptTokensDetails{CachedTokens: usage.CacheReadTokens}
@@ -183,9 +181,41 @@ func (a *V1Adapter) UsageChunk(usage AccumulatedUsage) []byte {
 	return a.makeUsageChunk(oaiU)
 }
 
+func (a *V1Adapter) emitRoleIfNeeded() [][]byte {
+	if !a.roleSent {
+		a.roleSent = true
+		return [][]byte{a.makeChunk(&oaiDelta{Role: "assistant"}, nil)}
+	}
+	return nil
+}
+
 func (a *V1Adapter) ensureRoleSent() {
 	if !a.roleSent {
 		a.roleSent = true
+	}
+}
+
+func translateFinishReason(reason fantasy.FinishReason) string {
+	switch reason {
+	case fantasy.FinishReasonStop:
+		return "stop"
+	case fantasy.FinishReasonLength:
+		return "length"
+	case fantasy.FinishReasonContentFilter:
+		return "content_filter"
+	case fantasy.FinishReasonToolCalls:
+		return "tool_calls"
+	case fantasy.FinishReasonError:
+		return "error"
+	case fantasy.FinishReasonOther:
+		return "other"
+	case fantasy.FinishReasonUnknown:
+		return "stop"
+	default:
+		if reason == "" {
+			return "stop"
+		}
+		return string(reason)
 	}
 }
 
@@ -220,9 +250,9 @@ func (a *V1Adapter) makeUsageChunk(usage *oaiUsage) []byte {
 
 func translateUsage(u fantasy.Usage) *oaiUsage {
 	usage := &oaiUsage{
-		PromptTokens:    u.InputTokens,
+		PromptTokens:     u.InputTokens,
 		CompletionTokens: u.OutputTokens,
-		TotalTokens:     u.TotalTokens,
+		TotalTokens:      u.TotalTokens,
 	}
 	if u.CacheReadTokens > 0 {
 		usage.PromptTokensDetails = &oaiPromptTokensDetails{CachedTokens: u.CacheReadTokens}

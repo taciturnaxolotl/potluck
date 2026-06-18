@@ -10,17 +10,17 @@ import (
 // OpenAI request/response types for the v1 API surface.
 
 type oaiChatRequest struct {
-	Model          string            `json:"model"`
-	Messages       []oaiMessage      `json:"messages"`
-	Stream         bool              `json:"stream"`
-	StreamOptions  *oaiStreamOptions `json:"stream_options,omitempty"`
-	Temperature    *float64          `json:"temperature,omitempty"`
-	TopP           *float64          `json:"top_p,omitempty"`
-	MaxTokens      *int64            `json:"max_tokens,omitempty"`
-	FrequencyPenalty *float64        `json:"frequency_penalty,omitempty"`
-	PresencePenalty  *float64        `json:"presence_penalty,omitempty"`
-	Tools          []oaiTool         `json:"tools,omitempty"`
-	ToolChoice     json.RawMessage   `json:"tool_choice,omitempty"`
+	Model            string            `json:"model"`
+	Messages         []oaiMessage      `json:"messages"`
+	Stream           bool              `json:"stream"`
+	StreamOptions    *oaiStreamOptions `json:"stream_options,omitempty"`
+	Temperature      *float64          `json:"temperature,omitempty"`
+	TopP             *float64          `json:"top_p,omitempty"`
+	MaxTokens        *int64            `json:"max_tokens,omitempty"`
+	FrequencyPenalty *float64          `json:"frequency_penalty,omitempty"`
+	PresencePenalty  *float64          `json:"presence_penalty,omitempty"`
+	Tools            []oaiTool         `json:"tools,omitempty"`
+	ToolChoice       json.RawMessage   `json:"tool_choice,omitempty"`
 }
 
 type oaiStreamOptions struct {
@@ -36,8 +36,8 @@ type oaiMessage struct {
 }
 
 type oaiTool struct {
-	Type     string       `json:"type"`
-	Function oaiFunction  `json:"function"`
+	Type     string      `json:"type"`
+	Function oaiFunction `json:"function"`
 }
 
 type oaiFunction struct {
@@ -76,16 +76,16 @@ type oaiResponseChoice struct {
 
 type oaiResponseMessage struct {
 	Role      string        `json:"role"`
-	Content   string        `json:"content"`
+	Content   *string       `json:"content"`
 	ToolCalls []oaiToolCall `json:"tool_calls,omitempty"`
 }
 
 type oaiUsage struct {
-	PromptTokens            int64                    `json:"prompt_tokens"`
-	CompletionTokens         int64                    `json:"completion_tokens"`
-	TotalTokens             int64                    `json:"total_tokens"`
-	PromptTokensDetails     *oaiPromptTokensDetails  `json:"prompt_tokens_details,omitempty"`
-	CompletionTokensDetails *oaiCompletionDetails    `json:"completion_tokens_details,omitempty"`
+	PromptTokens            int64                   `json:"prompt_tokens"`
+	CompletionTokens        int64                   `json:"completion_tokens"`
+	TotalTokens             int64                   `json:"total_tokens"`
+	PromptTokensDetails     *oaiPromptTokensDetails `json:"prompt_tokens_details,omitempty"`
+	CompletionTokensDetails *oaiCompletionDetails   `json:"completion_tokens_details,omitempty"`
 }
 
 type oaiPromptTokensDetails struct {
@@ -247,9 +247,9 @@ func translateToolChoice(raw json.RawMessage) (fantasy.ToolChoice, error) {
 
 func translateFantasyUsage(u fantasy.Usage) *oaiUsage {
 	usage := &oaiUsage{
-		PromptTokens:    u.InputTokens,
+		PromptTokens:     u.InputTokens,
 		CompletionTokens: u.OutputTokens,
-		TotalTokens:     u.TotalTokens,
+		TotalTokens:      u.TotalTokens,
 	}
 	if u.CacheReadTokens > 0 {
 		usage.PromptTokensDetails = &oaiPromptTokensDetails{CachedTokens: u.CacheReadTokens}
@@ -258,4 +258,28 @@ func translateFantasyUsage(u fantasy.Usage) *oaiUsage {
 		usage.CompletionTokensDetails = &oaiCompletionDetails{ReasoningTokens: u.ReasoningTokens}
 	}
 	return usage
+}
+
+func translateFantasyFinishReason(reason fantasy.FinishReason) string {
+	switch reason {
+	case fantasy.FinishReasonStop:
+		return "stop"
+	case fantasy.FinishReasonLength:
+		return "length"
+	case fantasy.FinishReasonContentFilter:
+		return "content_filter"
+	case fantasy.FinishReasonToolCalls:
+		return "tool_calls"
+	case fantasy.FinishReasonError:
+		return "error"
+	case fantasy.FinishReasonOther:
+		return "other"
+	case fantasy.FinishReasonUnknown:
+		return "stop"
+	default:
+		if reason == "" {
+			return "stop"
+		}
+		return string(reason)
+	}
 }

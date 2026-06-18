@@ -73,16 +73,20 @@ func TestV1Adapter_ReasoningDelta(t *testing.T) {
 func TestV1Adapter_ToolCallLifecycle(t *testing.T) {
 	a := NewV1Adapter("test-model", false)
 
-	// ToolInputStart
+	// ToolInputStart should emit the assistant role first, then the tool call.
 	startChunks := a.Adapt(fantasy.StreamPart{
 		Type:         fantasy.StreamPartTypeToolInputStart,
 		ID:           "call_abc",
 		ToolCallName: "search",
 	})
-	if len(startChunks) != 1 {
-		t.Fatalf("expected 1 start chunk, got %d", len(startChunks))
+	if len(startChunks) != 2 {
+		t.Fatalf("expected 2 start chunks, got %d", len(startChunks))
 	}
-	startParsed := parseSSEChunk(t, startChunks[0])
+	roleParsed := parseSSEChunk(t, startChunks[0])
+	if roleParsed.Choices[0].Delta.Role != "assistant" {
+		t.Fatalf("expected assistant role chunk, got %q", roleParsed.Choices[0].Delta.Role)
+	}
+	startParsed := parseSSEChunk(t, startChunks[1])
 	tc := startParsed.Choices[0].Delta.ToolCalls[0]
 	if tc.ID != "call_abc" {
 		t.Errorf("expected tool call ID call_abc, got %s", tc.ID)
@@ -137,6 +141,18 @@ func TestV1Adapter_Finish(t *testing.T) {
 	parsed := parseSSEChunk(t, chunks[0])
 	if parsed.Choices[0].FinishReason == nil || *parsed.Choices[0].FinishReason != "stop" {
 		t.Errorf("expected finish_reason stop")
+	}
+}
+
+func TestV1Adapter_FinishReasonToolCalls(t *testing.T) {
+	a := NewV1Adapter("test-model", false)
+	chunks := a.Adapt(fantasy.StreamPart{
+		Type:         fantasy.StreamPartTypeFinish,
+		FinishReason: fantasy.FinishReasonToolCalls,
+	})
+	parsed := parseSSEChunk(t, chunks[0])
+	if parsed.Choices[0].FinishReason == nil || *parsed.Choices[0].FinishReason != "tool_calls" {
+		t.Fatalf("expected finish_reason tool_calls, got %#v", parsed.Choices[0].FinishReason)
 	}
 }
 
