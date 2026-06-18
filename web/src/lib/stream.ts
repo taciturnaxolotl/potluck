@@ -25,8 +25,11 @@ export interface StreamEvent {
     | "done"
     | "tool_call"
     | "tool_result"
-    | "start";
+    | "start"
+    | "reasoning"
+    | "title_updated";
   content?: string;
+  title?: string;
   usage?: { input_tokens: number; output_tokens: number };
   error?: { code: string; message: string };
   [extra: string]: any;

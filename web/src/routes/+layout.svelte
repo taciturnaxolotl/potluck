@@ -578,12 +578,6 @@
     opacity: 1;
     background: rgba(255,255,255,0.15);
   }
-  .nav-conv-empty {
-    display: block;
-    font-size: 11.5px;
-    color: var(--text-faint);
-    padding: 4px 10px 4px 18px;
-  }
 
   /* ---- splash shell --------------------------------------------------- */
   .splash-shell {

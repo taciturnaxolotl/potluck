@@ -257,6 +257,8 @@ export type PoolKey = {
   pioneer_credit_limit_micros: number;
   pioneer_remaining_micros: number;
   pending_validation: boolean;
+  provider_id: string;
+  revoked: boolean;
   created_at: number;
   last_used_at: number;
   last_billing_sync_at: number;

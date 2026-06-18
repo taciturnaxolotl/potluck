@@ -234,7 +234,7 @@
                   aria-checked={p.active}
                   title={p.active ? 'disable provider' : 'enable provider'}
                 >
-                  <span class="toggle-track"><span class="toggle-thumb" /></span>
+                  <span class="toggle-track"><span class="toggle-thumb"></span></span>
                 </button>
                 <button class="action-btn danger" onclick={() => handleDelete(p.id)}>delete</button>
               </div>

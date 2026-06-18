@@ -593,7 +593,7 @@
             const serverUserId: string = ev.user_message_id;
             const serverAssistantId: string = ev.assistant_message_id || tmpAssistantId;
             const serverStreamId: string | undefined = ev.stream_id;
-            const localConvId = convId!;
+            const localConvId: string = convId!;
 
             await db.transaction('rw', db.conversations, db.messages, async () => {
               if (isNewConv && serverConvId && serverConvId !== localConvId) {
@@ -722,6 +722,7 @@
                 {:else if msg.content}
                   {@html renderMarkdown(msg.content)}
                 {:else if msg.pending}
+                  <!-- pending: spinner shown below -->
                 {/if}
               </div>
               <div class="msg-meta">
