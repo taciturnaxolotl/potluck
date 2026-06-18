@@ -7,7 +7,7 @@
  * upsert by id.
  */
 
-import Dexie, { type Table } from 'dexie';
+import Dexie, { type Table } from "dexie";
 
 export interface DBConversation {
   id: string;
@@ -20,14 +20,14 @@ export interface DBMessage {
   id: string; // server id, or client_id while pending
   conversation_id: string;
   client_id: string | null;
-  role: 'user' | 'assistant' | 'system' | 'tool';
+  role: "user" | "assistant" | "system" | "tool";
   content: string;
   model: string | null;
   created_at: number;
   pending?: boolean; // optimistic; cleared on server upsert
   // generation stats — only present on messages generated in this client
-  ttft?: number;   // ms to first token
-  tps?: number;    // completion tokens per second
+  ttft?: number; // ms to first token
+  tps?: number; // completion tokens per second
   tokens?: number; // completion token count
 }
 
@@ -36,10 +36,11 @@ class PotluckDB extends Dexie {
   messages!: Table<DBMessage, string>;
 
   constructor() {
-    super('potluck');
+    super("potluck");
     this.version(1).stores({
-      conversations: 'id, updated_at, archived_at',
-      messages: 'id, conversation_id, [conversation_id+created_at], created_at, client_id'
+      conversations: "id, updated_at, archived_at",
+      messages:
+        "id, conversation_id, [conversation_id+created_at], created_at, client_id",
     });
   }
 }
@@ -56,7 +57,7 @@ export async function upsertMessages(ms: DBMessage[]) {
 }
 
 export async function appendAssistantDelta(messageID: string, delta: string) {
-  await db.transaction('rw', db.messages, async () => {
+  await db.transaction("rw", db.messages, async () => {
     const m = await db.messages.get(messageID);
     if (!m) return;
     m.content += delta;

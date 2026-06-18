@@ -18,7 +18,14 @@
 
 export interface StreamEvent {
   seq: number;
-  type: 'delta' | 'usage' | 'error' | 'done' | 'tool_call' | 'tool_result' | 'start';
+  type:
+    | "delta"
+    | "usage"
+    | "error"
+    | "done"
+    | "tool_call"
+    | "tool_result"
+    | "start";
   content?: string;
   usage?: { input_tokens: number; output_tokens: number };
   error?: { code: string; message: string };
@@ -27,50 +34,53 @@ export interface StreamEvent {
 
 export interface StreamHandlers {
   onEvent(ev: StreamEvent): void;
-  onClose?(reason: 'done' | 'error' | 'aborted'): void;
+  onClose?(reason: "done" | "error" | "aborted"): void;
 }
 
 export function consume(
   streamID: string | ((afterSeq: number) => string),
   handlers: StreamHandlers,
   initialAfterSeq = 0,
-  { reconnectAlways = false }: { reconnectAlways?: boolean } = {}
+  { reconnectAlways = false }: { reconnectAlways?: boolean } = {},
 ): () => void {
   let aborted = false;
   let lastSeq = initialAfterSeq;
   let controller = new AbortController();
 
   const buildUrl =
-    typeof streamID === 'function'
+    typeof streamID === "function"
       ? streamID
-      : (seq: number) => `/api/streams/${streamID}/events?after_seq=${Math.max(0, seq)}`;
+      : (seq: number) =>
+          `/api/streams/${streamID}/events?after_seq=${Math.max(0, seq)}`;
 
   const loop = async () => {
     while (!aborted) {
       try {
         const res = await fetch(buildUrl(lastSeq), {
-          credentials: 'include',
-          signal: controller.signal
+          credentials: "include",
+          signal: controller.signal,
         });
         if (!res.ok || !res.body) {
-          handlers.onClose?.('error');
+          handlers.onClose?.("error");
           return;
         }
 
-        const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
-        let buf = '';
+        const reader = res.body
+          .pipeThrough(new TextDecoderStream())
+          .getReader();
+        let buf = "";
         let gotEvent = false;
         for (;;) {
           const { value, done } = await reader.read();
           if (done) break;
           buf += value;
           let idx: number;
-          while ((idx = buf.indexOf('\n\n')) >= 0) {
+          while ((idx = buf.indexOf("\n\n")) >= 0) {
             const frame = buf.slice(0, idx);
             buf = buf.slice(idx + 2);
             const dataLine = frame
-              .split('\n')
-              .find((l) => l.startsWith('data:'))
+              .split("\n")
+              .find((l) => l.startsWith("data:"))
               ?.slice(5)
               .trim();
             if (!dataLine) continue;
@@ -79,7 +89,7 @@ export function consume(
               if (ev.seq > lastSeq) lastSeq = ev.seq;
               gotEvent = true;
               handlers.onEvent(ev);
-              if (ev.type === 'done' || ev.type === 'error') {
+              if (ev.type === "done" || ev.type === "error") {
                 handlers.onClose?.(ev.type);
                 return;
               }
@@ -91,7 +101,7 @@ export function consume(
         // EOF without done: if no events arrived and we're not in reconnect-always
         // mode, the stream is stale/dead — give up so the UI doesn't spin forever.
         if (!gotEvent && !reconnectAlways) {
-          handlers.onClose?.('error');
+          handlers.onClose?.("error");
           return;
         }
         // Reconnect with after_seq (or always, for push channels).
@@ -109,6 +119,6 @@ export function consume(
   return () => {
     aborted = true;
     controller.abort();
-    handlers.onClose?.('aborted');
+    handlers.onClose?.("aborted");
   };
 }

@@ -1,4 +1,4 @@
-import { backendProxy } from '$lib/proxy';
+import { backendProxy } from "$lib/proxy";
 
 const proxy = backendProxy();
 

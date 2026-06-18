@@ -43,7 +43,10 @@
   --text-on-code: light-dark(var(--jet-black), var(--soft-blush));
 
   --border: light-dark(rgba(48, 52, 63, 0.1), rgba(255, 217, 218, 0.08));
-  --border-on-code: light-dark(rgba(48, 52, 63, 0.08), rgba(255, 217, 218, 0.08));
+  --border-on-code: light-dark(
+    rgba(48, 52, 63, 0.08),
+    rgba(255, 217, 218, 0.08)
+  );
   --accent: light-dark(var(--dark-raspberry), var(--blush-rose));
   /* Danger / error state — distinct from accent. Warm red that reads as
      "something is wrong" rather than "this is a link." */
@@ -69,26 +72,32 @@
    * light-dark() picks the right side based on <meta name="color-scheme">,
    * the same mechanism used everywhere else in the design system.
    */
-  --shiki-foreground:         light-dark(var(--jet-black), #fff5f5);
-  --shiki-background:         var(--bg-code);
+  --shiki-foreground: light-dark(var(--jet-black), #fff5f5);
+  --shiki-background: var(--bg-code);
   /* keywords / control flow */
-  --shiki-token-keyword:      light-dark(var(--dark-raspberry), var(--blush-rose));
+  --shiki-token-keyword: light-dark(var(--dark-raspberry), var(--blush-rose));
   /* string literals */
-  --shiki-token-string:       light-dark(#7c3829, #f4b8a8);
+  --shiki-token-string: light-dark(#7c3829, #f4b8a8);
   /* string expression / template parts */
   --shiki-token-string-expression: light-dark(#7c3829, #f4b8a8);
   /* comments */
-  --shiki-token-comment:      light-dark(rgba(48,52,63,0.48), rgba(255,217,218,0.38));
+  --shiki-token-comment: light-dark(
+    rgba(48, 52, 63, 0.48),
+    rgba(255, 217, 218, 0.38)
+  );
   /* function / method names */
-  --shiki-token-function:     light-dark(#2b5c8a, #93c5fd);
+  --shiki-token-function: light-dark(#2b5c8a, #93c5fd);
   /* constants / literals (true, false, null, numbers) */
-  --shiki-token-constant:     light-dark(#89023e, var(--blush-rose));
+  --shiki-token-constant: light-dark(#89023e, var(--blush-rose));
   /* parameter names */
-  --shiki-token-parameter:    light-dark(#555, #ccc);
+  --shiki-token-parameter: light-dark(#555, #ccc);
   /* punctuation (braces, brackets, commas) */
-  --shiki-token-punctuation:  light-dark(rgba(48,52,63,0.7), rgba(255,217,218,0.6));
+  --shiki-token-punctuation: light-dark(
+    rgba(48, 52, 63, 0.7),
+    rgba(255, 217, 218, 0.6)
+  );
   /* link / url / special */
-  --shiki-token-link:         light-dark(#2b5c8a, #93c5fd);
+  --shiki-token-link: light-dark(#2b5c8a, #93c5fd);
 
   /* ---- radii / spacing scale ------------------------------------------ */
   --radius-sm: 6px;
@@ -96,20 +105,20 @@
   --radius-lg: 14px;
 
   /* ---- type ----------------------------------------------------------- */
-  --font-serif: 'Fraunces Variable', Georgia, serif;
-  --font-sans: 'Inter Variable', system-ui, -apple-system, sans-serif;
-  --font-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, monospace;
+  --font-serif: "Fraunces Variable", Georgia, serif;
+  --font-sans: "Inter Variable", system-ui, -apple-system, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, monospace;
 
   /* Fraunces opsz/SOFT presets — apply via font-variation-settings. */
-  --fraunces-display: 'opsz' 144, 'SOFT' 50;
-  --fraunces-text: 'opsz' 9, 'SOFT' 0;
+  --fraunces-display: "opsz" 144, "SOFT" 50;
+  --fraunces-text: "opsz" 9, "SOFT" 0;
 
   /* Numeric tabular figures everywhere by default; override with
      `font-feature-settings: "tnum" 0` when you specifically need
      proportional digits in prose. */
   font-feature-settings:
-    'tnum' 1,
-    'cv11' 1;
+    "tnum" 1,
+    "cv11" 1;
 }
 
 html,
@@ -166,14 +175,14 @@ pre,
  * we don't accidentally re-declare the whole face.
  */
 @font-face {
-  font-family: 'Fraunces Variable';
+  font-family: "Fraunces Variable";
   font-display: optional;
-  src: local('Fraunces Variable');
+  src: local("Fraunces Variable");
 }
 @font-face {
-  font-family: 'Inter Variable';
+  font-family: "Inter Variable";
   font-display: optional;
-  src: local('Inter Variable');
+  src: local("Inter Variable");
 }
 
 /* ---- shared display patterns -----------------------------------------

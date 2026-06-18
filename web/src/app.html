@@ -11,8 +11,8 @@
     <script>
       (function () {
         try {
-          var v = localStorage.getItem('potluck-theme');
-          if (v === 'light' || v === 'dark') {
+          var v = localStorage.getItem("potluck-theme");
+          if (v === "light" || v === "dark") {
             document.querySelector('meta[name="color-scheme"]').content = v;
           }
         } catch (e) {}
@@ -23,13 +23,19 @@
     <meta property="og:url" content="https://potluck.dunkirk.sh" />
     <meta property="og:site_name" content="potluck" />
     <meta property="og:title" content="potluck" />
-    <meta property="og:description" content="Stir all the api keys into one pot and boil on high for 10 minutes" />
+    <meta
+      property="og:description"
+      content="Stir all the api keys into one pot and boil on high for 10 minutes"
+    />
     <meta property="og:image" content="https://potluck.dunkirk.sh/og.png" />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content="potluck" />
-    <meta name="twitter:description" content="Stir all the api keys into one pot and boil on high for 10 minutes" />
+    <meta
+      name="twitter:description"
+      content="Stir all the api keys into one pot and boil on high for 10 minutes"
+    />
     <meta name="twitter:image" content="https://potluck.dunkirk.sh/og.png" />
     %sveltekit.head%
   </head>

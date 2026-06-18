@@ -14,28 +14,28 @@
  * to avoid a flash of the wrong theme on load.
  */
 
-export type Theme = 'auto' | 'light' | 'dark';
+export type Theme = "auto" | "light" | "dark";
 
-const STORAGE_KEY = 'potluck-theme';
+const STORAGE_KEY = "potluck-theme";
 
 function meta(): HTMLMetaElement | null {
-  if (typeof document === 'undefined') return null;
+  if (typeof document === "undefined") return null;
   return document.querySelector('meta[name="color-scheme"]');
 }
 
 export function currentTheme(): Theme {
   const m = meta();
-  if (!m) return 'auto';
+  if (!m) return "auto";
   const c = m.content.trim();
-  if (c === 'light' || c === 'dark') return c;
-  return 'auto';
+  if (c === "light" || c === "dark") return c;
+  return "auto";
 }
 
 export function setTheme(mode: Theme): void {
   const m = meta();
   if (!m) return;
-  if (mode === 'auto') {
-    m.content = 'light dark';
+  if (mode === "auto") {
+    m.content = "light dark";
     try {
       localStorage.removeItem(STORAGE_KEY);
     } catch {
@@ -52,7 +52,11 @@ export function setTheme(mode: Theme): void {
 }
 
 export function cycleTheme(): Theme {
-  const next: Record<Theme, Theme> = { auto: 'dark', dark: 'light', light: 'auto' };
+  const next: Record<Theme, Theme> = {
+    auto: "dark",
+    dark: "light",
+    light: "auto",
+  };
   const t = next[currentTheme()];
   setTheme(t);
   return t;

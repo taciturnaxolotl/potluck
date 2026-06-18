@@ -18,15 +18,19 @@ export class HTTPError extends Error {
   }
 }
 
-async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+async function request<T>(
+  method: string,
+  path: string,
+  body?: unknown,
+): Promise<T> {
   const res = await fetch(path, {
     method,
-    headers: body ? { 'content-type': 'application/json' } : undefined,
+    headers: body ? { "content-type": "application/json" } : undefined,
     body: body ? JSON.stringify(body) : undefined,
-    credentials: 'include'
+    credentials: "include",
   });
   if (!res.ok) {
-    let code = 'http_error',
+    let code = "http_error",
       message = res.statusText;
     try {
       const j = (await res.json()) as { error?: APIError };
@@ -45,10 +49,10 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 }
 
 export const api = {
-  get: <T>(path: string) => request<T>('GET', path),
-  post: <T>(path: string, body?: unknown) => request<T>('POST', path, body),
-  patch: <T>(path: string, body?: unknown) => request<T>('PATCH', path, body),
-  del: <T>(path: string) => request<T>('DELETE', path)
+  get: <T>(path: string) => request<T>("GET", path),
+  post: <T>(path: string, body?: unknown) => request<T>("POST", path, body),
+  patch: <T>(path: string, body?: unknown) => request<T>("PATCH", path, body),
+  del: <T>(path: string) => request<T>("DELETE", path),
 };
 
 // Typed helpers ------------------------------------------------------------
@@ -77,25 +81,30 @@ export type Message = {
   id: string;
   conversation_id: string;
   client_id: string | null;
-  role: 'user' | 'assistant' | 'system' | 'tool';
+  role: "user" | "assistant" | "system" | "tool";
   content: string;
   model: string | null;
   created_at: number;
 };
 
-export const me = () => api.get<User>('/api/me');
-export const updateMe = (display_name: string) => api.patch<User>('/api/me', { display_name });
+export const me = () => api.get<User>("/api/me");
+export const updateMe = (display_name: string) =>
+  api.patch<User>("/api/me", { display_name });
 export const balance = () =>
-  api.get<{ balance_micros: number; balance_usd: string }>('/api/balance');
+  api.get<{ balance_micros: number; balance_usd: string }>("/api/balance");
 
 export type MemoryRow = { key: string; value: string };
-export const getMemory = () => api.get<{ rows: MemoryRow[] }>('/api/memory');
-export const updateMemory = (rows: MemoryRow[]) => api.patch<{ ok: boolean }>('/api/memory', { rows });
-export const listConversations = () => api.get<Conversation[]>('/api/conversations');
+export const getMemory = () => api.get<{ rows: MemoryRow[] }>("/api/memory");
+export const updateMemory = (rows: MemoryRow[]) =>
+  api.patch<{ ok: boolean }>("/api/memory", { rows });
+export const listConversations = () =>
+  api.get<Conversation[]>("/api/conversations");
 export const createConversation = (title: string) =>
-  api.post<Conversation>('/api/conversations', { title });
-export const listMessages = (id: string) => api.get<Message[]>(`/api/conversations/${id}/messages`);
-export const deleteConversation = (id: string) => api.del<void>(`/api/conversations/${id}`);
+  api.post<Conversation>("/api/conversations", { title });
+export const listMessages = (id: string) =>
+  api.get<Message[]>(`/api/conversations/${id}/messages`);
+export const deleteConversation = (id: string) =>
+  api.del<void>(`/api/conversations/${id}`);
 
 export type PoolStats = {
   balance_micros: number;
@@ -111,7 +120,7 @@ export type PoolStats = {
   as_of: number;
 };
 
-export const poolStats = () => api.get<PoolStats>('/api/stats');
+export const poolStats = () => api.get<PoolStats>("/api/stats");
 
 export type AllocationUser = {
   user_id: string;
@@ -150,7 +159,7 @@ export type Allocations = {
   } | null;
 };
 
-export const getAllocations = () => api.get<Allocations>('/api/allocations');
+export const getAllocations = () => api.get<Allocations>("/api/allocations");
 
 export type APIKey = {
   id: string;
@@ -165,9 +174,9 @@ export type APIKey = {
   revoked: boolean;
 };
 
-export const listKeys = () => api.get<APIKey[]>('/api/keys');
+export const listKeys = () => api.get<APIKey[]>("/api/keys");
 export const createKey = (name: string) =>
-  api.post<APIKey & { plaintext: string }>('/api/keys', { name });
+  api.post<APIKey & { plaintext: string }>("/api/keys", { name });
 export const revokeKey = (id: string) => api.del<void>(`/api/keys/${id}`);
 
 export type Session = {
@@ -222,13 +231,14 @@ export type UsageData = {
   by_model: UsageByModel[];
 };
 
-export const getUsage = () => api.get<UsageData>('/api/usage');
+export const getUsage = () => api.get<UsageData>("/api/usage");
 
 export const listModels = () =>
-  api.get<{ models: Model[]; refreshed_at: number }>('/api/models');
+  api.get<{ models: Model[]; refreshed_at: number }>("/api/models");
 
-export const listSessions = () => api.get<Session[]>('/api/sessions');
-export const revokeSession = (id: string) => api.del<void>(`/api/sessions/${id}`);
+export const listSessions = () => api.get<Session[]>("/api/sessions");
+export const revokeSession = (id: string) =>
+  api.del<void>(`/api/sessions/${id}`);
 
 export type PoolKey = {
   id: string;
@@ -255,7 +265,7 @@ export type PoolKey = {
   mine: boolean;
 };
 
-export const listPoolKeys = () => api.get<PoolKey[]>('/api/pool-keys');
+export const listPoolKeys = () => api.get<PoolKey[]>("/api/pool-keys");
 
 export interface Provider {
   id: string;
@@ -265,11 +275,31 @@ export interface Provider {
   active: boolean;
   is_free: boolean;
 }
-export const listProviders = () => api.get<Provider[]>('/api/providers');
-export const createProvider = (id: string, type: string, name: string, baseUrl: string, isFree: boolean) =>
-  api.post<Provider>('/api/providers', { id, type, name, base_url: baseUrl, is_free: isFree });
-export const updateProvider = (id: string, updates: { type?: string; name?: string; base_url?: string; active?: boolean; is_free?: boolean }) =>
-  api.patch<void>(`/api/providers/${id}`, updates);
+export const listProviders = () => api.get<Provider[]>("/api/providers");
+export const createProvider = (
+  id: string,
+  type: string,
+  name: string,
+  baseUrl: string,
+  isFree: boolean,
+) =>
+  api.post<Provider>("/api/providers", {
+    id,
+    type,
+    name,
+    base_url: baseUrl,
+    is_free: isFree,
+  });
+export const updateProvider = (
+  id: string,
+  updates: {
+    type?: string;
+    name?: string;
+    base_url?: string;
+    active?: boolean;
+    is_free?: boolean;
+  },
+) => api.patch<void>(`/api/providers/${id}`, updates);
 export const deleteProvider = (id: string) =>
   api.del<void>(`/api/providers/${id}`);
 
@@ -281,32 +311,48 @@ export interface PoolKeyProbe {
   today_micros: number;
 }
 export const probePoolKey = (apiKey: string, providerId?: string) =>
-  api.post<PoolKeyProbe>('/api/pool-keys/probe', {
+  api.post<PoolKeyProbe>("/api/pool-keys/probe", {
     api_key: apiKey,
-    ...(providerId ? { provider_id: providerId } : {})
+    ...(providerId ? { provider_id: providerId } : {}),
   });
 
-export const addPoolKey = (label: string, apiKey: string, sharedMicros?: number, providerId?: string) =>
-  api.post<PoolKey & { pending_validation?: boolean; pending_reason?: string }>('/api/pool-keys', {
-    label,
-    api_key: apiKey,
-    ...(sharedMicros != null ? { shared_micros: sharedMicros } : {}),
-    ...(providerId ? { provider_id: providerId } : {})
-  });
+export const addPoolKey = (
+  label: string,
+  apiKey: string,
+  sharedMicros?: number,
+  providerId?: string,
+) =>
+  api.post<PoolKey & { pending_validation?: boolean; pending_reason?: string }>(
+    "/api/pool-keys",
+    {
+      label,
+      api_key: apiKey,
+      ...(sharedMicros != null ? { shared_micros: sharedMicros } : {}),
+      ...(providerId ? { provider_id: providerId } : {}),
+    },
+  );
 export const setPoolKeyActive = (id: string, active: boolean) =>
   api.patch<void>(`/api/pool-keys/${id}/active`, { active });
 export const updatePoolKeyLabel = (id: string, label: string) =>
   api.patch<void>(`/api/pool-keys/${id}/label`, { label });
-export const updatePoolKeyLimits = (id: string, maxMicros: number, sharedMicros: number) =>
-  api.patch<void>(`/api/pool-keys/${id}/limits`, { max_micros: maxMicros, shared_micros: sharedMicros });
+export const updatePoolKeyLimits = (
+  id: string,
+  maxMicros: number,
+  sharedMicros: number,
+) =>
+  api.patch<void>(`/api/pool-keys/${id}/limits`, {
+    max_micros: maxMicros,
+    shared_micros: sharedMicros,
+  });
 export const syncPoolKey = (id: string) =>
   api.post<{ today_micros: number }>(`/api/pool-keys/${id}/sync`);
-export const deletePoolKey = (id: string) => api.del<void>(`/api/pool-keys/${id}`);
+export const deletePoolKey = (id: string) =>
+  api.del<void>(`/api/pool-keys/${id}`);
 export const recomputeAllocations = () =>
-  api.post<Allocations>('/api/allocations/recompute');
+  api.post<Allocations>("/api/allocations/recompute");
 
 export async function logout(): Promise<void> {
-  await fetch('/auth/logout', { method: 'POST', credentials: 'include' });
+  await fetch("/auth/logout", { method: "POST", credentials: "include" });
 }
 
 // Admin helpers ------------------------------------------------------------
@@ -316,15 +362,18 @@ export type AdminUser = {
   email: string;
   display_name: string;
   slack_id: { String: string; Valid: boolean } | null;
-  status: 'active' | 'waitlisted' | 'banned';
+  status: "active" | "waitlisted" | "banned";
   is_admin: boolean;
   created_at: number;
   last_seen_at: number;
 };
 
-export const adminListUsers = () => api.get<AdminUser[]>('/api/admin/users');
-export const adminSetUserStatus = (id: string, status: 'active' | 'waitlisted' | 'banned') =>
-  api.patch<void>(`/api/admin/users/${id}/status`, { status });
+export const adminListUsers = () => api.get<AdminUser[]>("/api/admin/users");
+export const adminSetUserStatus = (
+  id: string,
+  status: "active" | "waitlisted" | "banned",
+) => api.patch<void>(`/api/admin/users/${id}/status`, { status });
 export const adminSetUserAdmin = (id: string, is_admin: boolean) =>
   api.patch<void>(`/api/admin/users/${id}/admin`, { is_admin });
-export const adminDeleteUser = (id: string) => api.del<void>(`/api/admin/users/${id}`);
+export const adminDeleteUser = (id: string) =>
+  api.del<void>(`/api/admin/users/${id}`);

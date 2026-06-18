@@ -1,6 +1,6 @@
-import { sveltekit } from '@sveltejs/kit/vite';
-import { defineConfig } from 'vite';
-import { execSync } from 'node:child_process';
+import { sveltekit } from "@sveltejs/kit/vite";
+import { defineConfig } from "vite";
+import { execSync } from "node:child_process";
 
 // Surface the current commit hash to client code. We expose both the
 // short form (for display) and the full sha (for stable URLs that don't
@@ -8,19 +8,21 @@ import { execSync } from 'node:child_process';
 // git checkout (e.g. CI on a tarball).
 function gitRev(args: string): string {
   try {
-    return execSync(`git rev-parse ${args}`, { stdio: ['ignore', 'pipe', 'ignore'] })
+    return execSync(`git rev-parse ${args}`, {
+      stdio: ["ignore", "pipe", "ignore"],
+    })
       .toString()
       .trim();
   } catch {
-    return 'dev';
+    return "dev";
   }
 }
 
 export default defineConfig({
   plugins: [sveltekit()],
   define: {
-    __COMMIT_SHA__: JSON.stringify(gitRev('--short HEAD')),
-    __COMMIT_SHA_FULL__: JSON.stringify(gitRev('HEAD'))
+    __COMMIT_SHA__: JSON.stringify(gitRev("--short HEAD")),
+    __COMMIT_SHA_FULL__: JSON.stringify(gitRev("HEAD")),
   },
   server: {
     port: 3000,
@@ -30,23 +32,23 @@ export default defineConfig({
     // Allow the bore-exposed hostname so the dev server isn't behind Vite's
     // host-check 403. Add more entries here if you tunnel under a
     // different name. `.bore.dunkirk.sh` covers any subdomain.
-    allowedHosts: ['potluck.bore.dunkirk.sh', '.bore.dunkirk.sh', 'localhost'],
+    allowedHosts: ["potluck.bore.dunkirk.sh", ".bore.dunkirk.sh", "localhost"],
     proxy: {
       // Both /api/* and /auth/* are owned by the Go backend. Vite forwards
       // them verbatim; SvelteKit never sees them. The Cloudflare worker
       // does the same in production via /web/src/routes/api/[...path].
-      '/api': {
-        target: 'http://localhost:8080',
-        changeOrigin: false
+      "/api": {
+        target: "http://localhost:8080",
+        changeOrigin: false,
       },
-      '/auth': {
-        target: 'http://localhost:8080',
-        changeOrigin: false
+      "/auth": {
+        target: "http://localhost:8080",
+        changeOrigin: false,
       },
-      '/v1': {
-        target: 'http://localhost:8080',
-        changeOrigin: false
-      }
-    }
-  }
+      "/v1": {
+        target: "http://localhost:8080",
+        changeOrigin: false,
+      },
+    },
+  },
 });
