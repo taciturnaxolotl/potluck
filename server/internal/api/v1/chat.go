@@ -237,6 +237,8 @@ func buildChatCompletionResponse(model string, resp *fantasy.Response) oaiChatRe
 		switch p := part.(type) {
 		case fantasy.TextPart:
 			contentText += p.Text
+		case fantasy.TextContent:
+			contentText += p.Text
 		case fantasy.ToolCallContent:
 			toolCalls = append(toolCalls, oaiToolCall{
 				ID:   p.ToolCallID,
