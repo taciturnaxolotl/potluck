@@ -1,7 +1,6 @@
 package v1
 
 import (
-	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -152,7 +151,7 @@ func translateMessages(msgs []oaiMessage) ([]fantasy.Message, error) {
 			out = append(out, fantasy.NewSystemMessage(text))
 
 		case "user":
-			parts, err := translateUserContent(context.Background(), m.Content)
+			parts, err := translateUserContent(m.Content)
 			if err != nil {
 				return nil, fmt.Errorf("user message content: %w", err)
 			}
@@ -242,7 +241,7 @@ type oaiInputAudio struct {
 
 // translateUserContent converts raw JSON content into fantasy message parts,
 // supporting text, image_url, and input_audio content types.
-func translateUserContent(ctx context.Context, raw json.RawMessage) ([]fantasy.MessagePart, error) {
+func translateUserContent(raw json.RawMessage) ([]fantasy.MessagePart, error) {
 	if len(raw) == 0 {
 		return nil, fmt.Errorf("user message content is required")
 	}
@@ -256,10 +255,10 @@ func translateUserContent(ctx context.Context, raw json.RawMessage) ([]fantasy.M
 	if err := json.Unmarshal(raw, &parts); err != nil {
 		return nil, fmt.Errorf("invalid content format")
 	}
-	return translateContentParts(ctx, parts)
+	return translateContentParts(parts)
 }
 
-func translateContentParts(ctx context.Context, parts []oaiContentPart) ([]fantasy.MessagePart, error) {
+func translateContentParts(parts []oaiContentPart) ([]fantasy.MessagePart, error) {
 	result := make([]fantasy.MessagePart, 0, len(parts))
 	for _, part := range parts {
 		switch part.Type {
@@ -269,7 +268,7 @@ func translateContentParts(ctx context.Context, parts []oaiContentPart) ([]fanta
 			if part.ImageURL == nil {
 				return nil, fmt.Errorf("image_url content part requires image_url field")
 			}
-			fp, err := resolveImageURL(ctx, part.ImageURL.URL)
+			fp, err := resolveImageURL(part.ImageURL.URL)
 			if err != nil {
 				return nil, err
 			}
@@ -290,7 +289,7 @@ func translateContentParts(ctx context.Context, parts []oaiContentPart) ([]fanta
 	return result, nil
 }
 
-func resolveImageURL(_ context.Context, rawURL string) (fantasy.FilePart, error) {
+func resolveImageURL(rawURL string) (fantasy.FilePart, error) {
 	if after, ok := strings.CutPrefix(rawURL, "data:"); ok {
 		return parseDataURI(after)
 	}
@@ -304,6 +303,9 @@ func parseDataURI(s string) (fantasy.FilePart, error) {
 		return fantasy.FilePart{}, fmt.Errorf("invalid data URI format")
 	}
 	mediaType := s[:semi]
+	if !strings.HasPrefix(mediaType, "image/") {
+		return fantasy.FilePart{}, fmt.Errorf("image_url data URI must have an image/* media type, got %s", mediaType)
+	}
 	encoding := s[semi+1 : comma]
 	encoded := s[comma+1:]
 	if encoding != "base64" {
@@ -341,9 +343,9 @@ func decodeAudioPart(audio *oaiInputAudio) (fantasy.FilePart, error) {
 	if len(data) > maxFileSize {
 		return fantasy.FilePart{}, fmt.Errorf("file content exceeds 5MB limit")
 	}
-	mediaType := audioMediaTypes[audio.Format]
-	if mediaType == "" {
-		mediaType = "audio/" + audio.Format
+	mediaType, ok := audioMediaTypes[audio.Format]
+	if !ok {
+		return fantasy.FilePart{}, fmt.Errorf("unsupported audio format: %s (supported: wav, mp3, flac, ogg, webm)", audio.Format)
 	}
 	return fantasy.FilePart{Data: data, MediaType: mediaType}, nil
 }
