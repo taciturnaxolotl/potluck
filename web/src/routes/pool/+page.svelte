@@ -444,8 +444,7 @@
                 </td>
                 <td class="num mono limits-td" onclick={(e) => editingLimitsId === key.id && e.stopPropagation()}>
                   {#if key.mine && editingLimitsId === key.id && limitsPos}
-                    <!-- svelte-ignore a11y_interactive_supports_focus a11y_click_events_have_key_events -->
-                    <div class="limits-popover" role="dialog" style="position:fixed;top:{limitsPos.top}px;right:{limitsPos.right}px" onclick={(e) => e.stopPropagation()}>
+                    <div class="limits-popover" role="dialog" tabindex="-1" style="position:fixed;top:{limitsPos.top}px;right:{limitsPos.right}px" onclick={(e) => e.stopPropagation()} onkeydown={(e) => { if (e.key === 'Escape') { editingLimitsId = null; limitsPos = null; } }}>
                       <div class="limits-row">
                         <span class="limits-label">ceiling</span>
                         <span class="limits-readonly mono">${editMaxDollars} <span class="limits-hint">(from pioneer)</span></span>

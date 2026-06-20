@@ -30,9 +30,24 @@ export interface StreamEvent {
     | "title_updated";
   content?: string;
   title?: string;
-  usage?: { input_tokens: number; output_tokens: number };
+  usage?: {
+    prompt_tokens: number;
+    completion_tokens: number;
+    total_tokens: number;
+  };
   error?: { code: string; message: string };
-  [extra: string]: any;
+  message?: string; // error event sends message at top level
+  // start event fields
+  conversation_id?: string;
+  user_message_id?: string;
+  assistant_message_id?: string;
+  stream_id?: string;
+  // tool_call event fields
+  id?: string;
+  name?: string;
+  arguments?: string;
+  // tool_result event fields
+  tool_call_id?: string;
 }
 
 export interface StreamHandlers {

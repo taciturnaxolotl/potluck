@@ -272,7 +272,7 @@
 
     const sid: string = ev.stream_id;
     const aid: string = ev.assistant_message_id;
-    const model: string = ev.model || selectedModel || '';
+    const model: string = selectedModel || '';
 
     streaming = true;
     streamingMsgId = aid;
@@ -388,17 +388,17 @@
           if (!hadPending) toolPauseStartMs = Date.now();
           processSteps = [...processSteps, {
             type: 'tool',
-            id: ((ev as any).id as string) || uuid(),
-            name: ((ev as any).name as string) || 'tool',
-            args: ((ev as any).arguments as string) || '',
+            id: ev.id || uuid(),
+            name: ev.name || 'tool',
+            args: ev.arguments || '',
             result: '',
             done: false
           }];
         }
 
         if (ev.type === 'tool_result') {
-          const tcId = ((ev as any).tool_call_id as string) || '';
-          const result = ((ev as any).content as string) || '';
+          const tcId = ev.tool_call_id || '';
+          const result = ev.content || '';
           const idx = tcId
             ? processSteps.findIndex((s) => s.type === 'tool' && s.id === tcId)
             : processSteps.findLastIndex((s) => s.type === 'tool' && !s.done);
@@ -419,7 +419,7 @@
 
         if (ev.type === 'done' || ev.type === 'error') {
           const doneMs = Date.now();
-          const completionTokens = (ev.usage as any)?.completion_tokens ?? ev.usage?.output_tokens;
+          const completionTokens = ev.usage?.completion_tokens;
           const ttft = streamFirstTokenMs ? streamFirstTokenMs - streamStartMs : undefined;
           const tps =
             completionTokens && streamFirstTokenMs
@@ -436,7 +436,7 @@
             await db.conversations.where({ id: convId }).modify({ updated_at: Math.floor(doneMs / 1000) });
           } else {
             await db.messages.delete(assistantId);
-            errorMsg = ev.error?.message || (ev as any).message || 'stream error';
+            errorMsg = ev.error?.message || ev.message || 'stream error';
           }
           // UI state teardown: onClose (attach path) or finally (inline path).
         }
@@ -551,8 +551,8 @@
       });
 
       if (!res.ok || !res.body) {
-        const j = await res.json().catch(() => ({}));
-        throw new Error((j as any)?.error?.message || `HTTP ${res.status}`);
+        const j = await res.json().catch(() => ({})) as { error?: { message?: string } };
+        throw new Error(j?.error?.message || `HTTP ${res.status}`);
       }
 
       const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
